@@ -1,0 +1,129 @@
+\chapter{Performance}
+
+Two expectations in the original design were contradicted by measurement. The
+specification anticipated this and asked that the correction be written here
+rather than quietly absorbed, which is the right instruction: an expectation
+that was wrong and got corrected is more useful than one that was never
+written down.
+
+\entry{Kernel fusion, expected ten to twenty percent, measured
+\FusionGainPercentAtMaxN{} percent}
+
+\field{The expectation.} Fusing the force evaluation with the Verlet update
+removes a round trip of the acceleration array, $12N$ bytes written and $12N$
+bytes read, plus one kernel launch per step. Stated in bytes that sounds
+substantial, and ten to twenty percent is roughly right for a memory bound
+kernel.
+
+\field{The measurement.} At \LadderMaxN{} particles fusion is worth
+\FusionGainPercentAtMaxN{} percent. At \LadderMinN{} particles it is worth
+\FusionGainPercentAtMinN{} percent. At some intermediate sizes it was slightly
+slower than the unfused path, within run to run variation.
+
+\field{Root cause of the wrong expectation.} Arithmetic intensity. The all
+pairs sum performs $O(N^2)$ arithmetic on $O(N)$ data, so the ratio of
+operations to bytes grows without limit with the problem size. The saving can
+be bounded before any profiler is involved: $24N$ bytes at \LadderMaxN{}
+particles is \FusionCeilingMs{} milliseconds at the measured streaming
+bandwidth of \GpuMeasuredBandwidth{} GB/s, against a step of
+\TiledMsAtMaxN{} milliseconds. That is \FusionCeilingPercent{} percent, and it
+is a ceiling rather than an estimate. No implementation of fusion, however
+good, could have delivered ten percent here.
+
+\field{Confirmation from counters.} Nsight Compute puts device memory
+throughput at \NaiveDramPct{} percent of peak for the naive kernel and
+\TiledDramPct{} percent for the tiled one. There was never any device memory
+pressure for fusion to relieve.
+
+\field{What I changed.} Nothing in the code; the fused kernel is kept because
+it is the right choice at small particle counts and it halves the memory
+footprint of a step. What changed is the practice: an optimisation is now sized
+against the resource it claims to relieve, using the measured ceiling, before
+it is written. Two minutes of arithmetic would have predicted this result and
+saved the effort of being surprised by it.
+
+\entry{Shared memory tiling is not a bandwidth optimisation on this problem}
+
+\field{The expectation.} Tiling is conventionally introduced as a way of
+reducing device memory traffic, and I introduced it that way. The prediction
+that follows is that the naive kernel is limited by memory bandwidth and the
+tiled kernel relieves it.
+
+\field{The measurement.} Tiling delivers a factor of \TilingSpeedupAtMaxN{},
+which is real and large. But device memory throughput is
+\NaiveDramPct{} percent of peak before the change and \TiledDramPct{} percent
+after. Device memory was never the constraint, so the conventional explanation
+of why tiling helps is wrong here even though the tiling itself is right.
+
+\field{What is actually happening.} The counters point at the first level cache
+and the load store pipeline:
+
+\begin{center}
+\input{../report/tables/profile_counters}
+\end{center}
+
+Global load sectors fall by a factor of \SectorReduction{} and load store
+instructions by a factor of \LsuReduction{}. First level cache throughput falls
+from \NaiveLoneTexPct{} percent of peak, close to saturation, to
+\TiledLoneTexPct{} percent. The decisive number is warp issue efficiency, which
+rises from \NaiveIssuePct{} percent to \TiledIssuePct{} percent: the naive
+kernel spends about half its time with nothing to issue because its warps are
+waiting on the load store pipe. Tiling moves the reads into shared memory and
+the pipe stops being the bottleneck.
+
+\field{Why this mattered practically.} Had I trusted the textbook description
+and tried to improve the naive kernel by attacking device memory traffic, by
+compressing the state or adding prefetching, nothing at all would have
+happened. The profile pointed at the right resource; reasoning from the
+familiar description would not have.
+
+\field{Control.} The arithmetic instruction counts are equal across all three
+variants to within a fraction of a percent, which is what licenses attributing
+the difference to data movement rather than to the variants computing different
+things. Those same counters also let the conventional twenty floating point
+operations per interaction be checked against the
+\MeasuredFlopsPerInteraction{} actually retired.
+
+\entry{The specified tile width is not the fastest}
+
+\field{Symptom.} A sweep of tile widths at one hundred thousand particles shows
+the specified width of thirty two is the slowest of the four measured.
+
+\begin{center}
+\input{../report/tables/tile_sweep}
+\end{center}
+
+\field{Root cause.} Two barriers are paid per tile, so a narrower tile pays
+them more often per unit of arithmetic. A width of \BestTileWidth{} runs at
+\BestTileMs{} milliseconds against \SpecifiedTileMs{}, a difference of
+\TileWidthGainPercent{} percent.
+
+\field{Fix and why.} The default stays at thirty two. The ladder exists to
+measure the design as specified, and changing the tile width partway would have
+made the rungs incomparable with the design they were meant to test. The sweep
+is reported instead, so the choice is informed rather than accidental, and the
+right resolution for future work is to expose the width as a configuration
+field.
+
+\entry{Absolute timings depend on the thermal state of the card}
+
+\field{Symptom.} A tile width sweep run immediately after the full benchmark
+sweep produced timings about fifteen percent higher than the same sweep run
+from cold. Nothing in the code had changed.
+
+\field{Root cause.} Sustained clocks fall as the card heats. This is ordinary
+behaviour, but it is large enough to swamp several of the effects being
+measured here, including the entire fusion result.
+
+\field{Fix and why.} Two measures. Every comparison in the reports is made
+within a single session, so all points in a comparison share a thermal state.
+And each point keeps the fastest of three trials rather than the mean, because
+everything that perturbs a measurement makes it slower and never faster, so the
+minimum is the least contaminated estimate.
+
+\field{Verification.} Across the hot and cold runs the relative ordering of the
+tile widths was identical and the percentage difference between the widest and
+narrowest tile was reproduced to within a tenth of a percentage point, even
+though the absolute milliseconds differed by fifteen percent. That is the
+evidence that the conclusions rest on relative differences and survive the
+variation.

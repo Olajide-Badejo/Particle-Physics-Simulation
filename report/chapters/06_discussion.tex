@@ -1,0 +1,96 @@
+\chapter{Discussion}
+\label{ch:discussion}
+
+\section{The most useful result was the one that failed to appear}
+
+The fusion measurement is the part of this project I would keep if I could keep
+only one thing. The expectation of ten to twenty percent was not arbitrary; it
+is roughly right for a memory bound kernel, and removing a $24N$ byte round trip
+per step sounds substantial when stated in bytes. It is worth
+\FusionGainPercentAtMaxN{} percent.
+
+What the expectation missed is arithmetic intensity. The all pairs sum performs
+$O(N^2)$ arithmetic on $O(N)$ data, so the ratio of operations to bytes grows
+without limit as the problem grows. At \LadderMaxN{} particles the force
+evaluation performs about $4 \times 10^{11}$ floating point operations while
+touching a working set of a few megabytes. Removing memory traffic from a
+kernel in that regime is removing something that was not costing anything: the
+counters put device memory throughput at \TiledDramPct{} percent of peak.
+
+The general lesson is that an optimisation should be sized against the resource
+it relieves before it is implemented, not after. Two minutes of arithmetic with
+the measured bandwidth figure would have predicted
+\FusionCeilingPercent{} percent as an upper bound and saved the effort of
+being surprised. That said, the fused kernel is not wasted: it is the correct
+choice at small particle counts, where it wins \FusionGainPercentAtMinN{}
+percent because launch overhead is then a real fraction of the step, and it
+halves the memory footprint of a step.
+
+\section{Tiling is not a bandwidth optimisation here}
+
+The second correction is subtler. Shared memory tiling is conventionally
+introduced as a way of reducing device memory traffic, and the introduction to
+this report frames it that way. On this problem the framing is wrong, and the
+counters say so: device memory throughput is under one percent of peak both
+before and after the change. Tiling still delivers a factor of
+\TilingSpeedupAtMaxN{}, but the resource it relieves is the first level cache
+and the load store pipeline, not the memory bus. Global load sectors fall by a
+factor of \SectorReduction{}, and the naive kernel's first level cache
+throughput of \NaiveLoneTexPct{} percent of peak identifies it as the true
+bottleneck.
+
+This matters practically. Had I tried to improve the naive kernel by attacking
+device memory traffic, for instance by compressing the state or by adding
+prefetching, nothing would have happened. The profile pointed at the right
+resource; reasoning from the textbook description would not have.
+
+\section{Where the specification and the measurement disagreed}
+
+Three points in the original design were changed or contradicted by
+measurement, and each is recorded rather than quietly absorbed.
+
+The host compiler floor of GCC 16.1 is not achievable with CUDA 13.3, which
+refuses any GCC newer than 15. GCC 15.2 supplies the C++23 host standard the
+floor was really for.
+
+The tile width of thirty two costs \TileWidthGainPercent{} percent against a
+width of \BestTileWidth{} on this card. The default was kept so the ladder
+would measure the design as specified, and the sweep is reported so the choice
+is informed.
+
+The estimated runtimes in the specification are far too long. The full
+validation suite, which was estimated at ten to twenty minutes on the grounds
+that the ten thousand step orbit would dominate, completes in about five
+seconds. The estimate assumed the orbit run would be expensive; with two
+particles it is trivially cheap, and the cost is dominated instead by the ten
+thousand particle Plummer runs. The full benchmark sweep, estimated at fifteen
+to thirty minutes, completes in under two minutes.
+
+\section{Limitations}
+
+The all pairs solver is $O(N^2)$ and always will be. At two hundred thousand
+particles a step costs \TiledMsAtMaxN{} milliseconds; at two million it would
+cost a hundred times that. The range where this approach is the right one is
+bounded, and beyond it a tree code is not an optimisation but a different
+algorithm.
+
+The fluid solver is weakly compressible, so it enforces incompressibility only
+through a stiff equation of state. That bounds the time step: the sound speed
+implied by the stiffness constant sets a Courant condition far tighter than the
+fluid velocity would. The dam break runs at a time step of $10^{-4}$ seconds
+for that reason, so the interactive step rates reported in
+Section~\ref{sec:sphresults} are steps per second and not seconds of simulated
+time per second.
+
+Single precision is a deliberate choice and it has a cost. The momentum gate
+measures it directly: the residual is exactly the accumulation of rounding in
+the force sum. For the problems here that cost is far inside the tolerances,
+but a long term integration of a planetary system would need double precision
+positions, and the ladder would look different because double precision
+arithmetic is much slower relative to memory on consumer hardware.
+
+The benchmark measures the fluid from a configuration that begins as a settled
+block and evolves for a few hundred steps during measurement. A fully developed
+splash has a different spatial distribution and therefore a different neighbour
+list length, so the fluid timings should be read as representative of the early
+collapse rather than of every phase of the flow.

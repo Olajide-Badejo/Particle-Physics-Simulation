@@ -1,0 +1,238 @@
+\chapter{Results}
+\label{ch:results}
+
+Every number in this chapter was read mechanically out of a file written by a
+run at commit \texttt{\BenchCommit}, on the machine described in
+Chapter~\ref{ch:background}, with fast math \BenchFastMath{} for the benchmark
+library and off for everything in Section~\ref{sec:gates}.
+
+\section{The kernel ladder}
+
+\begin{table}[htbp]
+  \centering
+  \input{tables/nbody_ladder}
+  \caption{The N-body ladder. Milliseconds per step for each variant, the
+  speedup of each against the naive baseline, and the sustained arithmetic
+  throughput of the tiled kernel.}
+  \label{tab:ladder}
+\end{table}
+
+\begin{table}[htbp]
+  \centering
+  \input{tables/nbody_rung_deltas}
+  \caption{What each rung of the ladder is worth on its own. The first pair of
+  columns is the effect of shared memory tiling; the second is the effect of
+  fusing the integrator into the force kernel.}
+  \label{tab:rungs}
+\end{table}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig_nbody_time}
+  \caption{Step cost against particle count for the three variants.}
+  \label{fig:nbodytime}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig_nbody_speedup}
+  \caption{The same data as a speedup against the naive baseline. The tiled and
+  fused lines lie almost on top of each other, which is itself the result of
+  Section~\ref{sec:fusion}.}
+  \label{fig:nbodyspeedup}
+\end{figure}
+
+Tiling is worth a factor of \TilingSpeedupAtMaxN{} at \LadderMaxN{} particles,
+taking the step from \NaiveMsAtMaxN{} to \TiledMsAtMaxN{} milliseconds. The
+advantage grows with particle count, which is what the mechanism predicts: the
+benefit comes from reuse within a block, and at small counts there are not
+enough blocks resident to matter and the launch overhead is a larger share of
+the step.
+
+The tiled kernel sustains \TiledTflopsAtMaxN{} TFLOP/s at the largest size, and
+the peak observed anywhere in the sweep is \PeakTflops{} TFLOP/s.
+
+\section{Fusion, expectation against measurement}
+\label{sec:fusion}
+
+Before measuring, I expected fusion to be worth ten to twenty percent. It is
+worth \FusionGainPercentAtMaxN{} percent at \LadderMaxN{} particles and
+\FusionGainPercentAtMinN{} percent at \LadderMinN{}. The expectation was wrong
+by more than an order of magnitude, and the reason is worth more than the
+optimisation would have been.
+
+The arithmetic settles it before any profiler is involved. Fusion removes a
+round trip of the acceleration array: $12N$ bytes written and $12N$ bytes read,
+which at \LadderMaxN{} particles is \FusionCeilingMs{} milliseconds at the
+measured streaming bandwidth of \GpuMeasuredBandwidth{} GB/s. Against a step of
+\TiledMsAtMaxN{} milliseconds that is \FusionCeilingPercent{} percent. That is
+not what fusion did deliver; it is the absolute ceiling on what fusion
+\emph{could} deliver. An optimisation that removes memory traffic cannot help a
+problem that is not waiting on memory.
+
+The hardware counters confirm it directly.
+
+\begin{table}[htbp]
+  \centering
+  \input{tables/profile_counters}
+  \caption{Nsight Compute counters for one force kernel launch at one hundred
+  thousand particles. Device memory throughput is below one percent of peak for
+  every variant.}
+  \label{tab:counters}
+\end{table}
+
+Device memory throughput is \NaiveDramPct{} percent of peak for the naive
+kernel and \TiledDramPct{} percent for the tiled one. The all pairs sum is
+$O(N^2)$ arithmetic over $O(N)$ data, so the working set is small, it stays
+resident in cache, and device memory is almost idle throughout. There was never
+any device memory pressure for fusion to relieve.
+
+\section{What tiling actually fixes}
+
+Table~\ref{tab:counters} also corrects a second assumption. Tiling is usually
+described as a bandwidth optimisation, and on this problem it is not one:
+device memory throughput is negligible both before and after. What tiling
+reduces is pressure on the first level cache and the load store pipeline.
+
+Global load sectors fall by a factor of \SectorReduction{} and load store
+instructions by a factor of \LsuReduction{}. First level cache throughput falls
+from \NaiveLoneTexPct{} percent of peak, which is close to saturation and is the
+real bottleneck of the naive kernel, to \TiledLoneTexPct{} percent. The
+consequence shows up in warp issue efficiency, which rises from
+\NaiveIssuePct{} percent to \TiledIssuePct{} percent: the naive kernel spends
+about half its time with nothing to issue because its warps are waiting on the
+load store pipe.
+
+The arithmetic instruction counts are the control in this experiment. They are
+equal across the three variants to within a fraction of a percent, confirming
+that the variants differ only in how they move data. Those counters also let
+the conventional operation count be checked rather than assumed: the twenty
+floating point operations per interaction used throughout this report compares
+with \MeasuredFlopsPerInteraction{} actually retired, counting a fused multiply
+add as two.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig_nbody_throughput}
+  \caption{Sustained single precision throughput. The rise with particle count
+  is the GPU filling up.}
+  \label{fig:throughput}
+\end{figure}
+
+\section{Tile width}
+\label{sec:tilewidth}
+
+\begin{table}[htbp]
+  \centering
+  \input{tables/tile_sweep}
+  \caption{Tile width sweep at one hundred thousand particles.}
+  \label{tab:tiles}
+\end{table}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig_tile_sweep}
+  \caption{Step cost against shared memory tile width.}
+  \label{fig:tiles}
+\end{figure}
+
+The specified tile width of thirty two is not the fastest on this card. A width
+of \BestTileWidth{} runs at \BestTileMs{} milliseconds against \SpecifiedTileMs{}
+for a width of thirty two, a difference of \TileWidthGainPercent{} percent. The
+mechanism is the barrier count: two barriers are paid per tile, so a narrow tile
+pays them more often per unit of arithmetic. The default remains thirty two
+because that is what the specification names, and changing it would have made
+the ladder measurements incomparable with the design they were meant to test;
+the measurement is recorded here so the choice is an informed one.
+
+\section{The fluid solver}
+\label{sec:sphresults}
+
+\begin{table}[htbp]
+  \centering
+  \input{tables/sph_scaling}
+  \caption{Fluid step cost against particle count.}
+  \label{tab:sph}
+\end{table}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig_sph_scaling}
+  \caption{Fluid step cost against particle count.}
+  \label{fig:sph}
+\end{figure}
+
+At the fifty thousand particles the specification targets, a step costs
+\SphMsAtFiftyThousand{} milliseconds, or \SphFpsAtFiftyThousand{} steps per second. At \SphMaxN{}
+particles it costs \SphMsAtMaxN{} milliseconds, \SphFpsAtMaxN{} steps per
+second. The target of interactive rates at fifty thousand particles is met with
+a margin of roughly fifty times against a sixty frame per second budget.
+
+Scaling is markedly sublinear at the small end: ten times the particles costs
+about two and a half times the time. The fixed costs of the step, clearing a
+hash table sized by particle count and the six kernel launches, dominate when
+there is little work to spread them over.
+
+\section{Physics gates}
+\label{sec:gates}
+
+\begin{table}[htbp]
+  \centering
+  \input{tables/validation_gates}
+  \caption{Every physics gate, its measured value and its limit. All values
+  come from the artifacts written by the validation suite, which links the
+  library compiled with fast math off.}
+  \label{tab:gates}
+\end{table}
+
+All \GateCount{} gates pass, most with several orders of magnitude of margin.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig_energy_drift}
+  \caption{Energy conservation of the two body circular orbit.}
+  \label{fig:energy}
+\end{figure}
+
+The energy drift measured over ten thousand steps is \EnergyDriftMeasured{},
+seventy five times inside the limit of one part in a thousand.
+Figure~\ref{fig:energy} shows the shape that matters as much as the magnitude:
+the error rises and then settles onto a bounded plateau rather than growing
+without limit. That is the property a symplectic integrator guarantees. The
+test also compares the worst error in the first half of the run against the
+second, so a scheme that had begun to accumulate would fail even if its total
+error were still small.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig_momentum_drift}
+  \caption{Momentum conservation of a ten thousand particle Plummer sphere.}
+  \label{fig:momentum}
+\end{figure}
+
+Momentum holds to \MomentumDriftMeasured{} relative to the total absolute
+momentum in the system, six orders of magnitude inside the bound that single
+precision arithmetic can explain.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig_plummer_density}
+  \caption{Sampled radial density of the Plummer sphere against the analytic
+  profile.}
+  \label{fig:plummer}
+\end{figure}
+
+The radial density fits the analytic profile at a chi squared p value of
+\PlummerPValue{}, comfortably above the threshold of 0.05. The same test
+applied to a model whose scale radius is ten percent wrong returns a p value
+below $10^{-6}$, which is what establishes that the test can reject at all.
+
+For the fluid solver, the poly6 kernel integrates to one with an error of
+\PolySixNormalisationError{}, and the density field from the hashed neighbour
+search agrees with a brute force $O(N^2)$ sum over the same positions to three
+parts in ten million. The interior of a block filled at rest density recovers
+that density to \SphDensityErrorPercent{} percent. The residual is the expected
+consequence of a finite smoothing radius on a jittered lattice rather than a
+defect: the density estimate is a weighted average over a finite neighbourhood,
+and near the free surface it legitimately falls short because there is no fluid
+on the outside.

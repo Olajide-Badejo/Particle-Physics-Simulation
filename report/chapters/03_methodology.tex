@@ -1,0 +1,125 @@
+\chapter{Methodology}
+\label{ch:methodology}
+
+\section{The kernel ladder}
+
+The point of the ladder is attribution. Three force kernels differ by exactly
+one technique each, so the difference between two rungs can be assigned to that
+technique and nothing else. All three compute the same quantity from the same
+structure of arrays layout, and a test asserts they agree with a double
+precision host reference to better than one part in ten thousand, so a
+performance difference cannot be a difference in what is being computed.
+
+\paragraph{Rung one, naive.} Every thread walks the whole particle array in
+device memory. This is not a straw man built to lose. All threads in a warp read
+the same index on the same cycle, so the load is a broadcast and the line stays
+resident for the whole warp. What it does not do is share that line between the
+warps of a block, so the same data crosses the cache boundary once per resident
+block rather than once per tile.
+
+\paragraph{Rung two, tiled.} The block cooperatively stages a tile of source
+particles in shared memory and every thread of the block consumes it, following
+Nyland, Harris and Prins \cite{nyland2007}. The tile width is thirty two by
+default. The cost is two barriers per tile, so narrow tiles pay the barrier
+more often per unit of arithmetic; Section~\ref{sec:tilewidth} measures that
+trade rather than arguing about it.
+
+\paragraph{Rung three, fused.} The tiled force evaluation and the integrator
+update happen in one launch. This removes a round trip of the acceleration
+array, $12N$ bytes written and $12N$ bytes read, plus one kernel launch per
+step.
+
+Fusion has a correctness constraint that is worth stating because it is easy to
+get wrong. There is no grid wide barrier inside a launch. If the kernel updated
+positions in place, a block that had finished its force sum could overwrite a
+position that another block was still reading, and the result would depend on
+scheduling. Positions are therefore double buffered: read from one array,
+written to the other, swapped afterwards. This costs $12N$ bytes of memory and
+no bandwidth at all, because the write has to happen either way.
+
+\section{Timing protocol}
+
+Three things ruin a GPU timing measurement, and the protocol addresses each.
+
+The first launch of a kernel pays for module loading and for the card ramping
+up its clocks, so every measurement is preceded by warm up steps that are not
+timed.
+
+The host can queue work far faster than the device retires it, so timing on the
+host measures the host. All timings use CUDA events recorded on the same stream
+as the work.
+
+Run length varies enormously across the sweep, from a fraction of a millisecond
+to nearly a hundred. Each point is therefore calibrated first with a single
+timed step, and the run length is chosen to make each trial last about
+\SI{120}{\milli\second}.
+
+Each point runs three such trials and the fastest is kept. The minimum rather
+than the mean, because everything that perturbs a measurement, whether thermal
+throttling or another process on the display, makes it slower and never faster.
+The minimum is the estimate least contaminated by whatever else the machine was
+doing.
+
+One caveat is worth recording. Absolute timings depend on the thermal state of
+the card. A tile width sweep run immediately after the full benchmark sweep
+produced timings about fifteen percent higher than the same sweep run from
+cold, while the relative ordering and the percentage differences between tile
+widths were reproduced to within a tenth of a percentage point. The comparisons
+in this report are therefore all made within a single session, and the
+conclusions rest on relative differences rather than on absolute
+milliseconds.
+
+\section{Validation design}
+
+Each gate is chosen to fail for a specific class of defect rather than to
+produce a reassuring number.
+
+\paragraph{Two body energy drift.} A circular orbit integrated for ten thousand
+steps must conserve total energy to better than one part in a thousand. This is
+the sharpest single statement that can be made about an integrator, and it also
+catches an inconsistent softened potential and a mis-derived initial orbital
+speed. The initial speed is computed from the softened force law, so the orbit
+is genuinely circular rather than a slowly precessing ellipse.
+
+\paragraph{Momentum conservation.} The internal forces of an isolated system
+cancel exactly in the mathematics. On the device they cancel only to rounding,
+because each thread accumulates its own sum in single precision in its own
+order. The gate bounds the residual against what single precision can explain,
+$\epsilon_{\mathrm{f32}} \sqrt{N} n_{\mathrm{steps}}$, rather than against an
+arbitrary constant.
+
+\paragraph{Force antisymmetry.} Newton's third law checked pair by pair against
+an independent double precision host implementation, written as literally as
+the force law can be written, with no tiling and no reciprocal square root. Its
+only job is to be obviously correct.
+
+\paragraph{Plummer radial density.} A chi squared test of the sampled radial
+distribution against the analytic cumulative mass profile. Shells are chosen to
+hold equal expected counts, so no bin is too sparse for the statistic to be
+valid. A sampler with a subtly wrong exponent produces a blob that looks
+perfectly reasonable and fails this immediately. The test is itself checked by
+running it against a deliberately wrong scale radius, which it must reject.
+
+\paragraph{SPH kernel normalisation.} Each smoothing kernel is integrated over
+its support by composite Simpson quadrature and must come to one within
+$10^{-3}$. A kernel whose normalisation is off by a few percent produces a
+density field wrong by the same few percent everywhere, and the fluid still
+looks like a fluid.
+
+\paragraph{Neighbour search against brute force.} The density field from the
+hashed neighbour search is compared against an $O(N^2)$ host sum over the same
+positions. This is what would catch a dropped or double counted neighbour, and
+it is the direct test of the cell key defence described in
+Chapter~\ref{ch:background}.
+
+\section{Reproducibility}
+
+Every configuration carries an explicit seed and the initial conditions are
+generated on the host from a written out uniform mapping rather than from a
+standard library distribution, whose sequence is not specified across
+implementations. Each benchmark row records the seed, the commit, the CUDA
+runtime and driver versions, the fast math setting and a timestamp. Snapshots
+are written to a temporary file and renamed into place, so an interrupted run
+never leaves a half written snapshot for a later resume to pick up, and a test
+asserts that stopping and resuming reproduces a straight through run bit for
+bit.

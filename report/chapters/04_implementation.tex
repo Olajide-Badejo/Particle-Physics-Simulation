@@ -1,0 +1,101 @@
+\chapter{Implementation}
+\label{ch:implementation}
+
+\section{Layout and state}
+
+Particle state lives on the device for the whole run as thirteen float arrays:
+three positions, three staged positions for the fused path, three velocities,
+three accelerations and the mass. At two hundred thousand particles that is
+about ten megabytes, so memory is never a constraint at these sizes and the
+layout decision is entirely about access pattern.
+
+The host holds no particle data during a run. Configuration and diagnostic
+accumulators are the only host allocations, and the snapshot staging buffer is
+touched only when a snapshot is actually written.
+
+\section{Separating the physics from the kernels}
+
+The force law, the smoothing kernels, the equation of state and the spatial
+hash all live in headers marked so they compile both as device code and as
+ordinary host C++. This buys two things. The kernels and the host side tests
+cannot drift apart, because they are the same code. And the formula level
+tests, which are the majority of them, run in continuous integration on a
+machine with no GPU.
+
+\section{The three force kernels}
+
+The tiled kernel has one subtlety worth recording. Threads whose index is past
+the end of the array must not return early, because they still have to reach
+both barriers on every iteration of the tile loop; a barrier that only some
+threads of a block arrive at is undefined behaviour. They run the whole loop
+with clamped reads and discard the result at the end. Padded tile slots carry
+zero mass, so they contribute nothing and the inner loop needs no bounds test
+at all. Self interaction is likewise harmless and is deliberately not
+special-cased: the numerator vanishes while the softened denominator stays
+finite, so the diagonal term contributes exactly zero and the inner loop stays
+branch free.
+
+\section{The fluid step}
+
+One fluid step is six device passes: hash, sort, cell bounds, gather, density,
+and a combined force and integration pass.
+
+The sort is a CUB radix sort of bucket and index pairs \cite{cccl}. Only the
+bits that can differ are sorted: the table size bounds the bucket index, so the
+sort stops at the significant bit count rather than walking all thirty two
+bits.
+
+After sorting, particle data is gathered into cell sorted order, and the
+permutation is kept. The particle arrays end a step in the order the next step
+wants, so the sort has an effect that outlives the step that paid for it.
+Because that permutation must be a bijection, one gate checks that the multiset
+of particle masses is unchanged across a step and another checks that total mass
+is conserved over two thousand steps; a gather that lost or duplicated an index
+would show up in both.
+
+The force and integration pass is fused for the same reason the gravitational
+one is, and it is safe for the same reason: the sorted arrays it reads are a
+separate copy from the primary arrays it writes.
+
+\section{Diagnostics without perturbing the run}
+
+The particle state is single precision, but the reduction that measures
+conservation is not. A float32 tree reduction over ten thousand terms loses
+three to four decimal digits, and the energy gate resolves one part in a
+thousand over ten thousand steps; reducing in single precision would have
+measured the reduction rather than the integrator. Accumulators are double, and
+the block partials are summed in a fixed order on the host rather than with
+atomics, so two runs of the same configuration agree bit for bit.
+
+The fused variant carries the leapfrog half step velocity, which is not the
+velocity belonging to the current positions. Recovering the synchronised
+velocity by shifting the array forward and then back would not return the
+original bits, and that would break the bit identity guarantee for any run that
+happened to take a diagnostic. The correction is applied inside the reduction
+kernel instead, and a test asserts that taking a diagnostic on every step
+leaves the trajectory unchanged.
+
+\section{Snapshots and resume}
+
+The snapshot header is sixteen bytes: magic number, particle count, step index,
+and a flags word. The flags word carries the one thing a reader cannot infer
+from the numbers, namely whether the stored velocities are synchronised with
+the positions or offset by half a step. Resuming a fused run under the wrong
+convention would shift the whole trajectory by half a step, which looks exactly
+like a subtly wrong force.
+
+Accelerations are not stored. They are a deterministic function of the
+positions, so recomputing them on load is cheaper than storing them and
+guarantees the resumed run enters the loop in exactly the state the original
+run held.
+
+\section{The style gate}
+
+The repository forbids en dashes and em dashes. Enforcing that on source files
+is easy; enforcing it on the reports is not, because TeX silently turns two
+hyphens into an en dash. The gate therefore also parses the LaTeX sources for
+that ligature, excluding verbatim regions where a command line flag legitimately
+contains two hyphens, and runs over the compiled PDFs through a text extractor.
+It caught a real instance during this build: the page ranges in the
+bibliography, written in the conventional BibTeX style, would have rendered as
+en dashes in the reference list of the finished document.

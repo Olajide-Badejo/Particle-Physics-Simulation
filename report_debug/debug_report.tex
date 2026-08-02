@@ -1,0 +1,76 @@
+\documentclass[11pt,a4paper]{report}
+
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{codebg}{HTML}{F5F5F2}
+\definecolor{rule}{HTML}{C3C2B7}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{rule},
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false
+}
+
+% The same generated numbers the main report uses, so the two documents cannot
+% disagree about a measurement.
+\input{../report/numbers.tex}
+
+% Each entry has the same shape: what I saw, what was actually wrong, what the
+% options were, what I chose and why, and how I know it is fixed.
+\newcommand{\entry}[1]{\section{#1}}
+\newcommand{\field}[1]{\paragraph{#1}}
+
+\title{\textbf{Particle Physics Simulation}\\[0.4em]
+       \large Debug report: defects, surprises and corrections from the build}
+\author{Olajide Badejo}
+\date{August 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent
+This is the companion to the main report and it ranks equally with it. The main
+report says what the engine does; this one says what went wrong on the way and
+what each failure taught, because in a project whose output is numbers the
+history of the numbers that were wrong is worth as much as the ones that were
+right.
+
+Entries are grouped by theme. Environment covers the four toolchain defects
+that had to be cleared before a single kernel compiled, one of which would have
+silently produced a binary for the wrong GPU architecture. Performance covers
+the two results that contradicted my expectations: fusion delivering
+\FusionGainPercentAtMaxN{} percent where I expected ten to twenty, and shared
+memory tiling turning out not to be a bandwidth optimisation at all. Physics
+and tooling covers the defects in the correctness apparatus itself, including
+two cases where the test rather than the code was wrong, and a data corruption
+bug that put a random seed into a tile width column.
+
+The most valuable entries here are the ones where nothing crashed. A build
+targeting the wrong architecture, a benchmark reading a corrupted column and an
+optimisation that quietly does nothing all produce plausible output, and none
+of them announces itself.
+\end{abstract}
+
+\tableofcontents
+
+\input{sections/01_environment}
+\input{sections/02_performance}
+\input{sections/03_physics_and_tooling}
+\input{sections/04_lessons}
+
+\end{document}

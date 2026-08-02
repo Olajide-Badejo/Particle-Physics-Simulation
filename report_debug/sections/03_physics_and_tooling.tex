@@ -1,0 +1,156 @@
+\chapter{Physics and tooling}
+
+The entries here are about the correctness apparatus rather than the physics
+kernels. Two of them are cases where the test was wrong rather than the code,
+which is worth recording precisely because a wrong test is more dangerous than
+a wrong implementation: it either blocks correct work or, far worse, passes
+when it should not.
+
+\entry{The hash collision that would have counted neighbours twice}
+
+\field{The pathology.} Spatial hashing is many to one by construction. Two
+distinct grid cells can map to the same bucket. The neighbour search visits the
+twenty seven cells around a particle and scans each one's bucket, so if two of
+those twenty seven cells collide in the table, the particles in that bucket are
+scanned twice and counted twice.
+
+The reason this is nasty is that the usual defence does not work. Filtering
+candidates by distance removes particles from unrelated cells, because they are
+genuinely far away. It does nothing about double counting, because those
+particles really are within the smoothing radius; they are simply being added
+to the sum more than once. The density would come out high by an amount that
+depends on the hash function rather than on the fluid, and the fluid would
+still look like a fluid.
+
+\field{Fix and why.} Each particle stores an exact cell identity packed into 64
+bits as three 21 bit fields, and the bucket scan compares it before accepting a
+candidate. This rejects both classes at once, at the cost of one 64 bit compare
+per candidate. The alternative of deduplicating the twenty seven hashed buckets
+before scanning would cost hundreds of comparisons per particle rather than
+one per candidate.
+
+\field{Verification.} This is the one defect in the project that was designed
+against rather than discovered, so the verification carries the whole weight.
+The density field produced by the hashed search is compared against a brute
+force $O(N^2)$ host sum over identical positions, and the worst relative
+difference across four thousand particles is three parts in ten million, which
+is single precision rounding. A single dropped or double counted neighbour
+would move a density by several percent. A separate health check counts
+particles sharing a bucket with a foreign cell and confirms the collision rate
+is real but small, so the test is exercising the defence rather than a table so
+sparse that no collisions occur.
+
+\entry{A diagnostic that would have perturbed the run it measured}
+
+\field{The problem.} The fused variant carries the leapfrog half step velocity,
+which is not the velocity belonging to the current positions. The energy
+diagnostic needs the synchronised one. The obvious implementation is to shift
+the velocity array forward by half a step, take the measurement, and shift it
+back.
+
+\field{Why that is wrong.} In single precision, adding a quantity and then
+subtracting it does not return the original bits. A run that happened to take a
+diagnostic would therefore follow a very slightly different trajectory from one
+that did not, which breaks the bit identity guarantee the resume path claims
+and makes the energy curve partly a measurement of its own observer.
+
+\field{Fix.} The half step correction is applied inside the reduction kernel,
+which reads the velocity and the stored acceleration and forms $v + a\,\Delta
+t/2$ on the fly without writing anything back.
+
+\field{Verification.} A test runs eighty steps taking a full diagnostic after
+every step, and asserts the final state is bit for bit identical to the same
+run with no diagnostics at all.
+
+\entry{A test that failed for a reason that was entirely my fault}
+
+\field{Symptom.} The SPH kernel unit test
+\texttt{KernelsAreContinuousAtTheSupportBoundary} failed on first run, while
+every other kernel test passed.
+
+\field{Root cause.} The test asserted that each kernel evaluated just inside its
+support boundary was within $10^{-3}$ of zero, in absolute terms. These kernels
+carry a $1/h^6$ normalisation: at a smoothing radius of $0.1$ the spiky
+gradient peaks around $1.4 \times 10^5$ and the viscosity Laplacian around
+$1.4 \times 10^6$. An absolute tolerance of $10^{-3}$ against quantities of that
+magnitude is not a statement about continuity, it is a statement about nothing.
+The implementation was correct throughout.
+
+\field{Fix.} The test now compares each kernel at the boundary against its own
+peak value, which is what continuity actually means for a quantity with a
+scale, and separately asserts the kernels are exactly zero outside the support
+so the transition is genuinely continuous rather than merely small.
+
+\field{Lesson.} A tolerance without a scale is not a tolerance. Every numerical
+gate in this project is now expressed relative to something: the magnitude of
+the quantity, the machine epsilon, or a bound derived from the arithmetic.
+
+\entry{A benchmark that recorded a random seed as a tile width}
+
+\field{Symptom.} The tile width figure had four bars, one of which sat at a
+tile width of \texttt{20260802}. That number is the random seed.
+
+\field{Root cause.} The tile sweep opened the output file twice. It created a
+truncating output stream to write the header, and then called the row appending
+helper, which opens the same path independently in append mode. The header
+stream stayed open and buffered for the duration of the sweep and flushed at
+offset zero when it was finally destroyed, overwriting the beginning of the
+file with the header text. What survived was a file whose first rows were
+partly overwritten, so the column boundaries shifted and fields were read from
+the wrong columns.
+
+\field{Fix.} The header is written through the same append path as the rows,
+with the file removed first, so only one handle to the file exists at any time.
+
+\field{Why it is in this report.} Nothing failed. The benchmark ran, the CSV
+parsed, the plot rendered, and the number was wrong. It was caught by looking
+at the figure and asking what a tile width of twenty million meant. The general
+form of this defect is that two independent handles to one file will corrupt
+it, and buffering makes the corruption appear far from its cause.
+
+\entry{LaTeX macro names cannot contain digits}
+
+\field{Symptom.} The report failed to compile with
+\texttt{Missing \textbackslash begin\{document\}} pointing at a line in the
+generated macro file that looked entirely reasonable.
+
+\field{Root cause.} A LaTeX control sequence is made of letters only. The
+offending definition was
+
+\begin{lstlisting}
+\newcommand{\Poly6NormalisationError}{...}
+\end{lstlisting}
+
+\noindent
+in which the name ends at the digit, so this defined a macro called
+\texttt{Poly} followed by the literal text \texttt{6NormalisationError}. Literal
+text in the preamble is what produces that error message, and it is reported at
+the point of the text rather than at the mistake.
+
+\field{Fix.} The three offending macros were renamed to spell their digits, and
+the generator now rejects any macro name that is not purely alphabetic, so this
+class of mistake fails at generation time with a message that names the
+problem rather than at compile time with one that does not.
+
+\entry{BibTeX put en dashes back after they had been removed}
+
+\field{Symptom.} The dash gate failed on the compiled PDF, reporting seven en
+dashes in the bibliography, after the source bibliography had been cleaned of
+double hyphens and the gate had reported the sources clean.
+
+\field{Root cause.} The bibliography style is what dashifies page ranges. The
+\texttt{plain} style passes page fields through a function that converts any
+run of hyphens into a TeX en dash ligature when it writes the intermediate
+bibliography file. Cleaning the source had no effect because the source was
+never the problem.
+
+\field{Fix.} Page ranges are written with the word \texttt{to}, which the style
+passes through untouched. This also makes the bibliography consistent with the
+prose, which is required to write ranges the same way.
+
+\field{Why this justifies the whole design of the gate.} The rule forbids a
+character in the finished document, so the gate has to check the finished
+document. A source only check would have reported clean while every reference
+in the printed bibliography broke the rule. Extracting the text of the compiled
+PDF and scanning that is what caught it, and it is the reason the gate runs
+last in the report build rather than first.

@@ -1,0 +1,152 @@
+name: ci
+
+# Three jobs, none of which needs a GPU.
+#
+#   host-tests   builds the CUDA free half of the project and runs its 59 unit
+#                tests. No toolkit involved at all, so this is fast and cannot
+#                be broken by an installer.
+#   cuda-build   compiles the whole project for sm_120 inside the official
+#                CUDA image, with warnings as errors. Proves the device code
+#                still compiles; the execution tests need hardware and are not
+#                run here.
+#   reports      rebuilds the figures, tables and both PDFs from the committed
+#                results and runs the style gate over the compiled documents.
+#
+# Tests that need a device skip with the reason stated rather than failing, so
+# a green run here is honest about what it did and did not exercise.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Host tests, no CUDA
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ python3
+
+      - name: Style gate
+        run: python3 scripts/check_no_dashes.py .
+
+      - name: Configure without CUDA
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCPS_HOST_ONLY=ON -DCPS_BUILD_TESTS=ON
+
+      - name: Build with warnings as errors
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Run the host test suite
+        run: ctest --test-dir build --output-on-failure
+
+  cuda-build:
+    name: CUDA build for sm_120
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # The official image pins the same toolkit the results were measured with,
+    # which makes this job deterministic in a way a network installer is not.
+    container: nvidia/cuda:13.3.1-devel-ubuntu24.04
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            cmake git ca-certificates python3 build-essential
+
+      - uses: actions/checkout@v4
+
+      - name: Report the toolchain
+        run: |
+          nvcc --version
+          cmake --version
+          g++ --version | head -1
+
+      - name: Configure
+        # No GPU is present, so the tests are built but not run. Compiling them
+        # is the point: it is what catches a kernel that no longer compiles.
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CUDA_ARCHITECTURES=120 \
+            -DCPS_BUILD_TESTS=ON \
+            -DCPS_BUILD_BENCHMARKS=ON \
+            -DCPS_USE_FAST_MATH=ON
+
+      - name: Build everything with warnings as errors
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Confirm real sm_120 code was emitted, not just PTX
+        # A build can silently target the wrong architecture and still run
+        # through just in time compilation, at the wrong speed. The object file
+        # is the only thing that settles it.
+        run: |
+          cuobjdump --list-elf build/CMakeFiles/physics_core.dir/src/kernels/nbody_tiled.cu.o \
+            | tee /tmp/elf.txt
+          grep -q "sm_120" /tmp/elf.txt
+
+      - name: Run the host tests that do not need a device
+        run: ctest --test-dir build --output-on-failure -L host
+
+  reports:
+    name: Reports and style gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install TeX and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            latexmk texlive-latex-recommended texlive-latex-extra \
+            texlive-fonts-recommended texlive-science lmodern poppler-utils \
+            make git python3 python3-matplotlib python3-tqdm
+
+      - name: Regenerate figures and tables from the committed results
+        # The canonical result files are committed, so the documents rebuild
+        # here from real recorded data with no GPU involved.
+        run: |
+          python3 scripts/plot_results.py
+          python3 scripts/gen_report_assets.py
+
+      - name: Confirm the generated assets match the committed ones
+        # If this fails, someone edited a figure or a table by hand instead of
+        # regenerating it, which is exactly what the pipeline exists to prevent.
+        run: |
+          git diff --stat -- report/tables report/numbers.tex
+          git diff --quiet -- report/tables report/numbers.tex \
+            || (echo "generated assets differ from the committed ones" && exit 1)
+
+      - name: Build both reports
+        run: |
+          make -C report
+          make -C report_debug
+
+      - name: Style gate over the compiled PDFs
+        # TeX turns two hyphens into an en dash silently, so only the finished
+        # document proves the rule held.
+        run: python3 scripts/check_no_dashes.py .
+
+      - name: Upload the reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            report/main.pdf
+            report_debug/debug_report.pdf

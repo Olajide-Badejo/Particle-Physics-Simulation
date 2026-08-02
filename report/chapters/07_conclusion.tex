@@ -1,0 +1,49 @@
+\chapter{Conclusion}
+\label{ch:conclusion}
+
+The engine does what it was built to do. Direct N-body gravity runs at
+\TiledTflopsAtMaxN{} TFLOP/s of sustained single precision arithmetic at
+\LadderMaxN{} particles, and the fluid solver runs \SphMaxN{} particles at
+\SphMsAtMaxN{} milliseconds per step, roughly fifty times inside an interactive
+budget at the fifty thousand particles it was aimed at. All \GateCount{}
+physics gates pass, most with orders of magnitude of margin, against a library
+compiled with fast math disabled so that no compiler flag can relax them.
+
+The memory hierarchy ladder produced a clear answer and a clear correction.
+Shared memory tiling is worth a factor of \TilingSpeedupAtMaxN{}, and the
+hardware counters attribute that gain to a \SectorReduction{} times reduction
+in global load sectors relieving a saturated load store pipeline, not to device
+memory bandwidth, which never rose above one percent of peak in any variant.
+Fusing the integrator into the force kernel was expected to be worth ten to
+twenty percent and is worth \FusionGainPercentAtMaxN{} percent, for the good
+reason that an $O(N^2)$ arithmetic problem on $O(N)$ data is not waiting on
+memory at all. Both results are more useful than the numbers I expected to
+report, because both changed how I would size the next optimisation before
+writing it.
+
+The parts of the design that survived contact with measurement did so because
+they were chosen against a specific failure. Velocity Verlet was chosen because
+its energy error is bounded rather than merely small, and
+Figure~\ref{fig:energy} shows exactly that shape. The exact cell key comparison
+in the neighbour search was added because hashing is many to one and a bucket
+scan would otherwise count some neighbours twice, and the brute force
+comparison confirms it works to three parts in ten million. Double precision
+diagnostic accumulators were chosen because a single precision reduction would
+have measured itself rather than the integrator.
+
+\section{Further work}
+
+A Barnes Hut tree code is the obvious next step and the one that changes the
+reachable problem size rather than the constant factor. Its irregular traversal
+is a genuinely different GPU problem, and the tiled kernel here would remain the
+right choice for the leaf level interactions.
+
+The fluid solver would benefit more from a position based or projection based
+incompressibility treatment than from any further kernel tuning, because the
+stiff equation of state, not the neighbour search, is what bounds the time step.
+
+The tile width result suggests a small piece of unfinished business: with the
+default at thirty two for fidelity to the specification, and \BestTileWidth{}
+measurably faster, the right resolution is to make the width a configuration
+field so the ladder can be run at the specified width while production runs use
+the fastest one.

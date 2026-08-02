@@ -1,0 +1,137 @@
+\chapter{Environment}
+
+Four defects stood between a clean checkout and a compiling kernel. None was
+interesting in itself; all four are recorded because three of them produce
+misleading rather than obvious failures.
+
+\entry{nvcc 13.3 refuses GCC 16 as a host compiler}
+
+\field{Symptom.} Compiling a trivial CUDA file with \texttt{-ccbin g++-16}:
+
+\begin{lstlisting}
+crt/host_config.h:137:2: error: #error -- unsupported GNU version! gcc
+versions later than 15 are not supported!
+\end{lstlisting}
+
+\field{Root cause.} CUDA 13.3 supports GCC up to and including 15 and enforces
+that with a preprocessor check, so this is a deliberate refusal rather than a
+parse failure in some header. The machine has GCC 13, 14, 15 and 16 installed
+and defaults to 15, so the problem only appears if the specified floor of GCC
+16.1 is taken literally, which it was.
+
+\field{Options.} Pass \texttt{-allow-unsupported-compiler} and use GCC 16
+anyway; drop to GCC 15.2, the newest supported host compiler; or install an
+older toolkit.
+
+\field{Fix and why.} GCC 15.2. What the floor was really buying is the C++23
+host standard, and GCC 15.2 provides that in full. Suppressing the toolkit's
+own compatibility check on a project whose entire output is numbers that are
+supposed to be trustworthy is the wrong trade: a miscompiled force kernel that
+still runs is the worst failure mode available here. Dropping the toolkit would
+have given up first class \texttt{sm\_120} support on this card.
+
+\field{Verification.} A kernel plus a CUB radix sort compiles, links and runs
+correctly under \texttt{-ccbin g++-15 -arch=sm\_120 -std=c++23}. Recorded as a
+substitution in \texttt{PROGRESS.md}.
+
+\entry{CUDA 13 removed clockRate and memoryClockRate}
+
+\field{Symptom.} The device probe would not compile:
+
+\begin{lstlisting}
+error: class "cudaDeviceProp" has no member "clockRate"
+error: class "cudaDeviceProp" has no member "memoryClockRate"
+\end{lstlisting}
+
+\field{Root cause.} Both fields were deprecated during the CUDA 12 series and
+removed in CUDA 13. The information is still available through
+\texttt{cudaDeviceGetAttribute}.
+
+\field{Fix and why.} Query both through the attribute interface. This matters
+more than a compile fix normally would: the memory clock and bus width are what
+the theoretical peak bandwidth is computed from, and that figure is the
+denominator of every bandwidth statement in the main report. Hard coding it
+from a specification sheet would have meant quoting a number that had never
+been measured on the machine that produced the results, which is exactly what
+the no number without a run rule exists to prevent.
+
+\field{Verification.} The probe reports \GpuBusBits{} bits at the measured
+memory clock, giving \GpuPeakBandwidth{} GB/s, which agrees with the
+manufacturer figure.
+
+\entry{CMake could not identify the CUDA compiler at all}
+
+\field{Symptom.} Configuration failed inside \texttt{project()}, before any
+project code was reached:
+
+\begin{lstlisting}
+/usr/include/c++/15/type_traits(3303): error: __bool_constant is not a template
+Error limit reached.
+100 errors detected in the compilation of "CMakeCUDACompilerId.cu".
+\end{lstlisting}
+
+The confusing part was that nvcc had just compiled my own test kernel against
+the same standard library without complaint.
+
+\field{Root cause.} The difference was the standard flag. My test passed
+\texttt{-std=c++20} explicitly. nvcc 13.3 defaults to C++17, and the libstdc++
+15 headers it is paired with here use \texttt{if consteval} inside
+\texttt{bits/c++config.h}, which is C++23 syntax. Under the default standard
+the front end cannot parse its own standard library, so nvcc fails on an empty
+translation unit. Reduced to two lines the failure is unambiguous:
+
+\begin{lstlisting}
+c++config.h(586): error: expected a "("
+      if consteval { return true; } else { return false; }
+\end{lstlisting}
+
+CMake identifies the CUDA compiler by compiling a probe with
+\texttt{CMAKE\_CUDA\_FLAGS} and nothing else. \texttt{CMAKE\_CUDA\_STANDARD} has
+no effect there, because it applies to targets and no targets exist yet.
+
+\field{Fix and why.} Seed \texttt{CMAKE\_CUDA\_FLAGS} with the standard before
+\texttt{project()}, guarded so a value passed on the command line still wins.
+Requiring every person who clones the repository to pass an extra flag would
+have broken the promise that a clean clone plus two make commands reproduces
+everything.
+
+\field{Verification.} Configuration reports \texttt{The CUDA compiler
+identification is NVIDIA 13.3.73 with host compiler GNU 15.2.0}.
+
+\entry{The build silently targeted the wrong GPU architecture}
+
+\field{Symptom.} None. Everything compiled and would have run. The only trace
+was a status line reading \texttt{CUDA architectures: 75}, which is Turing, not
+the Blackwell part in the machine.
+
+\field{Root cause.} The default was being set with a guard placed after
+\texttt{project()}:
+
+\begin{lstlisting}
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES 120)
+endif()
+\end{lstlisting}
+
+Enabling the CUDA language inside \texttt{project()} assigns a default
+architecture immediately, so by the time the guard runs the variable is already
+defined and the branch never fires.
+
+\field{Fix and why.} Move the guard above \texttt{project()} and make it a
+cache variable, which is the only position where it can observe the undefined
+state while still losing to a value passed on the command line.
+
+\field{Why this is the most important entry in the chapter.} Nothing broke.
+The code would have run on the RTX 5070 through just in time compilation of the
+embedded PTX, correctly and at the wrong speed. Every timing number in the
+benchmark ladder would have been measured against a binary built for the wrong
+architecture, and the only symptom would have been results somewhat worse than
+expected, which is indistinguishable from the code simply being slow. A defect
+that produces plausible numbers is far more dangerous than one that crashes.
+
+% Two hyphens inside \texttt still form an en dash ligature; only a verbatim
+% region suppresses it. The dash gate caught this one in the compiled PDF.
+\field{Verification.} The status line now reads \texttt{CUDA architectures:
+120}, and \verb|cuobjdump --list-elf| on a built object reports
+\texttt{sm\_120} SASS rather than PTX alone. The latter check is the real one:
+the status line reports intent, the object file reports fact.
