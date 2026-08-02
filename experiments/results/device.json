@@ -1,0 +1,18 @@
+{
+  "device": 0,
+  "name": "NVIDIA GeForce RTX 5070",
+  "compute_capability": "12.0",
+  "multiprocessor_count": 48,
+  "clock_khz": 2625000,
+  "memory_clock_khz": 14001000,
+  "memory_bus_width_bits": 192,
+  "peak_bandwidth_gb_s": 672.048,
+  "total_global_memory_bytes": 12820480000,
+  "shared_memory_per_block_bytes": 49152,
+  "max_threads_per_block": 1024,
+  "warp_size": 32,
+  "cuda_runtime_version": 13030,
+  "cuda_driver_version": 13030
+,
+  "measured_copy_gb_s": 549.8541
+}

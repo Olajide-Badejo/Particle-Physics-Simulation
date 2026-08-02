@@ -1,0 +1,11 @@
+\begin{tabular}{l rrr rr}
+\toprule
+& \multicolumn{3}{c}{throughput, percent of peak} & \multicolumn{2}{c}{per launch} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}
+variant & L1 and load store & L2 & device memory & global load sectors & warp issue \\
+\midrule
+naive & 80.19 & 1.77 & 0.55 & 1,250.0M & 50.12 \\
+tiled & 39.93 & 1.76 & 0.45 & 19.6M & 74.53 \\
+fused & 40.15 & 1.80 & 0.57 & 19.6M & 74.94 \\
+\bottomrule
+\end{tabular}
