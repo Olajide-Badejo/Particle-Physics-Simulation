@@ -1,0 +1,28 @@
+{
+  "name": "dam_break_50k",
+  "solver": "sph",
+  "initial_condition": "dam_break",
+  "num_particles": 50000,
+  "steps": 2000,
+  "dt": 0.0001,
+  "seed": 20260802,
+  "block_size": 256,
+  "external_gravity": [0.0, -9.81, 0.0],
+  "snapshot_interval": 500,
+  "snapshot_dir": "snapshots/dam_break_50k",
+  "diagnostics_interval": 100,
+  "diagnostics_path": "experiments/results/dam_break_50k_diagnostics.csv",
+  "sph": {
+    "smoothing_radius": 0.0,
+    "particle_mass": 0.0,
+    "rest_density": 1000.0,
+    "gas_constant": 1000.0,
+    "viscosity": 0.2,
+    "boundary_damping": 0.4,
+    "jitter": 0.05,
+    "domain_min": [0.0, 0.0, 0.0],
+    "domain_max": [0.8, 0.5, 0.4],
+    "fluid_min": [0.0, 0.0, 0.0],
+    "fluid_max": [0.3, 0.4, 0.4]
+  }
+}
