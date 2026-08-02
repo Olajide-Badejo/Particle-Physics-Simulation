@@ -155,6 +155,30 @@ standard has to be seeded first. `project()` assigns a default architecture the
 moment it enables CUDA, so a guard placed after it never fires and the build
 silently targets the wrong card.
 
+### The device standard is detected, not asserted
+
+The host standard is always C++23. The device standard is C++23 when the
+running CMake lists `cuda_std_23` among its CUDA compile features, and C++20
+otherwise, with the choice reported in the configuration summary.
+
+This is not defensive coding for its own sake. Whether nvcc can be asked for
+C++23 is a property of CMake rather than of the compiler: CMake 4.4 knows, the
+CMake 3.28 that Ubuntu 24.04 ships does not, and asking the older one fails at
+generate time with an error that blames the compiler. Nothing in the device
+code needs a C++23 feature, and the whole project builds and passes every test
+under C++20, so the fallback costs nothing. Override with
+`-DCPS_CUDA_STANDARD=20` to exercise it deliberately.
+
+### A host only build mode
+
+`-DCPS_HOST_ONLY=ON` builds the configuration layer, the snapshot format, the
+initial condition generators and the physics formulas with their unit tests,
+and never enables the CUDA language at all. It exists so a machine with no
+toolkit can still run a meaningful part of the suite, which is what the
+continuous integration host job does. It is also what isolated the CMake
+standard defect above: the host job passed while the CUDA job failed, which
+located the fault immediately.
+
 ### GCC 15.2 rather than the specified GCC 16.1
 
 Forced: nvcc 13.3 refuses any GCC newer than 15. Rejected

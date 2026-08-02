@@ -3,15 +3,19 @@ cmake_minimum_required(VERSION 3.28)
 # This has to happen before project(), and it is not optional on this toolchain.
 #
 # nvcc 13.3 defaults to C++17 for host code. The libstdc++ 15 headers it is
-# paired with here use "if consteval" inside c++config.h, which is C++23 syntax
-# that the C++17 front end rejects, so any nvcc invocation without an explicit
-# standard fails to compile even an empty translation unit. CMake identifies
-# the CUDA compiler by compiling a probe file with CMAKE_CUDA_FLAGS and nothing
-# else, long before CMAKE_CUDA_STANDARD below has any effect, so without this
-# line configuration dies during project(). Seeding the flag here fixes the
-# probe; the standard property later sets the same value for real targets.
+# paired with here use "if consteval" inside c++config.h, which the C++17 front
+# end rejects, so any nvcc invocation without an explicit standard fails to
+# compile even an empty translation unit. CMake identifies the CUDA compiler by
+# compiling a probe file with CMAKE_CUDA_FLAGS and nothing else, long before
+# CMAKE_CUDA_STANDARD has any effect, so without this line configuration dies
+# during project().
+#
+# C++20 is deliberately the seed rather than C++23: it is enough to get the
+# probe through on every libstdc++ tested, and it does not assume the running
+# CMake knows that nvcc can do C++23. The real standard for targets is chosen
+# by capability below.
 if(NOT DEFINED CMAKE_CUDA_FLAGS)
-  set(CMAKE_CUDA_FLAGS "-std=c++23")
+  set(CMAKE_CUDA_FLAGS "-std=c++20")
 endif()
 
 # Also before project(), and for a related reason: project() assigns a default
@@ -56,8 +60,24 @@ option(CPS_WERROR "Treat compiler warnings as errors" ON)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# The device standard is chosen by asking CMake what it can actually offer,
+# rather than by asserting C++23 and hoping.
+#
+# Knowing that nvcc supports the C++23 dialect is a property of the running
+# CMake, not of the compiler: CMake 4.4 lists cuda_std_23, while the CMake 3.28
+# shipped by Ubuntu 24.04 does not, and asking it for CUDA23 fails at generate
+# time with "the current compiler NVIDIA does not support this". The host
+# standard stays at C++23 either way; nothing in the device code needs a C++23
+# feature, so the fallback costs nothing but is worth reporting.
 if(NOT CPS_HOST_ONLY)
-  set(CMAKE_CUDA_STANDARD 23)
+  if(NOT DEFINED CPS_CUDA_STANDARD)
+    if("cuda_std_23" IN_LIST CMAKE_CUDA_COMPILE_FEATURES)
+      set(CPS_CUDA_STANDARD 23)
+    else()
+      set(CPS_CUDA_STANDARD 20)
+    endif()
+  endif()
+  set(CMAKE_CUDA_STANDARD ${CPS_CUDA_STANDARD})
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -275,4 +295,8 @@ message(STATUS "cuda_physics_sim ${PROJECT_VERSION}")
 message(STATUS "  CUDA toolkit      : ${CUDAToolkit_VERSION}")
 message(STATUS "  CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  Host compiler     : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "  Host standard     : C++${CMAKE_CXX_STANDARD}")
+if(NOT CPS_HOST_ONLY)
+  message(STATUS "  Device standard   : C++${CMAKE_CUDA_STANDARD}")
+endif()
 message(STATUS "  Fast math         : ${CPS_USE_FAST_MATH} (validation library always off)")

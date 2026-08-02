@@ -321,3 +321,61 @@ finished document, so the gate has to read the finished document. A source only
 check would have reported clean while every reference in the printed
 bibliography broke the rule. This is why the gate runs last in the report build
 and extracts text from the compiled PDF.
+
+---
+
+## 2026-08-02: the declared CMake minimum was a version that cannot build the project
+
+**Theme:** environment.
+
+**Symptom.** The first continuous integration run failed at the configure step,
+in the CUDA job only. The host job passed. Configuration itself succeeded and
+then the generate step failed, four times over:
+
+```
+CMake Error in CMakeLists.txt:
+  Target "physics_core" requires the language dialect "CUDA23" .  But the
+  current compiler "NVIDIA" does not support this, or CMake does not know the
+  flags to enable it.
+```
+
+**Root cause.** Knowing that nvcc supports the C++23 dialect is a property of
+the running CMake, not of the compiler. The reference machine runs CMake 4.4,
+which lists `cuda_std_23` among the CUDA compile features. The runner used the
+CMake 3.28 that Ubuntu 24.04 ships, which does not, so it refused a standard the
+compiler in front of it was perfectly capable of. Since
+`cmake_minimum_required` declared 3.28, the project was claiming to build with a
+version that cannot build it. The error message blames the compiler, and the
+compiler is innocent.
+
+That the host only job passed is the tell: it never sets a CUDA standard, so it
+never asked the question.
+
+**Options.**
+
+1. Raise `cmake_minimum_required` and install a newer CMake on the runner.
+2. Pin the device standard to C++20 for everyone.
+3. Ask CMake what it can actually offer and use that.
+
+**Fix and why.** Option 3. The project now checks whether `cuda_std_23` appears
+in `CMAKE_CUDA_COMPILE_FEATURES` and falls back to C++20 when it does not,
+reporting the choice in the configuration summary. Option 1 forces a manual
+toolchain upgrade on anyone who only wants to compile the code. Option 2 gives
+up C++23 on the reference machine to accommodate an older tool. Nothing in the
+device code needs a C++23 feature, so the fallback costs nothing, and the host
+standard stays at C++23 in every configuration.
+
+The seed flag that gets the compiler identification probe through was lowered
+from C++23 to C++20 for the same reason. It only has to be new enough for
+libstdc++ to parse itself, and demanding C++23 there made the same unwarranted
+assumption a second time.
+
+**Verification.** Both paths were built and tested on the reference machine
+before the fix was pushed. With the device standard forced to C++20 the whole
+project compiles with zero warnings and all four test suites pass, physics gates
+included, so the fallback is not a degraded build in any way that matters.
+
+**Lesson.** A declared minimum version is a claim, and an untested claim is
+usually wrong. This one had never been exercised because every local build used
+the newest toolchain on the machine. Continuous integration on a deliberately
+older environment is what turned the assumption into a measurement.
