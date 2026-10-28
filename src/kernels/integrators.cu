@@ -51,23 +51,6 @@ __global__ void verlet_velocity_kernel(float* __restrict__ vx, float* __restrict
     vz[i] += az[i] * half_dt;
 }
 
-// Shifts the velocity by a half step. Called with a negative dt to enter the
-// leapfrog convention the fused kernel carries, and with a positive dt to come
-// back out of it for a diagnostic or a snapshot.
-__global__ void velocity_half_step_kernel(float* __restrict__ vx, float* __restrict__ vy,
-                                          float* __restrict__ vz, const float* __restrict__ ax,
-                                          const float* __restrict__ ay,
-                                          const float* __restrict__ az, int count, float dt) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= count) {
-        return;
-    }
-    const float half_dt = 0.5f * dt;
-    vx[i] += ax[i] * half_dt;
-    vy[i] += ay[i] * half_dt;
-    vz[i] += az[i] * half_dt;
-}
-
 }  // namespace
 
 void integrate_verlet_position(float* x, float* y, float* z, float* vx, float* vy, float* vz,
@@ -92,13 +75,17 @@ void integrate_verlet_velocity(float* vx, float* vy, float* vz, const float* ax,
     CUDA_CHECK(cudaGetLastError());
 }
 
+// Shifts the velocity by a half step. Called with a negative dt to enter the
+// leapfrog convention the fused kernel carries, and with a positive dt to come
+// back out of it for a diagnostic or a snapshot. The arithmetic is exactly the
+// closing half kick, so it reuses that kernel.
 void offset_velocity_half_step(float* vx, float* vy, float* vz, const float* ax, const float* ay,
                                const float* az, int count, float dt, int block_size,
                                cudaStream_t stream) {
     if (count <= 0) {
         return;
     }
-    velocity_half_step_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
+    verlet_velocity_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
         vx, vy, vz, ax, ay, az, count, dt);
     CUDA_CHECK(cudaGetLastError());
 }
