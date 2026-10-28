@@ -27,14 +27,6 @@ class CudaError : public std::runtime_error {
         }                                                                                      \
     } while (false)
 
-// Launches report failures asynchronously. This checks both the launch status
-// and, after a synchronise, the execution status.
-#define CUDA_CHECK_LAUNCH()                                                                    \
-    do {                                                                                       \
-        CUDA_CHECK(cudaGetLastError());                                                        \
-        CUDA_CHECK(cudaDeviceSynchronize());                                                   \
-    } while (false)
-
 struct DeviceInfo {
     int device = 0;
     std::string name;
