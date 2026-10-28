@@ -155,6 +155,7 @@ endif()
 # of the unit tests on a machine that has no GPU.
 # ---------------------------------------------------------------------------
 add_library(physics_host STATIC
+  src/core/cli.cpp
   src/core/config.cpp
   src/core/snapshot.cpp
   src/core/initial_conditions.cpp
@@ -234,6 +235,7 @@ if(CPS_BUILD_TESTS)
 
   # Host only: no CUDA runtime, no GPU, safe for continuous integration.
   add_executable(unit_tests_host
+    tests/unit/test_cli.cpp
     tests/unit/test_config.cpp
     tests/unit/test_snapshot_format.cpp
     tests/unit/test_sph_kernels.cpp
