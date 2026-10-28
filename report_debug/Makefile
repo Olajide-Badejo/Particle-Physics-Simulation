@@ -19,4 +19,5 @@ check:
 
 clean:
 	$(LATEXMK) -C -outdir=$(BUILD) $(MAIN).tex 2>/dev/null || true
-	rm -rf $(BUILD) $(TARGET)
+	# The PDF is a committed deliverable, so only the intermediates go.
+	rm -rf $(BUILD)

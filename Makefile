@@ -143,6 +143,6 @@ clean:
 	$(MAKE) -C report_debug clean 2>/dev/null || true
 
 distclean: clean
-	rm -rf $(RESULTS)/*.csv $(RESULTS)/*.json $(RESULTS)/*.log snapshots
-	rm -rf report/figures report/tables report/numbers.tex
-	git checkout -- $(RESULTS)/benchmarks.csv 2>/dev/null || true
+	# Removes only untracked or ignored outputs. Tracked results and report
+	# assets, and any local changes to them, are left alone.
+	git clean -fdx -- $(RESULTS) report/figures report/tables snapshots
