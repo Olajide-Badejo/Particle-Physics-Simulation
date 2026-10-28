@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "core/initial_conditions.hpp"
-#include "test_support.hpp"
+#include "test_support_host.hpp"
 
 namespace {
 
@@ -126,8 +126,7 @@ TEST(PlummerDensity, RadialProfileIsConsistentWithTheAnalyticModel) {
     std::printf("plummer radial density: chi squared = %.3f on %d degrees of freedom, p = %.4f\n",
                 result.statistic, result.degrees_of_freedom, result.p_value);
 
-    const std::filesystem::path out =
-        std::filesystem::path(CPS_PROJECT_ROOT) / "experiments" / "results";
+    const std::filesystem::path out = cps_test::results_directory();
     std::filesystem::create_directories(out);
     std::vector<double> centres;
     for (int s = 0; s < shells; ++s) {

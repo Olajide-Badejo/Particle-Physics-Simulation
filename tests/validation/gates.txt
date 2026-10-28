@@ -1,0 +1,17 @@
+# Every physics gate the validation suite records, one name per line, in the
+# order experiments/results/validation_gates.csv lists them. This file is the
+# only list of gates. record_gate writes rows in this order,
+# scripts/gen_report_assets.py refuses to build the report tables if any of
+# these is missing from the CSV, and scripts/check_provenance.py --gates-only
+# fails if the CSV holds a gate that is missing here or lacks one listed here.
+# Blank lines and lines starting with # are ignored.
+two_body_energy_drift_10000_steps
+two_body_orbit_out_of_round
+plummer_momentum_drift_1000_steps
+force_vs_cpu_reference_100_particles
+pairwise_force_antisymmetry_residual
+plummer_radial_density_chi_square_p_value
+sph_poly6_kernel_normalisation_error
+sph_spiky_kernel_normalisation_error
+sph_interior_density_relative_error
+sph_neighbour_search_vs_brute_force

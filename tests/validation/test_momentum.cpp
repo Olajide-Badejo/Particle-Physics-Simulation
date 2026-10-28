@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "core/simulation_engine.hpp"
-#include "test_support.hpp"
+#include "test_support_gpu.hpp"
 
 namespace {
 
@@ -94,8 +94,7 @@ TEST(MomentumConservation, PlummerSphereHoldsMomentumOverAThousandSteps) {
         worst = std::max(worst, drift);
     }
 
-    const std::filesystem::path out =
-        std::filesystem::path(CPS_PROJECT_ROOT) / "experiments" / "results";
+    const std::filesystem::path out = cps_test::results_directory();
     std::filesystem::create_directories(out);
     cps_test::write_series_csv((out / "momentum_drift_plummer.csv").string(),
                                "time,relative_momentum_drift", times, drifts);

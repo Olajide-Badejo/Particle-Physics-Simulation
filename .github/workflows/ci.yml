@@ -1,19 +1,28 @@
 name: ci
 
-# Three jobs, none of which needs a GPU.
+# Three jobs. No runner has a GPU, so no device code is ever executed here.
 #
-#   host-tests   builds the CUDA free half of the project and runs its 59 unit
-#                tests. No toolkit involved at all, so this is fast and cannot
-#                be broken by an installer.
+#   host-tests   runs the style gate and the gate registry check
+#                (check_provenance.py --gates-only), then builds the CUDA free
+#                half of the project and runs both of its ctest entries:
+#                unit_host (unit_tests_host) and validation_host
+#                (validation_tests_host, the physics gates that need no device:
+#                the pair force expression, the Plummer sampler and the SPH
+#                kernel normalisation). No toolkit involved at all.
 #   cuda-build   compiles the whole project for sm_120 inside the official
-#                CUDA image, with warnings as errors. Proves the device code
-#                still compiles; the execution tests need hardware and are not
-#                run here.
+#                CUDA image, with warnings as errors, checks that real sm_120
+#                code was emitted, and runs the same two host entries again.
+#                unit_gpu, integration and validation are compiled but not run.
 #   reports      rebuilds the figures, tables and both PDFs from the committed
-#                results and runs the style gate over the compiled documents.
+#                results, fails if the regenerated tables differ from the
+#                committed ones, and runs the style gate over the PDFs.
 #
-# Tests that need a device skip with the reason stated rather than failing, so
-# a green run here is honest about what it did and did not exercise.
+# Not run anywhere in CI: the device unit tests, the integration and resume
+# tests, and the device validation gates (energy drift, orbit shape, momentum,
+# the force kernel against its reference, SPH density and neighbour search).
+# Those need a GPU. The full provenance check, which resolves every commit hash
+# in experiments/results, is not run either. Nothing in CI writes to
+# experiments/results.
 
 on:
   push:
@@ -45,14 +54,17 @@ jobs:
       - name: Style gate
         run: python3 scripts/check_no_dashes.py .
 
+      - name: Every registered gate has a committed result
+        run: python3 scripts/check_provenance.py --gates-only
+
       - name: Configure without CUDA
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCPS_HOST_ONLY=ON -DCPS_BUILD_TESTS=ON
 
       - name: Build with warnings as errors
         run: cmake --build build -j "$(nproc)"
 
-      - name: Run the host test suite
-        run: ctest --test-dir build --output-on-failure
+      - name: Run the host unit and validation tests
+        run: ctest --test-dir build --output-on-failure -L host
 
   cuda-build:
     name: CUDA build for sm_120
@@ -99,7 +111,7 @@ jobs:
             | tee /tmp/elf.txt
           grep -q "sm_120" /tmp/elf.txt
 
-      - name: Run the host tests that do not need a device
+      - name: Run the host unit and validation tests, which need no device
         run: ctest --test-dir build --output-on-failure -L host
 
   reports:

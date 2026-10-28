@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "core/simulation_engine.hpp"
-#include "test_support.hpp"
+#include "test_support_gpu.hpp"
 
 namespace fs = std::filesystem;
 

@@ -225,18 +225,21 @@ endif()  # NOT CPS_HOST_ONLY
 # Tests
 # ---------------------------------------------------------------------------
 if(CPS_BUILD_TESTS)
-  # Tests that read a shipped configuration or write next to the repository
-  # need to know where the repository is, whatever directory ctest runs them
-  # from.
+  # Tests that read a shipped configuration need to know where the repository
+  # is, whatever directory ctest runs them from. Recorded results go to the
+  # build tree by default, so the tests also need to know where that is; only
+  # CPS_RECORD_GATES=1 at run time sends them to experiments/results instead.
   add_library(cps_test_support INTERFACE)
   target_compile_definitions(cps_test_support INTERFACE
-    CPS_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+    CPS_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    CPS_BINARY_DIR="${CMAKE_BINARY_DIR}")
   target_include_directories(cps_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
   # Host only: no CUDA runtime, no GPU, safe for continuous integration.
   add_executable(unit_tests_host
     tests/unit/test_cli.cpp
     tests/unit/test_config.cpp
+    tests/unit/test_gate_recording.cpp
     tests/unit/test_snapshot_format.cpp
     tests/unit/test_sph_kernels.cpp
     tests/unit/test_spatial_hash.cpp
@@ -246,26 +249,48 @@ if(CPS_BUILD_TESTS)
   add_test(NAME unit_host COMMAND unit_tests_host)
   set_tests_properties(unit_host PROPERTIES LABELS "host")
 
+  # The validation cases that make no CUDA call, directly or through a library:
+  # the shared pair force expression, the Plummer sampler and the SPH kernel
+  # normalisation. Built in both modes, so continuous integration runs them.
+  # Both validation entries merge rows into the same gate file, so they never
+  # run at the same time.
+  add_executable(validation_tests_host
+    tests/validation/host/test_force_antisymmetry_host.cpp
+    tests/validation/host/test_plummer_density_host.cpp
+    tests/validation/host/test_sph_validation_host.cpp)
+  target_link_libraries(validation_tests_host
+    PRIVATE physics_host GTest::gtest_main cps_warnings cps_test_support)
+  add_test(NAME validation_host COMMAND validation_tests_host)
+  set_tests_properties(validation_host PROPERTIES
+    LABELS "host;validation" RESOURCE_LOCK validation_gates)
+
   # Everything below needs the CUDA runtime, so it is skipped entirely in host
   # only mode rather than built and skipped at run time.
   if(NOT CPS_HOST_ONLY)
+
+  # The GPU binaries use their own main in place of gtest_main. With no usable
+  # device it exits with code 77, which SKIP_RETURN_CODE turns into "Not Run"
+  # instead of a pass made entirely of skipped cases.
+  add_library(cps_gpu_test_main STATIC tests/gpu_main.cpp)
+  target_link_libraries(cps_gpu_test_main
+    PUBLIC GTest::gtest CUDA::cudart cps_test_support physics_host PRIVATE cps_warnings)
 
   # Device unit tests.
   add_executable(unit_tests_gpu
     tests/unit/test_device_reductions.cu
     tests/unit/test_kernel_parity.cu)
-  target_link_libraries(unit_tests_gpu PRIVATE physics_core_strict GTest::gtest_main cps_warnings cps_test_support)
+  target_link_libraries(unit_tests_gpu PRIVATE physics_core_strict cps_gpu_test_main cps_warnings cps_test_support)
   set_target_properties(unit_tests_gpu PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
   add_test(NAME unit_gpu COMMAND unit_tests_gpu)
-  set_tests_properties(unit_gpu PROPERTIES LABELS "gpu")
+  set_tests_properties(unit_gpu PROPERTIES LABELS "gpu" SKIP_RETURN_CODE 77)
 
   add_executable(integration_tests
     tests/integration/test_solver_smoke.cpp
     tests/integration/test_snapshot_resume.cpp)
   target_link_libraries(integration_tests
-    PRIVATE physics_core_strict GTest::gtest_main cps_warnings cps_test_support)
+    PRIVATE physics_core_strict cps_gpu_test_main cps_warnings cps_test_support)
   add_test(NAME integration COMMAND integration_tests)
-  set_tests_properties(integration PROPERTIES LABELS "gpu" TIMEOUT 900)
+  set_tests_properties(integration PROPERTIES LABELS "gpu" TIMEOUT 900 SKIP_RETURN_CODE 77)
 
   # Validation always links the strict library so the physics gates can never
   # be silently relaxed by a fast math build.
@@ -273,12 +298,12 @@ if(CPS_BUILD_TESTS)
     tests/validation/test_energy_drift.cpp
     tests/validation/test_momentum.cpp
     tests/validation/test_force_antisymmetry.cpp
-    tests/validation/test_plummer_density.cpp
     tests/validation/test_sph_validation.cpp)
   target_link_libraries(validation_tests
-    PRIVATE physics_core_strict GTest::gtest_main cps_warnings cps_test_support)
+    PRIVATE physics_core_strict cps_gpu_test_main cps_warnings cps_test_support)
   add_test(NAME validation COMMAND validation_tests)
-  set_tests_properties(validation PROPERTIES LABELS "gpu;validation" TIMEOUT 3600)
+  set_tests_properties(validation PROPERTIES
+    LABELS "gpu;validation" TIMEOUT 3600 SKIP_RETURN_CODE 77 RESOURCE_LOCK validation_gates)
 
   endif()  # NOT CPS_HOST_ONLY
 endif()

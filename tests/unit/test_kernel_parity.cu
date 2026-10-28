@@ -5,7 +5,7 @@
 
 #include "core/particle_system.hpp"
 #include "solvers/nbody_solver.hpp"
-#include "test_support.hpp"
+#include "test_support_gpu.hpp"
 
 namespace {
 

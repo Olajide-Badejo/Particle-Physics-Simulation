@@ -8,90 +8,21 @@
 #include "core/simulation_engine.hpp"
 #include "physics/sph_kernels.hpp"
 #include "solvers/sph_solver.hpp"
-#include "test_support.hpp"
+#include "test_support_gpu.hpp"
+#include "validation/sph_fluid_config.hpp"
 
 namespace {
+
+using cps_test::fluid_config;
 
 // Gate: the smoothing kernels integrate to one to within 1e-3 by numerical
 // quadrature, the density field recovers the rest density in the interior of a
 // block filled at that density, and a running fluid conserves its mass and
 // stays inside its walls.
-
-cps::Config fluid_config(int count, long long steps) {
-    cps::Config config;
-    config.name = "sph_validation";
-    config.solver = cps::SolverType::Sph;
-    config.initial_condition = cps::InitialCondition::DamBreak;
-    config.num_particles = count;
-    config.steps = steps;
-    config.dt = 1.0e-4f;
-    config.block_size = 256;
-    config.seed = 20260802u;
-    config.external_gravity = {0.0f, -9.81f, 0.0f};
-    config.snapshot_interval = 0;
-    config.diagnostics_interval = 0;
-    config.diagnostics_path.clear();
-    config.sph.domain_min = {0.0f, 0.0f, 0.0f};
-    config.sph.domain_max = {0.8f, 0.5f, 0.4f};
-    config.sph.fluid_min = {0.0f, 0.0f, 0.0f};
-    config.sph.fluid_max = {0.3f, 0.4f, 0.4f};
-    config.sph.rest_density = 1000.0f;
-    config.sph.gas_constant = 1000.0f;
-    config.sph.viscosity = 0.2f;
-    config.sph.boundary_damping = 0.4f;
-    return config;
-}
-
-// Composite Simpson quadrature of 4 pi integral W(r) r^2 dr over the support.
-template <typename Kernel>
-double integrate_kernel(Kernel kernel, double h, int intervals = 400000) {
-    if (intervals % 2 != 0) {
-        ++intervals;
-    }
-    const double step = h / static_cast<double>(intervals);
-    double total = 0.0;
-    for (int i = 0; i <= intervals; ++i) {
-        const double r = static_cast<double>(i) * step;
-        double weight = 2.0;
-        if (i == 0 || i == intervals) {
-            weight = 1.0;
-        } else if (i % 2 == 1) {
-            weight = 4.0;
-        }
-        total += weight * kernel(r) * r * r;
-    }
-    return 4.0 * cps::PI_D * total * step / 3.0;
-}
-
-TEST(SphValidation, SmoothingKernelsIntegrateToOne) {
-    // Checked at the smoothing radius the shipped fifty thousand particle dam
-    // break actually derives, not only at a convenient round number.
-    const cps::SphDerivedParameters derived = cps::derive_sph_parameters(fluid_config(50000, 0));
-    const double h = derived.smoothing_radius;
-    std::printf("derived smoothing radius %.6g, particle mass %.6g, expected neighbours %.1f\n", h,
-                static_cast<double>(derived.particle_mass), derived.expected_neighbour_count);
-
-    const double poly6 = integrate_kernel(
-        [h](double r) {
-            return static_cast<double>(
-                cps::poly6_kernel(static_cast<float>(r * r), static_cast<float>(h)));
-        },
-        h);
-    const double spiky = integrate_kernel(
-        [h](double r) {
-            return static_cast<double>(
-                cps::spiky_kernel(static_cast<float>(r), static_cast<float>(h)));
-        },
-        h);
-
-    std::printf("kernel normalisation: poly6 = %.9f, spiky = %.9f\n", poly6, spiky);
-    cps_test::record_gate("sph_poly6_kernel_normalisation_error", std::abs(poly6 - 1.0), 1.0e-3,
-                          "less_than", std::abs(poly6 - 1.0) < 1.0e-3);
-    cps_test::record_gate("sph_spiky_kernel_normalisation_error", std::abs(spiky - 1.0), 1.0e-3,
-                          "less_than", std::abs(spiky - 1.0) < 1.0e-3);
-    EXPECT_NEAR(poly6, 1.0, 1.0e-3);
-    EXPECT_NEAR(spiky, 1.0, 1.0e-3);
-}
+//
+// The kernel normalisation and the derived resolution checks need no device,
+// so they run on the host from tests/validation/host/test_sph_validation_host.cpp.
+// The cases here all run the solver on a GPU.
 
 // The density estimate is the foundation of the whole solver. In the interior
 // of a block filled at rest density it must recover that density; a kernel
@@ -292,16 +223,6 @@ TEST(SphValidation, TheCellSortPermutationIsABijection) {
     for (std::size_t i = 0; i < before_mass.size(); ++i) {
         EXPECT_FLOAT_EQ(before_mass[i], after_mass[i]) << "index " << i;
     }
-}
-
-TEST(SphValidation, TheDerivedResolutionPutsEnoughNeighboursInTheSupport) {
-    const cps::SphDerivedParameters derived = cps::derive_sph_parameters(fluid_config(50000, 0));
-    // Below about twenty neighbours the density estimate is too noisy to be
-    // useful; far above forty the neighbour loop dominates the step for no
-    // additional accuracy.
-    EXPECT_GT(derived.expected_neighbour_count, 20.0);
-    EXPECT_LT(derived.expected_neighbour_count, 60.0);
-    EXPECT_GT(derived.smoothing_radius, derived.particle_spacing);
 }
 
 }  // namespace

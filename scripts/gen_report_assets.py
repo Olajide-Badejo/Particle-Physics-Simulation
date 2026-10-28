@@ -33,6 +33,20 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def read_gate_registry(path: Path) -> list[str]:
+    """Registered gate names from tests/validation/gates.txt, in order.
+
+    The same parser lives in scripts/check_provenance.py. It is repeated rather
+    than imported so each script still runs on its own.
+    """
+    names = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            names.append(line)
+    return names
+
+
 def latex_escape(text: str) -> str:
     for old, new in (("\\", r"\textbackslash{}"), ("_", r"\_"), ("%", r"\%"), ("&", r"\&"),
                      ("#", r"\#"), ("$", r"\$")):
@@ -54,8 +68,9 @@ def sci(value: float) -> str:
 
 
 class Assets:
-    def __init__(self, results: Path, out_root: Path) -> None:
+    def __init__(self, results: Path, out_root: Path, registry: Path) -> None:
         self.results = results
+        self.registry = registry
         self.tables = out_root / "tables"
         self.tables.mkdir(parents=True, exist_ok=True)
         self.out_root = out_root
@@ -254,9 +269,21 @@ class Assets:
 
     # -- validation gates -------------------------------------------------
     def gates(self) -> None:
-        rows = read_csv(self.results / "validation_gates.csv")
-        if not rows:
-            return
+        # A missing gate would leave a hole in the table and a macro the prose
+        # quotes undefined, so the report is never built from a partial file.
+        path = self.results / "validation_gates.csv"
+        if not self.registry.exists():
+            raise SystemExit(f"error: the gate registry {self.registry} does not exist")
+        rows = read_csv(path)
+        present = {row["gate"] for row in rows}
+        missing = [gate for gate in read_gate_registry(self.registry) if gate not in present]
+        if missing:
+            raise SystemExit(
+                f"error: {path} is missing {len(missing)} registered gate(s): "
+                + ", ".join(missing)
+                + f". Every gate in {self.registry} must have a row; rerun the validation "
+                "suite with CPS_RECORD_GATES=1 to record them."
+            )
         pretty = {
             "two_body_energy_drift_10000_steps":
                 "Two body orbit, relative energy drift over 10,000 steps",
@@ -394,10 +421,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generate report tables and macros.")
     parser.add_argument("--results", type=Path, default=root / "experiments" / "results")
     parser.add_argument("--out", type=Path, default=root / "report")
+    parser.add_argument("--gates", type=Path, default=root / "tests" / "validation" / "gates.txt",
+                        help="the registry of gates validation_gates.csv must contain")
     args = parser.parse_args()
 
     print(f"reading results from {args.results}")
-    assets = Assets(args.results, args.out)
+    assets = Assets(args.results, args.out, args.gates)
     benchmarks = read_csv(args.results / "benchmarks.csv")
 
     steps = [

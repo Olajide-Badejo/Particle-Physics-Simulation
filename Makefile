@@ -24,8 +24,8 @@ TABLES := report/tables/nbody_ladder.tex
 NUMBERS := report/numbers.tex
 
 .PHONY: help setup setup-host-only build rebuild test test-host test-gpu validate \
-        bench bench-quick profile plots assets report report-debug reports docs \
-        check-style check-warnings run-demo probe all clean distclean
+        record-results bench bench-quick profile plots assets report report-debug \
+        reports docs check-style check-warnings run-demo probe all clean distclean
 
 help:
 	@echo "cuda_physics_sim: make targets"
@@ -35,7 +35,8 @@ help:
 	@echo "  build          compile everything"
 	@echo "  test           run the whole test suite through ctest"
 	@echo "  test-host      run only the tests that need no GPU"
-	@echo "  validate       run the physics gates"
+	@echo "  validate       run the physics gates (results go to the build tree)"
+	@echo "  record-results run the whole suite and record the gates in $(RESULTS)"
 	@echo "  bench          run the full benchmark sweep, resuming where it left off"
 	@echo "  profile        collect hardware counters with Nsight Compute"
 	@echo "  plots          draw the figures from the recorded results"
@@ -74,8 +75,9 @@ rebuild: clean build
 probe: build
 	./$(BUILD_DIR)/bin/gpu_probe --output $(RESULTS)/device.json
 
-# The full suite. Tests that need a GPU skip cleanly with the reason stated
-# when there is no device, so this is safe to run anywhere.
+# The full suite. On a machine with no device the GPU binaries exit with code
+# 77 and ctest reports them as not run, rather than as passed. Recorded results
+# go to the build tree, so this never touches experiments/results.
 test: build
 	cd $(BUILD_DIR) && $(CTEST) --output-on-failure
 
@@ -86,7 +88,13 @@ test-gpu: build
 	cd $(BUILD_DIR) && $(CTEST) --output-on-failure -L gpu
 
 validate: build
-	./$(BUILD_DIR)/bin/validation_tests
+	cd $(BUILD_DIR) && $(CTEST) --output-on-failure -L validation
+
+# The only target that rewrites the committed gate values and validation
+# series in experiments/results. The gate file is merged, so gates that did not
+# run keep their previous rows.
+record-results: build
+	cd $(BUILD_DIR) && CPS_RECORD_GATES=1 $(CTEST) --output-on-failure
 
 bench: build
 	./$(BUILD_DIR)/bin/bench_all --tile-sweep
@@ -130,7 +138,7 @@ run-demo: build
 # The order matters: gates before benchmarks so a physics failure stops the
 # line before half an hour of timing runs, and the reports last because they
 # consume everything the earlier steps produced.
-all: build check-style test probe bench profile plots assets reports
+all: build check-style record-results probe bench profile plots assets reports
 	@echo
 	@echo "make all completed"
 	@echo "  results  : $(RESULTS)"

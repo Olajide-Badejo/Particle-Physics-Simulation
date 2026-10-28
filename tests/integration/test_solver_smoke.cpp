@@ -6,7 +6,7 @@
 
 #include "core/simulation_engine.hpp"
 #include "solvers/sph_solver.hpp"
-#include "test_support.hpp"
+#include "test_support_gpu.hpp"
 
 namespace {
 

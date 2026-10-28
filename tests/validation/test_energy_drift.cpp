@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "core/simulation_engine.hpp"
-#include "test_support.hpp"
+#include "test_support_gpu.hpp"
 
 namespace {
 
@@ -83,8 +83,7 @@ TEST(EnergyDrift, TwoBodyOrbitHoldsEnergyOverTenThousandSteps) {
 
     ASSERT_LT(result.initial_energy, 0.0) << "a bound orbit must have negative total energy";
 
-    const std::filesystem::path out =
-        std::filesystem::path(CPS_PROJECT_ROOT) / "experiments" / "results";
+    const std::filesystem::path out = cps_test::results_directory();
     std::filesystem::create_directories(out);
     cps_test::write_series_csv((out / "energy_drift_two_body.csv").string(),
                                "time,relative_energy_drift", result.time, result.relative_drift);
