@@ -70,7 +70,9 @@ struct Config {
 
     long long snapshot_interval = 1000;
     std::string snapshot_dir = "snapshots";
-    long long diagnostics_interval = 1;
+    // Each diagnostics row costs an O(N^2) potential pass and two synchronous
+    // copies, so the default samples sparsely rather than every step.
+    long long diagnostics_interval = 100;
     std::string diagnostics_path = "experiments/results/diagnostics.csv";
 
     SphConfig sph{};
@@ -79,8 +81,12 @@ struct Config {
     static Config from_json_file(const std::filesystem::path& path);
 
     // Throws std::runtime_error with a message naming the offending field.
+    // Parsing also rejects any key it does not read, at every level.
     void validate() const;
 
+    // Canonical form: every field is written, keys are sorted, and floats are
+    // printed with enough digits that parsing the output gives back the same
+    // Config bit for bit.
     std::string to_json_string(int indent = 2) const;
 };
 
