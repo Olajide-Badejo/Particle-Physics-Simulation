@@ -12,9 +12,10 @@ namespace {
 //
 // What fusion removes is concrete. The split path writes the acceleration
 // array at the end of the force kernel and reads it back at the start of the
-// integrator, which is 12N bytes out and 12N bytes in that the fused path
-// never issues, plus one kernel launch per step. What it cannot remove is the
-// position write, which has to happen either way.
+// integrator. The fused path still writes it, because the energy diagnostic
+// and the half step offset need a_n, but it never reads it back: 12N bytes in
+// and one kernel launch per step are what it saves. What it cannot remove is
+// the position write, which has to happen either way.
 //
 // The integrator here is the leapfrog form of velocity Verlet:
 //

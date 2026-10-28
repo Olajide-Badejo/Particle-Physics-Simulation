@@ -10,8 +10,8 @@ written down.
 \FusionGainPercentAtMaxN{} percent}
 
 \field{The expectation.} Fusing the force evaluation with the Verlet update
-removes a round trip of the acceleration array, $12N$ bytes written and $12N$
-bytes read, plus one kernel launch per step. Stated in bytes that sounds
+removes the read back of the acceleration array, $12N$ bytes per step, plus
+one kernel launch per step. The acceleration is still written. Stated in bytes that sounds
 substantial, and ten to twenty percent is roughly right for a memory bound
 kernel.
 

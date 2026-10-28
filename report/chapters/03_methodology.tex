@@ -25,9 +25,9 @@ more often per unit of arithmetic; Section~\ref{sec:tilewidth} measures that
 trade rather than arguing about it.
 
 \paragraph{Rung three, fused.} The tiled force evaluation and the integrator
-update happen in one launch. This removes a round trip of the acceleration
-array, $12N$ bytes written and $12N$ bytes read, plus one kernel launch per
-step.
+update happen in one launch. This removes the read back of the acceleration
+array, $12N$ bytes per step, plus one kernel launch per step. The acceleration
+is still written, because the energy diagnostic needs it.
 
 Fusion has a correctness constraint that is worth stating because it is easy to
 get wrong. There is no grid wide barrier inside a launch. If the kernel updated

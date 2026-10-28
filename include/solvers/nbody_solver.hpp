@@ -18,8 +18,8 @@ namespace cps {
 //          drops by the block size; the cost is two barriers per tile.
 //
 //   fused  the tiled force evaluation and the Verlet update happen in one
-//          launch, removing a 12N byte round trip of the acceleration array
-//          and one launch per step.
+//          launch, removing the 12N byte read back of the acceleration array
+//          and one launch per step. The acceleration is still written.
 //
 // The tile width is a compile time constant so the inner loop can be unrolled.
 // Thirty two is the specified default, matching the warp width; the other
