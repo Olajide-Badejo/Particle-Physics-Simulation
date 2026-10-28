@@ -10,10 +10,12 @@ The rule covers three surfaces:
    environments and inline verbatim are excluded, because a command line flag
    such as the fast math switch legitimately contains two hyphens and TeX does
    not apply the ligature there.
-3. Compiled PDFs are scanned through ``pdftotext`` when it is available, which
-   is the only way to prove the rule survived the whole report pipeline.
+3. Compiled PDFs are scanned through ``pdftotext``, which is the only way to
+   prove the rule survived the whole report pipeline. A missing ``pdftotext``
+   is an error, not a skip, so the gate cannot pass without looking.
 
-Exit status is 0 when the repository is clean and 1 when any hit is found.
+Exit status is 0 when the repository is clean and 1 when any hit is found or
+a PDF could not be inspected.
 """
 
 from __future__ import annotations
@@ -85,7 +87,28 @@ def is_text_file(path: Path) -> bool:
     return path.suffix.lower() in TEXT_SUFFIXES
 
 
+def git_files(root: Path):
+    """Return the files git does not ignore, or None outside a work tree."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others",
+             "--exclude-standard"],
+            check=True,
+            capture_output=True,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    names = result.stdout.decode("utf-8", errors="replace").split("\0")
+    return sorted(root / name for name in names if name)
+
+
 def iter_files(root: Path):
+    tracked = git_files(root)
+    if tracked is not None:
+        for path in tracked:
+            if path.is_file():
+                yield path
+        return
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
@@ -128,8 +151,6 @@ def check_tex_ligatures(path: Path, rel: str, hits: list[str]) -> None:
 
 def check_pdf(path: Path, rel: str, hits: list[str]) -> bool:
     """Return True when the PDF was actually inspected."""
-    if shutil.which("pdftotext") is None:
-        return False
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "out.txt"
         try:
@@ -161,6 +182,7 @@ def main() -> int:
     args = parser.parse_args()
 
     root = args.root.resolve()
+    pdftotext_found = shutil.which("pdftotext") is not None
     hits: list[str] = []
     scanned = 0
     pdfs_scanned = 0
@@ -169,6 +191,9 @@ def main() -> int:
     for path in iter_files(root):
         rel = path.relative_to(root).as_posix()
         if path.suffix.lower() == ".pdf":
+            if not pdftotext_found:
+                pdfs_skipped += 1
+                continue
             if check_pdf(path, rel, hits):
                 pdfs_scanned += 1
             else:
@@ -181,19 +206,27 @@ def main() -> int:
         if path.suffix.lower() in {".tex", ".bib"}:
             check_tex_ligatures(path, rel, hits)
 
+    if pdfs_skipped and not pdftotext_found:
+        print(
+            f"check_no_dashes: pdftotext not found on PATH, so {pdfs_skipped} pdf(s) "
+            "could not be inspected; install poppler-utils"
+        )
+        return 1
+
     if hits:
         print(f"check_no_dashes: {len(hits)} violation(s) found")
         for hit in hits:
             print(f"  {hit}")
         return 1
 
+    if pdfs_skipped:
+        print(f"check_no_dashes: pdftotext failed on {pdfs_skipped} pdf(s)")
+        return 1
+
     if not args.quiet:
-        note = ""
-        if pdfs_skipped:
-            note = f", {pdfs_skipped} pdf(s) skipped because pdftotext is unavailable"
         print(
             f"check_no_dashes: clean across {scanned} text file(s) "
-            f"and {pdfs_scanned} pdf(s){note}"
+            f"and {pdfs_scanned} pdf(s)"
         )
     return 0
 

@@ -40,7 +40,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake g++ python3
+          sudo apt-get install -y --no-install-recommends cmake g++ python3 poppler-utils
 
       - name: Style gate
         run: python3 scripts/check_no_dashes.py .
