@@ -32,6 +32,7 @@ TEST(Cli, NoArgumentsGiveNoOverrides) {
     const cps::CliOptions options = parse({});
     EXPECT_FALSE(options.show_help);
     EXPECT_FALSE(options.resume);
+    EXPECT_FALSE(options.force_resume);
     EXPECT_FALSE(options.device_info);
     EXPECT_FALSE(options.print_config);
     EXPECT_TRUE(options.config_path.empty());
@@ -68,6 +69,26 @@ TEST(Cli, ParsesEveryFlag) {
     EXPECT_TRUE(options.resume);
     EXPECT_TRUE(options.device_info);
     EXPECT_TRUE(options.print_config);
+}
+
+// Forcing a resume past a physics mismatch only makes sense when resuming, so
+// the flag implies --resume rather than needing both.
+TEST(Cli, ForceResumeParsesAndImpliesResume) {
+    const cps::CliOptions forced = parse({"--config", "c.json", "--force-resume"});
+    EXPECT_TRUE(forced.force_resume);
+    EXPECT_TRUE(forced.resume);
+
+    const cps::CliOptions both = parse({"--resume", "--force-resume"});
+    EXPECT_TRUE(both.force_resume);
+    EXPECT_TRUE(both.resume);
+
+    const cps::CliOptions plain = parse({"--resume"});
+    EXPECT_TRUE(plain.resume);
+    EXPECT_FALSE(plain.force_resume);
+}
+
+TEST(Cli, UsageListsForceResume) {
+    EXPECT_NE(cps::cli_usage().find("--force-resume"), std::string::npos);
 }
 
 TEST(Cli, HelpStopsParsing) {

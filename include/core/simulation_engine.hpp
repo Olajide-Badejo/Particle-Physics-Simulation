@@ -1,11 +1,13 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <string>
 
 #include "core/config.hpp"
 #include "core/diagnostics.hpp"
 #include "core/particle_system.hpp"
+#include "core/snapshot.hpp"
 #include "solvers/sph_solver.hpp"
 
 namespace cps {
@@ -28,8 +30,12 @@ class SimulationEngine {
     void initialize();
 
     // Loads the newest snapshot in the configured directory and continues from
-    // it. Returns the step the state was written at.
-    long long resume();
+    // it. Returns the step the state was written at. Refuses a snapshot whose
+    // physics fingerprint differs from this configuration's, naming every
+    // field that differs, unless force is set, in which case it warns on
+    // stderr and continues. A CPS1 snapshot records no physics, so it loads
+    // with a warning that it cannot be verified.
+    long long resume(bool force = false);
 
     // Advances one step with the configured solver and variant.
     void step();
@@ -47,6 +53,11 @@ class SimulationEngine {
     const Config& config() const { return config_; }
     long long current_step() const { return current_step_; }
 
+    // The engine's simulated time: the step count times the fixed time step.
+    double simulated_time() const {
+        return static_cast<double>(current_step_) * static_cast<double>(config_.dt);
+    }
+
     // Milliseconds of device time spent inside step(), accumulated.
     double solver_milliseconds() const { return solver_ms_; }
 
@@ -54,6 +65,8 @@ class SimulationEngine {
     void step_nbody_split();
     void step_nbody_fused();
     void ensure_velocity_convention(bool want_half_step);
+    void check_physics(const Snapshot& snapshot, const std::filesystem::path& path,
+                       bool force) const;
 
     Config config_;
     std::unique_ptr<ParticleSystem> particles_;

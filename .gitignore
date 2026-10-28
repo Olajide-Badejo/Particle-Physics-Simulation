@@ -19,6 +19,9 @@ experiments/results/*
 !experiments/results/momentum_drift_plummer.csv
 !experiments/results/plummer_radial_density.csv
 *.bin
+# The snapshot format's golden fixtures are a few hundred bytes and pin the
+# format, so they are committed.
+!tests/data/*.bin
 diagnostics*.csv
 
 # LaTeX intermediates

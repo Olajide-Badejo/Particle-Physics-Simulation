@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
 
         cps::SimulationEngine engine(config);
         if (options.resume) {
-            engine.resume();
+            engine.resume(options.force_resume);
         } else {
             engine.initialize();
         }

@@ -1,9 +1,13 @@
 #include "core/simulation_engine.hpp"
 
+#include <cinttypes>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
+#include <vector>
 
 #include "core/initial_conditions.hpp"
+#include "core/physics_fingerprint.hpp"
 #include "core/snapshot.hpp"
 #include "solvers/nbody_solver.hpp"
 #include "utils/progress.hpp"
@@ -84,7 +88,53 @@ void SimulationEngine::ensure_velocity_convention(bool want_half_step) {
     half_step_velocity_ = want_half_step;
 }
 
-long long SimulationEngine::resume() {
+// A count mismatch cannot be forced past, because the state would not fit,
+// but a physics mismatch can: the state loads fine and only the meaning of
+// the continued run is in doubt, which the person resuming may know is fine.
+void SimulationEngine::check_physics(const Snapshot& snapshot, const fs::path& path,
+                                     bool force) const {
+    if (snapshot.format_version == 1) {
+        std::fprintf(stderr,
+                     "warning: snapshot %s is in the old CPS1 format, which records no "
+                     "configuration, so its physics cannot be verified against this one\n",
+                     path.string().c_str());
+        return;
+    }
+
+    const std::vector<PhysicsField> fields = physics_fields(config_);
+    const uint64_t fingerprint = physics_fingerprint(fields);
+    if (snapshot.fingerprint == fingerprint &&
+        snapshot.fingerprint_version == PHYSICS_FINGERPRINT_VERSION) {
+        return;
+    }
+
+    std::string detail;
+    try {
+        detail = describe_differences(compare_physics(snapshot.physics, fields));
+    } catch (const std::runtime_error& error) {
+        detail = error.what();
+    }
+    if (detail.empty()) {
+        char buffer[192];
+        std::snprintf(buffer, sizeof(buffer),
+                      "every recorded field agrees, but the fingerprint is 0x%016" PRIx64
+                      " (version %u) in the snapshot and 0x%016" PRIx64
+                      " (version %u) in the configuration",
+                      snapshot.fingerprint, snapshot.fingerprint_version, fingerprint,
+                      PHYSICS_FINGERPRINT_VERSION);
+        detail = buffer;
+    }
+    const std::string message =
+        "snapshot " + path.string() + " was written under different physics: " + detail;
+    if (!force) {
+        throw std::runtime_error(message + ". Resuming would continue a different simulation; " +
+                                 "pass --force-resume to do it anyway");
+    }
+    std::fprintf(stderr, "warning: %s; resuming anyway because --force-resume was given\n",
+                 message.c_str());
+}
+
+long long SimulationEngine::resume(bool force) {
     const fs::path path = latest_snapshot(config_.snapshot_dir);
     if (path.empty()) {
         throw std::runtime_error("no snapshot found in " + config_.snapshot_dir);
@@ -96,6 +146,11 @@ long long SimulationEngine::resume() {
                                  " particles but the configuration asks for " +
                                  std::to_string(config_.num_particles));
     }
+    if (snapshot.step > static_cast<uint64_t>(std::numeric_limits<long long>::max())) {
+        throw std::runtime_error("snapshot " + path.string() + " is at step " +
+                                 std::to_string(snapshot.step) + ", beyond what a run can reach");
+    }
+    check_physics(snapshot, path, force);
 
     particles_->upload(snapshot.state);
     current_step_ = static_cast<long long>(snapshot.step);
@@ -168,16 +223,19 @@ void SimulationEngine::step() {
 Diagnostics SimulationEngine::diagnostics(bool include_potential) {
     const float half_dt = half_step_velocity_ ? 0.5f * config_.dt : 0.0f;
     const bool with_potential = include_potential && config_.solver == SolverType::NBody;
-    return reducer_->compute(*particles_, current_step_,
-                             static_cast<double>(current_step_) * static_cast<double>(config_.dt),
-                             config_.softening, config_.gravitational_constant, with_potential,
-                             half_dt);
+    return reducer_->compute(*particles_, current_step_, simulated_time(), config_.softening,
+                             config_.gravitational_constant, with_potential, half_dt);
 }
 
 void SimulationEngine::write_snapshot_now() const {
     Snapshot snapshot;
-    snapshot.step = static_cast<uint32_t>(current_step_);
+    snapshot.step = static_cast<uint64_t>(current_step_);
+    snapshot.time = simulated_time();
     snapshot.flags = half_step_velocity_ ? SNAPSHOT_FLAG_HALF_STEP_VELOCITY : 0u;
+    const std::vector<PhysicsField> fields = physics_fields(config_);
+    snapshot.fingerprint = physics_fingerprint(fields);
+    snapshot.fingerprint_version = PHYSICS_FINGERPRINT_VERSION;
+    snapshot.physics = physics_json(fields);
     particles_->download(snapshot.state);
     write_snapshot(snapshot_path_for_step(config_.snapshot_dir, snapshot.step), snapshot);
 }

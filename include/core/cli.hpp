@@ -15,6 +15,9 @@ namespace cps {
 struct CliOptions {
     bool show_help = false;
     bool resume = false;
+    // Resume even when the snapshot's physics differ from the configuration.
+    // Implies resume.
+    bool force_resume = false;
     bool device_info = false;
     bool print_config = false;
     std::string config_path;

@@ -86,6 +86,8 @@ std::string cli_usage() {
            "  --diagnostics <path>  override the diagnostics file, empty disables\n"
            "  --diag-every <n>      override the diagnostics cadence, 0 disables\n"
            "  --resume              continue from the newest snapshot in the snapshot directory\n"
+           "  --force-resume        resume even if the snapshot's physics differ from the\n"
+           "                        configuration (implies --resume)\n"
            "  --device-info         print the device properties and exit\n"
            "  --print-config        print the resolved configuration and exit\n"
            "  --help                print this message\n";
@@ -129,6 +131,9 @@ CliOptions parse_cli(int argc, const char* const* argv) {
                                                "--diag-every", 0, kLongMax);
         } else if (arg == "--resume") {
             options.resume = true;
+        } else if (arg == "--force-resume") {
+            options.resume = true;
+            options.force_resume = true;
         } else if (arg == "--device-info") {
             options.device_info = true;
         } else if (arg == "--print-config") {

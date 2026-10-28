@@ -157,6 +157,7 @@ endif()
 add_library(physics_host STATIC
   src/core/cli.cpp
   src/core/config.cpp
+  src/core/physics_fingerprint.cpp
   src/core/snapshot.cpp
   src/core/initial_conditions.cpp
   src/utils/progress.cpp)
