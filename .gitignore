@@ -48,3 +48,13 @@ __pycache__/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Private working notes and agent configuration. These stay on the author's
+# machine and are never published.
+CLAUDE.md
+.claude/
+GPU_Physics_Simulation_V*.md
+01_GPU_Physics_Simulation_README.md
+report_for_me/
+BOARD.md
+tasks/
