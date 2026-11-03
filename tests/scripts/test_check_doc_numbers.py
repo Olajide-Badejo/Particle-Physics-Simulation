@@ -104,6 +104,14 @@ class CheckDocNumbers(unittest.TestCase):
         self.assertIn("no generated table", result.stderr)
 
     @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_default_scan_leaves_the_changelog_alone(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / "CHANGELOG.md").write_text("<!-- num:Nonsense -->1<!-- /num -->\n",
+                                                encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "CHANGELOG.md"], check=True)
+        result = self.run_tool()
+        self.assertNotIn("Nonsense", result.stderr)
+
     def test_default_scan_reads_only_tracked_markdown(self) -> None:
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
         (self.root / "tracked.md").write_text("<!-- num:Spread -->9<!-- /num -->\n",

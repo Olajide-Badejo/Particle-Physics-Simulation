@@ -10,13 +10,13 @@ namespace {
 
 // Rung three: the tiled force sum and the integrator update in one launch.
 //
-// What fusion removes is concrete. The split path writes the acceleration
-// array at the end of the force kernel and reads it back at the start of the
-// integrator. The fused path never reads it back: 12N bytes in and one kernel
-// launch per step are what it saves. It still writes the array, though the
-// engine never reads that write, because the diagnostics and the velocity
-// conversions recompute the force first. What fusion cannot remove is the
-// position write, which has to happen either way.
+// What fusion removes is concrete. The split path takes three launches, and both
+// of its integrator launches read the acceleration array, 24N bytes per step.
+// The fused path takes one launch and never reads that array. It still writes
+// it, 12N bytes, though the engine never reads that write, because the
+// diagnostics and the velocity conversions recompute the force first. It also
+// updates the velocities once per step instead of twice. What
+// fusion cannot remove is the position write, which has to happen either way.
 //
 // The integrator here is the leapfrog form of velocity Verlet:
 //

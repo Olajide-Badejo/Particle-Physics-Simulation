@@ -43,7 +43,7 @@
        \large Measuring what the memory hierarchy is worth, and proving the
        physics is right}
 \author{Olajide Badejo}
-\date{August 2026}
+\date{November 2026}
 
 \begin{document}
 
@@ -61,22 +61,25 @@ by how the output looks.
 The N-body force kernel exists in three variants that isolate one technique
 each. On an RTX 5070 at \LadderMaxN{} particles, shared memory tiling takes the
 step from \NaiveMsAtMaxN{} to \TiledMsAtMaxN{} milliseconds, a factor of
-\TilingSpeedupAtMaxN{}, and sustains \TiledTflopsAtMaxN{} TFLOP/s of single
-precision arithmetic. Fusing the force evaluation with the integrator, which
-was expected beforehand to be worth ten to twenty percent, is worth
-\FusionGainPercentAtMaxN{} percent. That gap is not a disappointing result; it
-is the most informative one in the report, and Section~\ref{sec:fusion}
-explains why an arithmetic bound problem cannot be helped by removing memory
-traffic, using hardware counters that put device memory throughput below one
-percent of peak for all three variants.
+\TilingSpeedupAtMaxN{}, and computes \TiledGigaInteractionsAtMaxN{} billion
+interactions per second, \TiledTflopsAtMaxN{} TFLOP/s at the conventional
+\ConventionalFlopsPerInteraction{} operations per interaction. Fusing the force
+evaluation with the integrator was expected beforehand to be worth ten to twenty percent.
+Round by round it is measurably faster by about one percent over most of the range, and
+not resolved at the largest size, where tiled trials are bimodal for a reason not yet
+understood. Hardware counters put device memory throughput below one percent of peak for
+all three variants, so neither technique works by relieving device memory.
 
-All \GateCount{} physics gates pass. A two body circular orbit conserves energy
-to \EnergyDriftMeasured{} over ten thousand velocity Verlet steps against a
-limit of one part in a thousand; total momentum in a ten thousand particle
+All \GateCount{} physics gates pass. A two body circular orbit in single precision holds
+energy to \EnergyDriftMeasured{} over ten thousand velocity Verlet steps, a figure dominated
+by rounding, and the integrator's order is confirmed separately in double precision; total
+momentum in a ten thousand particle
 Plummer sphere holds to \MomentumDriftMeasured{}; the sampled radial density of
 that sphere matches the analytic Plummer profile at a chi squared p value of
 \PlummerPValue{}. The fluid solver runs \SphMaxN{} particles at
-\SphMsAtMaxN{} milliseconds per step.
+\SphMsAtMaxN{} milliseconds per step. This version corrects claims \texttt{v1.0.0} got
+wrong, including a density gate that measured mismatched particles;
+Chapter~\ref{ch:corrections} lists them.
 \end{abstract}
 
 \tableofcontents
@@ -88,6 +91,7 @@ that sphere matches the analytic Plummer profile at a chi squared p value of
 \input{chapters/05_results}
 \input{chapters/06_discussion}
 \input{chapters/07_conclusion}
+\input{chapters/08_corrections}
 
 \bibliographystyle{plain}
 \bibliography{refs}

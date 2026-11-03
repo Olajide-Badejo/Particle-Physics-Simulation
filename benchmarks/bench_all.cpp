@@ -36,9 +36,9 @@ namespace bench = cps::bench;
 // as the work, and repeats that run for a number of trials.
 //
 // A fourth thing ruins a comparison: session drift. The same two binaries have
-// measured 4.7 percent apart when run in separate blocks and 1.5 percent apart
-// the other way when interleaved, and more trials do not remove that, because
-// the drift is confounded with which variant ran when. So the configurations
+// measured several percent apart when run in separate blocks and agreed when
+// interleaved, and more trials do not remove that, because the drift is
+// confounded with which variant ran when. So the configurations
 // being compared are measured in rounds: every configuration's first trial,
 // then every configuration's second trial, and so on. Each engine stays alive
 // between its trials. The order inside a round rotates, so no configuration

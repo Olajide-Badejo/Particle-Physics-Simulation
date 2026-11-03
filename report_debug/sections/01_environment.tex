@@ -16,7 +16,7 @@ versions later than 15 are not supported!
 \field{Root cause.} CUDA 13.3 supports GCC up to and including 15 and enforces
 that with a preprocessor check, so this is a deliberate refusal rather than a
 parse failure in some header. The machine has GCC 13, 14, 15 and 16 installed
-and defaults to 15, so the problem only appears if the specified floor of GCC
+and defaults to 15, so the problem only appears if the first design's floor of GCC
 16.1 is taken literally, which it was.
 
 \field{Options.} Pass \texttt{-allow-unsupported-compiler} and use GCC 16
@@ -31,8 +31,7 @@ still runs is the worst failure mode available here. Dropping the toolkit would
 have given up first class \texttt{sm\_120} support on this card.
 
 \field{Verification.} A kernel plus a CUB radix sort compiles, links and runs
-correctly under \texttt{-ccbin g++-15 -arch=sm\_120 -std=c++23}. Recorded as a
-substitution in \texttt{PROGRESS.md}.
+correctly under \texttt{-ccbin g++-15 -arch=sm\_120 -std=c++23}.
 
 \entry{CUDA 13 removed clockRate and memoryClockRate}
 
@@ -49,9 +48,8 @@ removed in CUDA 13. The information is still available through
 
 \field{Fix and why.} Query both through the attribute interface. This matters
 more than a compile fix normally would: the memory clock and bus width are what
-the theoretical peak bandwidth is computed from, and that figure is the
-denominator of every bandwidth statement in the main report. Hard coding it
-from a specification sheet would have meant quoting a number that had never
+the theoretical peak bandwidth is computed from, and the probe reports that figure beside
+the measured bandwidth. Hard coding it from a data sheet would have meant quoting a number that had never
 been measured on the machine that produced the results, which is exactly what
 the no number without a run rule exists to prevent.
 
@@ -120,6 +118,10 @@ defined and the branch never fires.
 \field{Fix and why.} Move the guard above \texttt{project()} and make it a
 cache variable, which is the only position where it can observe the undefined
 state while still losing to a value passed on the command line.
+
+The default is still \texttt{120} for development. \texttt{-DCPS\_FAT\_BINARY=ON} builds
+\texttt{physics\_core} for six architectures, which is how the release and continuous
+integration builds are made.
 
 \field{Why this is the most important entry in the chapter.} Nothing broke.
 The code would have run on the RTX 5070 through just in time compilation of the

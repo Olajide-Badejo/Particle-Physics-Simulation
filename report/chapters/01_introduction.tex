@@ -25,25 +25,24 @@ configuration format and one integrator, makes the contrast concrete.
 \paragraph{No number without a run.} Every performance figure in this report
 was produced by a program in this repository, recorded to a comma separated
 file with the commit that produced it, and read back into this document
-mechanically. There are no hand copied numbers. Where I had an expectation
+mechanically. The only typed values are \texttt{v1.0.0} values in correction records and
+a few figures from one off runs that no file records, such as the double precision
+truncation error in Section~\ref{sec:gates}. Where I had an expectation
 before measuring, the expectation is stated and then compared with what
-actually happened; in the most interesting case, Section~\ref{sec:fusion}, the
-expectation was wrong by more than an order of magnitude and the explanation of
-why is worth more than the optimisation would have been.
+actually happened. Where a published claim turned out to be wrong,
+Chapter~\ref{ch:corrections} says so.
 
 \paragraph{Correctness is enforced, not observed.} A particle simulation that
 is subtly wrong still looks like a particle simulation. Fluid still sloshes and
 stars still orbit when the force law has a sign error in one term or the
 neighbour search quietly counts some particles twice. The defence is a set of
-conservation and distribution tests with numerical thresholds, run on every
-build, that fail loudly. There are \GateCount{} of them and
+conservation and distribution tests with numerical thresholds, run by the test suite on
+a machine with a GPU, that fail loudly. There are \GateCount{} of them and
 Chapter~\ref{ch:results} reports what each one measured.
 
 These two commitments interact. The benchmark builds use \texttt{fast math},
-which lowers the reciprocal square root to a hardware approximation and is
-worth having. The physics gates cannot tolerate it: the energy drift gate
-resolves one part in a thousand and the approximation does not leave that much
-headroom. Rather than choose, the build compiles the device library twice from
+which lowers the reciprocal square root to a hardware approximation. The physics gates
+should not depend on a flag like that. So the build compiles the device library twice from
 identical sources, once with fast math for the benchmarks and once without for
 the gates. A gate that a compiler flag can relax is not a gate.
 
@@ -68,6 +67,7 @@ Chapter~\ref{ch:methodology} describes the kernel ladder, the timing protocol
 and the design of the validation suite. Chapter~\ref{ch:implementation}
 describes what was built. Chapter~\ref{ch:results} is the measurements.
 Chapter~\ref{ch:discussion} interprets them, including the results that
-contradicted my expectations. A companion document,
+contradicted my expectations. Chapter~\ref{ch:corrections} lists what
+\texttt{v1.0.0} got wrong. A companion document,
 \texttt{debug\_report.pdf}, records the defects found along the way and how
 each was diagnosed.

@@ -19,15 +19,18 @@ block rather than once per tile.
 
 \paragraph{Rung two, tiled.} The block cooperatively stages a tile of source
 particles in shared memory and every thread of the block consumes it, following
-Nyland, Harris and Prins \cite{nyland2007}. The tile width is thirty two by
-default. The cost is two barriers per tile, so narrow tiles pay the barrier
+Nyland, Harris and Prins \cite{nyland2007}. The default tile width is
+\BestTileWidth{}. The cost is two barriers per tile, so narrow tiles pay the barrier
 more often per unit of arithmetic; Section~\ref{sec:tilewidth} measures that
 trade rather than arguing about it.
 
 \paragraph{Rung three, fused.} The tiled force evaluation and the integrator
-update happen in one launch. This removes the read back of the acceleration
-array, $12N$ bytes per step, plus one kernel launch per step. The acceleration
-is still written, because the energy diagnostic needs it.
+update happen in one launch instead of three, which brings the leapfrog form of
+the integrator with it. Both of the split path's integrator launches read the
+acceleration array, $24N$ bytes per step, and the fused launch reads it in neither.
+The acceleration is still written, $12N$ bytes, although the engine no longer reads
+that write: the diagnostics and the velocity conversions recompute the force first.
+Dropping the write is a kernel change and is left for a later baseline.
 
 Fusion has a correctness constraint that is worth stating because it is easy to
 get wrong. There is no grid wide barrier inside a launch. If the kernel updated
@@ -52,41 +55,54 @@ as the work.
 Run length varies enormously across the sweep, from a fraction of a millisecond
 to nearly a hundred. Each point is therefore calibrated first with a single
 timed step, and the run length is chosen to make each trial last about
-\SI{120}{\milli\second}.
+\SI{120}{\milli\second}, between 20 and 400 steps.
 
-Each point runs three such trials and the fastest is kept. The minimum rather
-than the mean, because everything that perturbs a measurement, whether thermal
-throttling or another process on the display, makes it slower and never faster.
-The minimum is the estimate least contaminated by whatever else the machine was
-doing.
+A fourth thing ruins a comparison, which is session drift. More trials do not remove
+it, because drift is confounded with which variant ran when. So the configurations
+being compared are measured in rounds: every configuration's first trial, then every
+configuration's second trial, and so on for ten rounds, with the order inside a round
+rotating and each engine staying alive between its trials. A group is the three
+variants at one particle count, the fluid sizes, or the tile widths.
 
-One caveat is worth recording. Absolute timings depend on the thermal state of
-the card. A tile width sweep run immediately after the full benchmark sweep
-produced timings about fifteen percent higher than the same sweep run from
-cold, while the relative ordering and the percentage differences between tile
-widths were reproduced to within a tenth of a percentage point. The comparisons
-in this report are therefore all made within a single session, and the
-conclusions rest on relative differences rather than on absolute
-milliseconds.
+Each row reports the median of its ten trials, which one interrupted trial cannot move,
+with the minimum, mean, standard deviation and interquartile range beside it. Comparisons
+between variants come from the raw trials: the time ratio inside each round, then the
+median and interquartile range of those ratios, because two configurations in the same
+round saw the same machine. The sweep also measures one reference configuration at its
+start, middle and end, here \RepeatabilityVariant{} at \RepeatabilityParticles{} particles,
+and the spread of those three medians, \RepeatabilitySpread{} percent, is the session
+drift. A difference smaller than that is not quoted as a difference.
+
+\texttt{v1.0.0} did something else: it measured each variant in its own block, kept the
+fastest of three trials, and asserted that relative differences were stable to a tenth of a
+percentage point. Its own session spread was about 3 percent, which is why its smallest
+differences have been withdrawn in Chapter~\ref{ch:corrections}. Timings from the two
+protocols are not directly comparable.
 
 \section{Validation design}
 
 Each gate is chosen to fail for a specific class of defect rather than to
 produce a reassuring number.
 
-\paragraph{Two body energy drift.} A circular orbit integrated for ten thousand
-steps must conserve total energy to better than one part in a thousand. This is
-the sharpest single statement that can be made about an integrator, and it also
-catches an inconsistent softened potential and a mis-derived initial orbital
-speed. The initial speed is computed from the softened force law, so the orbit
-is genuinely circular rather than a slowly precessing ellipse.
+\paragraph{Two body energy error.} A circular orbit integrated for ten thousand
+steps in single precision must hold total energy to better than one part in a thousand.
+This catches a broken force or update path, an inconsistent softened potential and a
+mis-derived initial orbital speed. The initial speed is computed from the softened force
+law, so the orbit is genuinely circular rather than a slowly precessing ellipse. It cannot
+see the integrator's order, because its value is almost entirely rounding.
+
+\paragraph{Integrator order.} Double precision runs at several time steps measure the
+slope of the energy error, which must come within 0.15 of two on an orbit of eccentricity
+0.5, the method's order, and within 0.15 of four on an unsoftened circular orbit, where
+symmetry cancels the second order term.
 
 \paragraph{Momentum conservation.} The internal forces of an isolated system
 cancel exactly in the mathematics. On the device they cancel only to rounding,
 because each thread accumulates its own sum in single precision in its own
-order. The gate bounds the residual against what single precision can explain,
+order. The check bounds the residual against what single precision can explain,
 $\epsilon_{\mathrm{f32}} \sqrt{N} n_{\mathrm{steps}}$, rather than against an
-arbitrary constant.
+arbitrary constant. That bound is six orders of magnitude above the measured value, so
+this is a sanity check.
 
 \paragraph{Force antisymmetry.} Newton's third law checked pair by pair against
 an independent double precision host implementation, written as literally as
@@ -112,13 +128,27 @@ positions. This is what would catch a dropped or double counted neighbour, and
 it is the direct test of the cell key defence described in
 Chapter~\ref{ch:background}.
 
+\paragraph{Interior density.} A jittered block at the calibrated mass is measured away
+from its free surface, with positions and densities read in the same order. The mean error
+must stay below 1 percent, the RMS deviation below 5 percent and the maximum deviation
+below 10 percent. The calibration sets the mean, so that limit is a consistency check; the
+RMS deviation is driven by the jitter and is the real gate. These limits were committed
+before the code that measures them.
+
+\paragraph{Recording.} An ordinary test run writes its values to the build tree and leaves
+the committed results alone. Only \texttt{make record-results} updates them, and a script
+fails if a registered gate has no row.
+
 \section{Reproducibility}
 
 Every configuration carries an explicit seed and the initial conditions are
 generated on the host from a written out uniform mapping rather than from a
 standard library distribution, whose sequence is not specified across
-implementations. Each benchmark row records the seed, the commit, the CUDA
-runtime and driver versions, the fast math setting and a timestamp. Snapshots
+implementations. Each benchmark row records the seed, the commit and whether the tree
+was dirty, the protocol, the CUDA runtime and driver versions, the fast math setting and a
+timestamp. \texttt{bench\_all} refuses to record from a dirty tree, and
+\texttt{scripts/check\_provenance.py} fails if a committed row's commit does not resolve.
+Snapshots
 are written to a temporary file and renamed into place, so an interrupted run
 never leaves a half written snapshot for a later resume to pick up, and a test
 asserts that stopping and resuming reproduces a straight through run bit for

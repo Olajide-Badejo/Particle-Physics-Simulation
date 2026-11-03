@@ -4,12 +4,12 @@
 \section{The GPU memory hierarchy}
 
 The arithmetic units of a modern GPU are far faster than the path that feeds
-them. The reference card sustains tens of teraflops of single precision
-arithmetic while its device memory delivers \GpuMeasuredBandwidth{} GB/s in
-practice. At four bytes per float that is roughly one hundred and thirty billion
-floats per second against tens of trillions of operations per second, so a
-kernel that performs one operation per float loaded runs at well under one
-percent of the arithmetic the hardware could do. Every technique in this
+them. The reference card sustains \TiledTflopsAtMaxN{} TFLOP/s of single precision
+arithmetic on this workload, by the convention Chapter~\ref{ch:results} states, while its
+device memory delivers \GpuMeasuredBandwidth{} GB/s in practice. At four bytes per float
+that is about \MeasuredFloatsBillions{} billion floats per second, so a
+kernel that performs one operation per float loaded runs at under one
+percent of the arithmetic the hardware has shown it can do. Every technique in this
 project is a way of raising the number of operations performed per byte
 brought in from device memory.
 
@@ -26,7 +26,7 @@ and use a fraction of each. With separate arrays the same read is thirty two
 consecutive floats \cite{cudaguide}.
 
 \paragraph{Shared memory.} Each multiprocessor has a small block of memory,
-\SI{48}{\kibi\byte} per block on this card, that all threads of a block can
+\SI{\GpuSharedMemoryKib}{\kibi\byte} per block on this card, that all threads of a block can
 read at a latency and bandwidth far better than device memory. A block can
 cooperatively stage a tile of data there once and then have all its threads
 read it many times. This is the mechanism behind the tiled force kernel.
@@ -53,8 +53,9 @@ convenience to be apologised for. Without it the acceleration diverges as two
 bodies approach, a single time step throws the pair apart at enormous speed,
 and the run is destroyed. For a collisionless system, where the smooth mean
 field rather than individual close encounters carries the dynamics, softening
-is the physically appropriate model \cite{aarseth2003}. The potential must be
-softened consistently,
+is the physically appropriate model \cite{aarseth2003}. The shipped runs are not fully in
+that regime, as Chapter~\ref{ch:discussion} notes, and there softening is what keeps the
+integrator stable. The potential must be softened consistently,
 
 \begin{equation}
   U = -G \sum_{i < j} \frac{m_i m_j}
@@ -82,8 +83,7 @@ The integrator advances
 Three alternatives were considered and rejected.
 
 Explicit Euler is first order and not symplectic. Its energy error grows
-without bound, and on a circular orbit it spirals outward visibly within a few
-hundred steps.
+without bound, and on a circular orbit it spirals outward.
 
 Fourth order Runge Kutta is accurate per step but requires four force
 evaluations per step. Since the force evaluation is essentially the entire cost
@@ -93,9 +93,9 @@ symplectic method achieves differently.
 Velocity Verlet is second order, needs exactly one force evaluation per step,
 and is symplectic: it exactly conserves a modified Hamiltonian near the true
 one, so its energy error oscillates within a bound rather than accumulating
-\cite{verlet1967,hairer2006}. Over ten thousand steps that distinction is the
-difference between an orbit that is still an orbit and one that is not.
-Figure~\ref{fig:energy} shows the bounded behaviour directly.
+\cite{verlet1967,hairer2006}. The single precision energy figure in
+Section~\ref{sec:gates} is too dominated by rounding to show this, so the order is tested
+in double precision.
 
 The fused kernel uses the leapfrog form,
 

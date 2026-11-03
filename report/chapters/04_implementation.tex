@@ -57,6 +57,20 @@ The force and integration pass is fused for the same reason the gravitational
 one is, and it is safe for the same reason: the sorted arrays it reads are a
 separate copy from the primary arrays it writes.
 
+The update is $v \leftarrow v + a\,\Delta t$, then $x \leftarrow x + v\,\Delta t$, the same
+kick drift leapfrog as the fused gravitational kernel. The initial half step offset is not
+applied, because the acceleration is still zero when the engine would apply it, so the
+initial velocity is taken as $v_{-1/2}$ as it stands. The viscous term reads the half step
+velocity, which makes it first order.
+
+\section{Input safety}
+
+A misspelled or out of range configuration key aborts with a message naming it, and zero
+softening is refused for N-body, because it makes every run produce not a number. The
+fluid solver computes acoustic, viscous and body force limits on the time step and refuses a
+step above the smallest, unless \verb|--allow-unstable-dt| turns the refusal into a warning.
+Non finite state stops a run, and a snapshot of it is not written.
+
 \section{Diagnostics without perturbing the run}
 
 The particle state is single precision, but the reduction that measures
@@ -73,12 +87,28 @@ velocity by shifting the array forward and then back would not return the
 original bits, and that would break the bit identity guarantee for any run that
 happened to take a diagnostic. The correction is applied inside the reduction
 kernel instead, and a test asserts that taking a diagnostic on every step
-leaves the trajectory unchanged.
+leaves the trajectory unchanged. On the fused path the engine recomputes the force before
+each reduction, because the kernel leaves the previous acceleration in the array and the
+synchronised velocity needs the next one. The fused kernel never reads that array, so the
+extra pass cannot affect the trajectory.
+
+Each diagnostic row costs an all pairs potential pass and two synchronous copies, so the
+default interval is one hundred steps. A resumed run appends to its diagnostics file rather
+than truncating it. Solver time, from device events around the stretches of steps between
+diagnostics and snapshots, and wall time are reported separately, and neither counts the
+steps before a resume.
 
 \section{Snapshots and resume}
 
-The snapshot header is sixteen bytes: magic number, particle count, step index,
-and a flags word. The flags word carries the one thing a reader cannot infer
+The snapshot format is \texttt{CPS2}: a 64 byte header, a table with one 40 byte entry per
+array, and the payload the table points into. The header holds a 64 bit step, the simulated
+time as a double, the particle count, a fingerprint of the physics configuration and a
+checksum of the payload. A reader skips array names it does not know, so a later version can
+add arrays without another format change. A resume is refused if the checksum fails or the
+fingerprint differs, and \verb|--force-resume| overrides the fingerprint. \texttt{CPS1}, the
+sixteen byte header of \texttt{v1.0.0}, is still read with a warning and is never written.
+
+The flags word carries the one thing a reader cannot infer
 from the numbers, namely whether the stored velocities are synchronised with
 the positions or offset by half a step. Resuming a fused run under the wrong
 convention would shift the whole trajectory by half a step, which looks exactly
@@ -87,7 +117,9 @@ like a subtly wrong force.
 Accelerations are not stored. They are a deterministic function of the
 positions, so recomputing them on load is cheaper than storing them and
 guarantees the resumed run enters the loop in exactly the state the original
-run held.
+run held. The fluid solver keeps no force pass outside its step, so after a fluid resume the
+first diagnostic row reads a zero acceleration; the trajectory is unaffected and stays bit
+identical.
 
 \section{The style gate}
 

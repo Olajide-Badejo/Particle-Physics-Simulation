@@ -5,10 +5,8 @@ measured. Values come from `experiments/results/validation_gates.csv`. An
 ordinary test run leaves that file alone and writes to `build/results`; only a
 run with `CPS_RECORD_GATES=1` updates it.
 
-Every gate runs against `physics_core_strict`, the library compiled with fast
-math disabled. The energy gate resolves one part in a thousand and the fast math
-reciprocal square root does not leave that much headroom, so the two libraries
-exist precisely so that this cannot be quietly relaxed.
+Every device gate runs against `physics_core_strict`, the library compiled with
+fast math disabled, so a compiler flag cannot quietly relax a gate.
 
 ## Summary
 
@@ -276,7 +274,7 @@ mass.
 **Effect on the dam break.** The equation of state turns excess density directly
 into pressure, so the v1 mass started the interior near `k * 76 = 76 kPa`, against
 a hydrostatic base pressure of `rho g H = 3.9 kPa`. For `configs/dam_break_50k.json`
-the maximum particle speed after 100 steps fell from 3.70 m/s to 0.62 m/s with the
+the maximum particle speed after 100 steps fell from 3.695 m/s to 0.625 m/s with the
 calibrated mass. Free fall alone would give 0.098 m/s, so the start is still not
 quiet. There is no gate on this here; a hydrostatic test in V2.0 owns it.
 

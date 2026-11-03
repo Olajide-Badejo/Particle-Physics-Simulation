@@ -63,6 +63,9 @@ inline double model_bytes_per_step(SolverType solver, NBodyVariant variant, int 
         // positions, three velocities and three accelerations.
         return n * 4.0 * (7.0 + 9.0);
     }
+    // Each array counts once per kernel. The force sum's repeated source reads
+    // are left out: both paths share them and they dominate, so this prices the
+    // difference between the paths and not the traffic of a step.
     // Split path: the force kernel reads four arrays and writes three, the
     // drift kernel reads nine and writes six, the closing kick reads six and
     // writes three.

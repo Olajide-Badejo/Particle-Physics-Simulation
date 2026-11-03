@@ -1,37 +1,36 @@
 \chapter{Discussion}
 \label{ch:discussion}
 
-\section{The most useful result was the one that failed to appear}
+\section{Fusion and what the bytes could not say}
 
-The fusion measurement is the part of this project I would keep if I could keep
-only one thing. The expectation of ten to twenty percent was not arbitrary; it
-is roughly right for a memory bound kernel, and removing a $24N$ byte round trip
-per step sounds substantial when stated in bytes. It is worth
-\FusionGainPercentAtMaxN{} percent.
+The expectation of ten to twenty percent was not arbitrary; it is the sort of figure a
+memory bound kernel might give. What it missed is arithmetic intensity. The all pairs sum
+performs $O(N^2)$ arithmetic on $O(N)$ data, so the ratio of operations to bytes grows
+without limit as the problem grows. At \LadderMaxN{} particles a force evaluation is
+$4 \times 10^{10}$ interactions over a working set of a few megabytes, and the counters
+put device memory throughput at \TiledDramPct{} percent of peak. Most of the step is
+arithmetic, so removing memory traffic from it was never going to give ten percent.
 
-What the expectation missed is arithmetic intensity. The all pairs sum performs
-$O(N^2)$ arithmetic on $O(N)$ data, so the ratio of operations to bytes grows
-without limit as the problem grows. At \LadderMaxN{} particles the force
-evaluation performs about $4 \times 10^{11}$ floating point operations while
-touching a working set of a few megabytes. Removing memory traffic from a
-kernel in that regime is removing something that was not costing anything: the
-counters put device memory throughput at \TiledDramPct{} percent of peak.
+The general lesson is that an optimisation should be sized against the resource it relieves
+before it is implemented. But \texttt{v1.0.0} drew that lesson too far, by treating the
+result as a ceiling on what fusion could do. Pricing the removed bytes at streaming
+bandwidth bounds only the cost of those bytes at that bandwidth. The fused kernel beats
+that figure by several times at every size where the difference is resolved, and at
+\LadderMaxN{} particles the comparison is not resolved at all. The arithmetic was right
+about the expectation and wrong as a prediction of the result, and only the paired
+measurement could tell the two apart.
 
-The general lesson is that an optimisation should be sized against the resource
-it relieves before it is implemented, not after. Two minutes of arithmetic with
-the measured bandwidth figure would have predicted
-\FusionCeilingPercent{} percent as an upper bound and saved the effort of
-being surprised. That said, the fused kernel is not wasted: it is the correct
-choice at small particle counts, where it wins \FusionGainPercentAtMinN{}
-percent because launch overhead is then a real fraction of the step, and it
-halves the memory footprint of a step.
+That paired measurement also corrected a method. \texttt{v1.0.0} measured each variant in
+its own block, so its comparison of fused and tiled was confounded with whichever way the
+session was drifting. Interleaving the variants round by round is what made a difference of
+one percent readable, and the same data is what exposed the bimodal tiled trials that a
+single median had hidden.
 
 \section{Tiling is not a bandwidth optimisation here}
 
 The second correction is subtler. Shared memory tiling is conventionally
-introduced as a way of reducing device memory traffic, and the introduction to
-this report frames it that way. On this problem the framing is wrong, and the
-counters say so: device memory throughput is under one percent of peak both
+introduced as a way of reducing device memory traffic. On this problem that framing is
+wrong, and the counters say so: device memory throughput is under one percent of peak both
 before and after the change. Tiling still delivers a factor of
 \TilingSpeedupAtMaxN{}, but the resource it relieves is the first level cache
 and the load store pipeline, not the memory bus. Global load sectors fall by a
@@ -39,32 +38,25 @@ factor of \SectorReduction{}, and the naive kernel's first level cache
 throughput of \NaiveLoneTexPct{} percent of peak identifies it as the true
 bottleneck.
 
-This matters practically. Had I tried to improve the naive kernel by attacking
-device memory traffic, for instance by compressing the state or by adding
-prefetching, nothing would have happened. The profile pointed at the right
-resource; reasoning from the textbook description would not have.
+This matters practically. Attacking the naive kernel's device memory traffic would not
+have addressed the unit the counters name as limiting it.
 
-\section{Where the specification and the measurement disagreed}
+\section{Where the first design and the measurement disagreed}
 
 Three points in the original design were changed or contradicted by
 measurement, and each is recorded rather than quietly absorbed.
 
-The host compiler floor of GCC 16.1 is not achievable with CUDA 13.3, which
-refuses any GCC newer than 15. GCC 15.2 supplies the C++23 host standard the
-floor was really for.
+The first design asked for GCC 16.1 as the host compiler, which is not achievable with CUDA
+13.3, because it refuses any GCC newer than 15. GCC 15.2 supplies the C++23 host standard
+that floor was for.
 
-The tile width of thirty two costs \TileWidthGainPercent{} percent against a
-width of \BestTileWidth{} on this card. The default was kept so the ladder
-would measure the design as specified, and the sweep is reported so the choice
-is informed.
+A tile width of thirty two costs \TileWidthGainPercent{} percent against a width of
+\BestTileWidth{} on this card. \texttt{v1.0.0} kept thirty two and reported the sweep.
+Under the current protocol the difference is well outside the drift, so the default is now
+\BestTileWidth{}, and the ladder in this report was measured there.
 
-The estimated runtimes in the specification are far too long. The full
-validation suite, which was estimated at ten to twenty minutes on the grounds
-that the ten thousand step orbit would dominate, completes in about five
-seconds. The estimate assumed the orbit run would be expensive; with two
-particles it is trivially cheap, and the cost is dominated instead by the ten
-thousand particle Plummer runs. The full benchmark sweep, estimated at fifteen
-to thirty minutes, completes in under two minutes.
+The first design's runtime estimates were too long. The validation suite was expected to
+be dominated by the ten thousand step orbit, but with two particles that orbit is cheap.
 
 \section{Limitations}
 
@@ -74,23 +66,33 @@ cost a hundred times that. The range where this approach is the right one is
 bounded, and beyond it a tree code is not an optimisation but a different
 algorithm.
 
+The softening in the shipped runs does not make them collisionless. At $\varepsilon =
+0.01$ in a ten thousand particle Plummer sphere of scale radius one, the softening is about
+7.5 times below the mean separation, so close encounters still matter and the run is mildly
+collisional. Here softening keeps the integrator stable; it is not a claim about the regime.
+
 The fluid solver is weakly compressible, so it enforces incompressibility only
 through a stiff equation of state. That bounds the time step: the sound speed
-implied by the stiffness constant sets a Courant condition far tighter than the
-fluid velocity would. The dam break runs at a time step of $10^{-4}$ seconds
-for that reason, so the interactive step rates reported in
-Section~\ref{sec:sphresults} are steps per second and not seconds of simulated
-time per second.
+implied by the stiffness constant sets a limit far tighter than the fluid velocity would.
+The solver computes that limit and refuses a time step above it, and because the smoothing
+radius shrinks with particle count, the shipped time step of $10^{-4}$ seconds is refused
+above about one hundred and ninety thousand particles unless the check is overridden. The
+step rates in Section~\ref{sec:sphresults} are steps per second and not seconds of
+simulated time per second.
 
-Single precision is a deliberate choice and it has a cost. The momentum gate
-measures it directly: the residual is exactly the accumulation of rounding in
-the force sum. For the problems here that cost is far inside the tolerances,
-but a long term integration of a planetary system would need double precision
-positions, and the ladder would look different because double precision
-arithmetic is much slower relative to memory on consumer hardware.
+The fluid defaults are not those of water. The default viscosity of 0.2 Pa\,s is a
+kinematic viscosity of $2 \times 10^{-4}$ square metres per second, about two hundred times
+that of water, and the wall damping of 0.4 keeps 16 percent of the normal kinetic energy at
+each impact. They are documented rather than changed here, because changing them would
+change every fluid number. The start is also not quiet: maximum speed after 100 steps is
+about six times what free fall alone gives, from a density scatter of about 1.5 percent
+acting through the stiff equation of state.
 
-The benchmark measures the fluid from a configuration that begins as a settled
-block and evolves for a few hundred steps during measurement. A fully developed
-splash has a different spatial distribution and therefore a different neighbour
-list length, so the fluid timings should be read as representative of the early
-collapse rather than of every phase of the flow.
+Single precision is a deliberate choice and it has a cost. The energy gate shows it: its
+value is rounding, not truncation. A long term integration of a planetary system would need
+double precision positions.
+
+The benchmark measures the fluid from a block that starts at rest and collapses during
+measurement. A fully developed splash has a different spatial distribution and therefore a
+different neighbour list length, so the fluid timings should be read as representative of
+the first few thousand steps rather than of every phase of the flow.

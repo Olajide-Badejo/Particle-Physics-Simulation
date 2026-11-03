@@ -154,7 +154,10 @@ def half_iqr(rows: list[dict[str, str]]) -> dict[str, dict[int, float]]:
 def save(fig, out_dir: Path, name: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for suffix in ("pdf", "png"):
-        fig.savefig(out_dir / f"{name}.{suffix}", dpi=DPI)
+        # A PDF otherwise records when it was made, so an unchanged figure would
+        # read as changed on every run.
+        metadata = {"CreationDate": None} if suffix == "pdf" else None
+        fig.savefig(out_dir / f"{name}.{suffix}", dpi=DPI, metadata=metadata)
     plt.close(fig)
     print(f"  wrote {name}.pdf and {name}.png")
 
@@ -350,10 +353,9 @@ def plot_tile_sweep(path: Path, out_dir: Path) -> None:
     ax.grid(axis="x", visible=False)
     strip_spines(ax)
     caption(fig,
-            "Lower is better. The leftmost pair is the width of 32 named in the "
-            f"specification; the fastest tiled median is at width {fastest_tile}. "
-            "Bars span the interquartile range of the trials. Compare widths within a "
-            "colour: tiled times the force kernel alone and fused the whole step.")
+            "Lower is better. The leftmost pair is the width of 32 that v1.0.0 defaulted "
+            f"to; the fastest tiled median is at width {fastest_tile}. Bars span the "
+            "interquartile range of the trials. Both variants time a whole step.")
     save(fig, out_dir, "fig_tile_sweep")
 
 

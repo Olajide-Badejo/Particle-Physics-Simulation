@@ -130,6 +130,28 @@ def read_gate_registry(path: Path) -> list[str]:
     return names
 
 
+# Macro names cannot hold digits, so a particle count in a name is spelled out.
+COUNT_WORDS = {
+    10000: "TenThousand", 20000: "TwentyThousand", 25000: "TwentyFiveThousand",
+    50000: "FiftyThousand", 75000: "SeventyFiveThousand", 100000: "HundredThousand",
+    150000: "HundredFiftyThousand", 200000: "TwoHundredThousand",
+}
+
+
+def count_word(count: int) -> str:
+    if count not in COUNT_WORDS:
+        raise SystemExit(f"error: particle count {count} has no name in COUNT_WORDS. Add one.")
+    return COUNT_WORDS[count]
+
+
+def split_modes(values: list[float]) -> tuple[list[float], list[float]]:
+    """A sample cut at its widest gap, into the values below and above it."""
+    ordered = sorted(values)
+    gaps = [ordered[i + 1] - ordered[i] for i in range(len(ordered) - 1)]
+    cut = gaps.index(max(gaps)) + 1
+    return ordered[:cut], ordered[cut:]
+
+
 def latex_escape(text: str) -> str:
     for old, new in (("\\", r"\textbackslash{}"), ("_", r"\_"), ("%", r"\%"), ("&", r"\&"),
                      ("#", r"\#"), ("$", r"\$")):
@@ -207,6 +229,9 @@ class Assets:
         measured = float(info.get("measured_copy_gb_s", 0.0))
         if peak > 0.0:
             self.macro("GpuBandwidthEfficiency", fmt(100.0 * measured / peak, 1))
+        # Four bytes per float, for the arithmetic against memory comparison.
+        self.macro("MeasuredFloatsBillions", f"{measured / 4.0:.0f}")
+        self.macro("GpuSharedMemoryKib", f"{int(info.get('shared_memory_per_block_bytes', 0)) // 1024}")
         return info
 
     # -- N-body ladder ----------------------------------------------------
@@ -219,6 +244,8 @@ class Assets:
                 "ms": float(row["ms_per_step"]),
                 "gflops": float(row["gflops"]),
                 "gbs": float(row["model_gb_s"]),
+                "interactions": float(row["interactions_per_second"]),
+                "bytes": float(row["model_bytes_per_step"]),
             }
         if "naive" not in by_variant:
             return
@@ -265,6 +292,19 @@ class Assets:
         delta_lines += [r"\bottomrule", r"\end{tabular}"]
         self.write_table("nbody_rung_deltas", "\n".join(delta_lines) + "\n")
 
+        # Every cell of the ladder, for the Markdown table that quotes it.
+        for count in counts:
+            word = count_word(count)
+            naive = by_variant["naive"][count]["ms"]
+            tiled = by_variant["tiled"][count]["ms"]
+            fused = by_variant["fused"][count]["ms"]
+            self.macro(f"NaiveMsAt{word}", f"{naive:.3f}")
+            self.macro(f"TiledMsAt{word}", f"{tiled:.3f}")
+            self.macro(f"FusedMsAt{word}", f"{fused:.3f}")
+            self.macro(f"TilingSpeedupAt{word}", f"{naive / tiled:.2f}")
+            self.macro(f"TiledGigaInteractionsAt{word}",
+                       f"{by_variant['tiled'][count]['interactions'] / 1.0e9:.0f}")
+
         largest = counts[-1]
         naive = by_variant["naive"][largest]["ms"]
         tiled = by_variant["tiled"][largest]["ms"]
@@ -277,6 +317,11 @@ class Assets:
         self.macro("FusionSpeedupAtMaxN", f"{tiled / fused:.3f}")
         self.macro("FusionGainPercentAtMaxN", f"{100.0 * (tiled - fused) / tiled:+.1f}")
         self.macro("TiledTflopsAtMaxN", f"{by_variant['tiled'][largest]['gflops'] / 1000.0:.2f}")
+        self.tiled_interactions_at_max = by_variant["tiled"][largest]["interactions"]
+        self.macro("TiledGigaInteractionsAtMaxN", f"{self.tiled_interactions_at_max / 1.0e9:.0f}")
+        # What bench_all converts interactions to flops with, read back from its rows.
+        self.macro("ConventionalFlopsPerInteraction",
+                   f"{by_variant['tiled'][largest]['gflops'] * 1.0e9 / self.tiled_interactions_at_max:.0f}")
         self.source = "benchmark_trials.csv"
         self.paired_ladder(counts)
         self.source = "benchmarks.csv"
@@ -293,16 +338,28 @@ class Assets:
         )
         self.macro("PeakTflops", f"{best / 1000.0:.2f}")
 
-        # Arithmetic intensity argument, computed rather than asserted: how much
-        # of the step at the largest size the fused round trip could possibly
-        # account for.
-        return_trip_bytes = 2.0 * 12.0 * largest  # write then read the acceleration array
+        # What the traffic fusion removes would cost at streaming bandwidth. The
+        # byte counts come from the model bench_all records, which reads the code:
+        # both of the split path's integrator launches read the acceleration array,
+        # and the fused kernel reads it in neither.
         measured_bandwidth = float(self.macros.get("GpuMeasuredBandwidth", "0").replace(",", ""))
         if measured_bandwidth > 0.0:
             self.source = "benchmarks.csv,device.json"
-            trip_ms = return_trip_bytes / (measured_bandwidth * 1.0e9) * 1.0e3
-            self.macro("FusionCeilingMs", f"{trip_ms:.4f}")
-            self.macro("FusionCeilingPercent", f"{100.0 * trip_ms / tiled:.3f}")
+            per_ms = 1.0e3 / (measured_bandwidth * 1.0e9)
+            reads_ms = 2.0 * 12.0 * largest * per_ms
+            self.macro("AccelReadsMs", f"{reads_ms:.4f}")
+            self.macro("AccelReadsPercent", f"{100.0 * reads_ms / tiled:.3f}")
+            tiled_bytes = by_variant["tiled"][largest]["bytes"]
+            fused_bytes = by_variant["fused"][largest]["bytes"]
+            self.macro("ModelBytesPerParticleSplit", f"{tiled_bytes / largest:.0f}")
+            self.macro("ModelBytesPerParticleFused", f"{fused_bytes / largest:.0f}")
+            self.macro("ModelBytesPerParticleSaved", f"{(tiled_bytes - fused_bytes) / largest:.0f}")
+            saved_ms = (tiled_bytes - fused_bytes) * per_ms
+            self.macro("ModelSavingMsAtMaxN", f"{saved_ms:.4f}")
+            self.macro("ModelSavingPercentAtMaxN", f"{100.0 * saved_ms / tiled:.3f}")
+            smallest_tiled = by_variant["tiled"][smallest]
+            saved_small_ms = (smallest_tiled["bytes"] - by_variant["fused"][smallest]["bytes"]) * per_ms
+            self.macro("ModelSavingPercentAtMinN", f"{100.0 * saved_small_ms / smallest_tiled['ms']:.2f}")
 
     def paired_ladder(self, counts: list[int]) -> None:
         """Per round time ratios for each variant pair, a ratio below 1 favouring the first."""
@@ -322,6 +379,10 @@ class Assets:
             fused = trials_by_round(trials, "fused", count)
             fused_median, fused_iqr, rounds = paired_ratio(fused, tiled)
             tiled_median, tiled_iqr, _ = paired_ratio(tiled, naive)
+            word = count_word(count)
+            self.macro(f"FusedOverTiledRatioAt{word}", f"{fused_median:.4f}")
+            self.macro(f"FusedOverTiledIqrAt{word}", f"{fused_iqr:.4f}")
+            self.macro(f"TiledOverNaiveRatioAt{word}", f"{tiled_median:.4f}")
             lines.append(
                 f"{count:,} & {fused_median:.4f} & {fused_iqr:.4f} & "
                 f"{tiled_median:.4f} & {tiled_iqr:.4f} \\\\"
@@ -335,6 +396,12 @@ class Assets:
         self.macro("TiledOverNaiveRatioAtMaxN", f"{tiled_median:.4f}")
         self.macro("TiledOverNaiveRatioIqrAtMaxN", f"{tiled_iqr:.4f}")
         self.macro("PairedRoundsAtMaxN", str(rounds))
+        # The tiled trials at the largest size fall into two groups, which is why
+        # the ratio there is not resolved.
+        low, high = split_modes(list(tiled.values()))
+        self.macro("TiledLowModeMsAtMaxN", f"{quantile(low, 0.5):.1f}")
+        self.macro("TiledHighModeMsAtMaxN", f"{quantile(high, 0.5):.1f}")
+        self.macro("TiledHighModeRoundsAtMaxN", str(len(high)))
 
     # -- session drift ----------------------------------------------------
     def repeatability(self) -> None:
@@ -375,10 +442,28 @@ class Assets:
         lines += [r"\bottomrule", r"\end{tabular}"]
         self.write_table("sph_scaling", "\n".join(lines) + "\n")
 
+        for count, ms, _gbs in points:
+            word = count_word(count)
+            self.macro(f"SphStepMsAt{word}", f"{ms:.4f}")
+            self.macro(f"SphStepsPerSecondAt{word}", f"{1000.0 / ms:,.0f}")
+
         at_50k = [p for p in points if p[0] == 50000]
         if at_50k:
             self.macro("SphMsAtFiftyThousand", f"{at_50k[0][1]:.3f}")
             self.macro("SphFpsAtFiftyThousand", f"{1000.0 / at_50k[0][1]:,.0f}")
+            # Against one frame at sixty frames per second.
+            self.macro("SphInteractiveMargin", f"{(1000.0 / 60.0) / at_50k[0][1]:.0f}")
+        self.macro("SphCountRatio", f"{points[-1][0] / points[0][0]:.0f}")
+        self.macro("SphTimeRatio", f"{points[-1][1] / points[0][1]:.1f}")
+        # The fluid moves during a measurement, so its trials spread by more than
+        # the drift does. How far, and how far the fluid got.
+        fluid = [r for r in rows if r["solver"] == "sph"]
+        spreads = [100.0 * float(r["ms_iqr"]) / float(r["ms_median"]) for r in fluid]
+        self.macro("SphIqrLeastPercent", f"{min(spreads):.1f}")
+        self.macro("SphIqrMostPercent", f"{max(spreads):.1f}")
+        timed = [int(r["timed_steps"]) * int(r["trials"]) for r in fluid]
+        self.macro("SphTimedStepsLeast", f"{min(timed):,}")
+        self.macro("SphTimedStepsMost", f"{max(timed):,}")
         largest = points[-1]
         self.macro("SphMaxN", f"{largest[0]:,}")
         self.macro("SphMsAtMaxN", f"{largest[1]:.3f}")
@@ -414,22 +499,23 @@ class Assets:
         lines += [r"\bottomrule", r"\end{tabular}"]
         self.write_table("tile_sweep", "\n".join(lines) + "\n")
 
-        specified = [r for r in rows if int(r["tile_size"]) == 32 and r["variant"] == "tiled"]
-        if specified and best_ms is not None:
-            spec_ms = float(specified[0]["ms_per_step"])
+        tile_32 = [r for r in rows if int(r["tile_size"]) == 32 and r["variant"] == "tiled"]
+        if tile_32 and best_ms is not None:
+            tile_32_ms = float(tile_32[0]["ms_per_step"])
             self.macro("BestTileWidth", str(best_tile))
             self.macro("BestTileMs", f"{best_ms:.3f}")
-            self.macro("SpecifiedTileMs", f"{spec_ms:.3f}")
-            self.macro("TileWidthGainPercent", f"{100.0 * (spec_ms - best_ms) / spec_ms:.1f}")
-            # What deciding the default rests on: the fastest width against the
-            # specified one, round by round.
+            self.macro("TileThirtyTwoMs", f"{tile_32_ms:.3f}")
+            self.macro("TileSweepParticles", f"{int(tile_32[0]['num_particles']):,}")
+            self.macro("TileWidthGainPercent", f"{100.0 * (tile_32_ms - best_ms) / tile_32_ms:.1f}")
+            # What deciding the default rests on: the fastest width against a
+            # width of 32, round by round.
             self.source = "tile_sweep_trials.csv"
             trials = read_csv(self.results / "tile_sweep_trials.csv")
-            count = int(specified[0]["num_particles"])
+            count = int(tile_32[0]["num_particles"])
             ratio, ratio_iqr, _ = paired_ratio(trials_by_round(trials, "tiled", count, best_tile),
                                                trials_by_round(trials, "tiled", count, 32))
-            self.macro("BestTileOverSpecifiedRatio", f"{ratio:.4f}")
-            self.macro("BestTileOverSpecifiedRatioIqr", f"{ratio_iqr:.4f}")
+            self.macro("BestTileOverTileThirtyTwoRatio", f"{ratio:.4f}")
+            self.macro("BestTileOverTileThirtyTwoRatioIqr", f"{ratio_iqr:.4f}")
 
     # -- validation gates -------------------------------------------------
     def gates(self) -> None:
@@ -512,6 +598,20 @@ class Assets:
                 self.macro("SphDensityRmsPercent", f"{100.0 * float(row['measured']):.2f}")
             if row["gate"] == "sph_interior_density_max_deviation":
                 self.macro("SphDensityMaxPercent", f"{100.0 * float(row['measured']):.2f}")
+            if row["gate"] == "two_body_orbit_out_of_round":
+                self.macro("OrbitOutOfRoundMeasured", sci(float(row["measured"])))
+            if row["gate"] == "verlet_energy_slope_error_eccentric":
+                self.macro("VerletSlopeErrorEccentric", f"{float(row['measured']):.4f}")
+            if row["gate"] == "verlet_energy_slope_error_circular":
+                self.macro("VerletSlopeErrorCircular", f"{float(row['measured']):.4f}")
+            if row["gate"] == "force_vs_cpu_reference_100_particles":
+                self.macro("ForceReferenceError", sci(float(row["measured"])))
+            if row["gate"] == "pairwise_force_antisymmetry_residual":
+                self.macro("AntisymmetryResidual", sci(float(row["measured"])))
+            if row["gate"] == "sph_spiky_kernel_normalisation_error":
+                self.macro("SpikyNormalisationError", sci(float(row["measured"])))
+            if row["gate"] == "sph_neighbour_search_vs_brute_force":
+                self.macro("NeighbourSearchError", sci(float(row["measured"])))
 
     # -- hardware counters ------------------------------------------------
     def profile(self) -> None:
@@ -522,19 +622,20 @@ class Assets:
         rows.sort(key=lambda r: order.get(r["variant"], 9))
 
         lines = [
-            r"\begin{tabular}{l rrr rr}",
+            r"\begin{tabular}{l rrrr rr}",
             r"\toprule",
-            r"& \multicolumn{3}{c}{throughput, percent of peak} "
+            r"& \multicolumn{4}{c}{throughput, percent of peak} "
             r"& \multicolumn{2}{c}{per launch} \\",
-            r"\cmidrule(lr){2-4}\cmidrule(lr){5-6}",
-            r"variant & L1 and load store & L2 & device memory "
-            r"& global load sectors & warp issue \\",
+            r"\cmidrule(lr){2-5}\cmidrule(lr){6-7}",
+            r"variant & SM & L1 and load store & L2 & device memory "
+            r"& load sectors & warp issue \\",
             r"\midrule",
         ]
         for row in rows:
             sectors = float(row["global_load_sectors"])
             lines.append(
-                f"{row['variant']} & {float(row['l1tex_throughput_pct']):.2f} & "
+                f"{row['variant']} & {float(row['sm_throughput_pct']):.2f} & "
+                f"{float(row['l1tex_throughput_pct']):.2f} & "
                 f"{float(row['l2_throughput_pct']):.2f} & "
                 f"{float(row['dram_throughput_pct']):.2f} & "
                 f"{sectors / 1.0e6:,.1f}M & {float(row['issue_active_pct']):.2f} \\\\"
@@ -543,6 +644,15 @@ class Assets:
         self.write_table("profile_counters", "\n".join(lines) + "\n")
 
         keyed = {r["variant"]: r for r in rows}
+        # Every cell of the counter table, for the Markdown table that quotes it.
+        for row in rows:
+            variant = row["variant"].capitalize()
+            self.macro(f"{variant}SmPct", f"{float(row['sm_throughput_pct']):.2f}")
+            self.macro(f"{variant}LoneTexCellPct", f"{float(row['l1tex_throughput_pct']):.2f}")
+            self.macro(f"{variant}LtwoPct", f"{float(row['l2_throughput_pct']):.2f}")
+            self.macro(f"{variant}DramCellPct", f"{float(row['dram_throughput_pct']):.2f}")
+            self.macro(f"{variant}SectorsMillions", f"{float(row['global_load_sectors']) / 1.0e6:,.1f}")
+            self.macro(f"{variant}IssueCellPct", f"{float(row['issue_active_pct']):.2f}")
         if "naive" in keyed and "tiled" in keyed:
             naive, tiled = keyed["naive"], keyed["tiled"]
             self.macro("NaiveLoneTexPct", f"{float(naive['l1tex_throughput_pct']):.1f}")
@@ -564,8 +674,24 @@ class Assets:
             # A summary written before this column existed was profiled at 100,000.
             particles = float(tiled.get("num_particles") or 100000)
             interactions = particles * particles
-            self.macro("MeasuredFlopsPerInteraction",
-                       f"{(fadd + fmul + 2.0 * ffma) / interactions:.1f}")
+            measured_flops = (fadd + fmul + 2.0 * ffma) / interactions
+            self.macro("MeasuredFlopsPerInteraction", f"{measured_flops:.1f}")
+            self.macro("ProfileParticles", f"{int(particles):,}")
+            # The headline throughput restated at the operation count the counters give.
+            interactions_per_second = getattr(self, "tiled_interactions_at_max", 0.0)
+            if interactions_per_second > 0.0:
+                self.macro("TiledTflopsAtMeasuredFlops",
+                           f"{interactions_per_second * measured_flops / 1.0e12:.2f}")
+
+    # -- debug report -----------------------------------------------------
+    def debug_entries(self, sections: Path) -> None:
+        """How many entries the debug report holds, so prose cannot miscount them."""
+        files = sorted(sections.glob("*.tex"))
+        if not files:
+            return
+        self.macro("DebugEntryCount", str(sum(
+            len(re.findall(r"^\\entry\{", path.read_text(encoding="utf-8"), re.MULTILINE))
+            for path in files)))
 
     # -- provenance -------------------------------------------------------
     def provenance(self, rows: list[dict[str, str]]) -> None:
@@ -611,7 +737,9 @@ class Assets:
             "|---|---|---|",
         ]
         for name in sorted(self.macros):
-            sources = ", ".join(f"{folder}/{item}" for item in self.sources[name].split(","))
+            # A source with a folder of its own is not in the results directory.
+            sources = ", ".join(item if "/" in item else f"{folder}/{item}"
+                                for item in self.sources[name].split(","))
             lines.append(f"| {name} | {tex_to_markdown(self.macros[name])} | {sources} |")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -650,6 +778,7 @@ def main() -> int:
         ("tile_sweep.csv", lambda: assets.tile_sweep()),
         ("validation_gates.csv", lambda: assets.gates()),
         ("profile_summary.csv", lambda: assets.profile()),
+        ("report_debug/sections", lambda: assets.debug_entries(root / "report_debug" / "sections")),
         ("benchmarks.csv", lambda: assets.provenance(benchmarks)),
     ]
     for source, action in tqdm(steps, desc="assets", unit="step"):

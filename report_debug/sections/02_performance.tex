@@ -1,46 +1,48 @@
 \chapter{Performance}
 
-Two expectations in the original design were contradicted by measurement. The
-specification anticipated this and asked that the correction be written here
-rather than quietly absorbed, which is the right instruction: an expectation
-that was wrong and got corrected is more useful than one that was never
-written down.
+Two expectations in the original design were contradicted by measurement, and the first
+explanation of one of them was then contradicted as well. They are written down here
+because an expectation that was wrong and got corrected is more useful than one that was
+never recorded.
 
-\entry{Kernel fusion, expected ten to twenty percent, measured
-\FusionGainPercentAtMaxN{} percent}
+\entry{Kernel fusion, expected ten to twenty percent, measured about one}
 
-\field{The expectation.} Fusing the force evaluation with the Verlet update
-removes the read back of the acceleration array, $12N$ bytes per step, plus
-one kernel launch per step. The acceleration is still written. Stated in bytes that sounds
-substantial, and ten to twenty percent is roughly right for a memory bound
-kernel.
+\field{The expectation.} Fusing the force evaluation with the Verlet update takes one launch
+instead of three and stops reading the acceleration array. Ten to twenty percent seemed
+about right for a memory bound kernel.
 
-\field{The measurement.} At \LadderMaxN{} particles fusion is worth
-\FusionGainPercentAtMaxN{} percent. At \LadderMinN{} particles it is worth
-\FusionGainPercentAtMinN{} percent. At some intermediate sizes it was slightly
-slower than the unfused path, within run to run variation.
+\field{The measurement.} Round by round, at the default tile width, fused over tiled is
+\FusedOverTiledRatioAtTenThousand{} at \LadderMinN{} particles and
+\FusedOverTiledRatioAtHundredFiftyThousand{} at one hundred and fifty thousand, both beyond
+their interquartile ranges and the session drift of \RepeatabilitySpread{} percent. At
+\LadderMaxN{} particles it is \FusedOverTiledRatioAtMaxN{} with a range of
+\FusedOverTiledRatioIqrAtMaxN{}, which does not resolve anything: the tiled trials are
+bimodal, near \TiledLowModeMsAtMaxN{} and \TiledHighModeMsAtMaxN{} milliseconds. I do not
+yet know why.
 
-\field{Root cause of the wrong expectation.} Arithmetic intensity. The all
-pairs sum performs $O(N^2)$ arithmetic on $O(N)$ data, so the ratio of
-operations to bytes grows without limit with the problem size. The saving can
-be bounded before any profiler is involved: $24N$ bytes at \LadderMaxN{}
-particles is \FusionCeilingMs{} milliseconds at the measured streaming
-bandwidth of \GpuMeasuredBandwidth{} GB/s, against a step of
-\TiledMsAtMaxN{} milliseconds. That is \FusionCeilingPercent{} percent, and it
-is a ceiling rather than an estimate. No implementation of fusion, however
-good, could have delivered ten percent here.
+\field{Root cause of the wrong expectation.} Arithmetic intensity. The all pairs sum performs
+$O(N^2)$ arithmetic on $O(N)$ data, so the ratio of operations to bytes grows without limit
+with the problem size, and device memory is nearly idle: Nsight Compute puts it at
+\NaiveDramPct{} percent of peak for the naive kernel and \TiledDramPct{} percent for the
+tiled one.
 
-\field{Confirmation from counters.} Nsight Compute puts device memory
-throughput at \NaiveDramPct{} percent of peak for the naive kernel and
-\TiledDramPct{} percent for the tiled one. There was never any device memory
-pressure for fusion to relieve.
+\field{What I got wrong next.} \texttt{v1.0.0} turned this into a ceiling. It called the saving
+a round trip of the acceleration array, $24N$ bytes written and read, priced that at the
+measured bandwidth, and said no implementation could beat the result. Three things were wrong
+with that. The fused kernel still wrote the array. The split path reads the array twice,
+once in each integrator launch, so the description of the traffic was wrong too; counted from
+the code, fusion removes \ModelBytesPerParticleSaved{}$N$ bytes, which is
+\ModelSavingMsAtMaxN{} milliseconds or \ModelSavingPercentAtMaxN{} percent of a step at
+\LadderMaxN{} particles. And the measured gains are several times larger than any such
+figure, so it was never a ceiling. It prices one resource and says nothing about the rest of
+the step. The gain itself, 0.1 percent in \texttt{v1.0.0}, was a difference of 0.12 percent
+between separate blocks against a session spread of about 3 percent, so it could not be told
+from noise.
 
-\field{What I changed.} Nothing in the code; the fused kernel is kept because
-it is the right choice at small particle counts and it halves the memory
-footprint of a step. What changed is the practice: an optimisation is now sized
-against the resource it claims to relieve, using the measured ceiling, before
-it is written. Two minutes of arithmetic would have predicted this result and
-saved the effort of being surprised by it.
+\field{What I changed.} The protocol, so a difference of a percent can be read. The source of
+the gain is still unmeasured. The fused kernel stays because it is faster where the difference
+is resolved; \texttt{v1.0.0} also said it halves the memory footprint of a step, which is false,
+because it adds a second position buffer.
 
 \entry{Shared memory tiling is not a bandwidth optimisation on this problem}
 
@@ -66,64 +68,69 @@ Global load sectors fall by a factor of \SectorReduction{} and load store
 instructions by a factor of \LsuReduction{}. First level cache throughput falls
 from \NaiveLoneTexPct{} percent of peak, close to saturation, to
 \TiledLoneTexPct{} percent. The decisive number is warp issue efficiency, which
-rises from \NaiveIssuePct{} percent to \TiledIssuePct{} percent: the naive
-kernel spends about half its time with nothing to issue because its warps are
-waiting on the load store pipe. Tiling moves the reads into shared memory and
-the pipe stops being the bottleneck.
+rises from \NaiveIssuePct{} percent to \TiledIssuePct{} percent. Tiling moves the reads into
+shared memory and the load store pipe stops being the limit.
 
-\field{Why this mattered practically.} Had I trusted the textbook description
-and tried to improve the naive kernel by attacking device memory traffic, by
-compressing the state or adding prefetching, nothing at all would have
-happened. The profile pointed at the right resource; reasoning from the
-familiar description would not have.
+\field{Why this mattered practically.} Attacking the naive kernel's device memory traffic would
+not have addressed the unit the counters name as limiting it. The profile pointed at the right
+resource; reasoning from the familiar description would not have.
 
 \field{Control.} The arithmetic instruction counts are equal across all three
 variants to within a fraction of a percent, which is what licenses attributing
 the difference to data movement rather than to the variants computing different
-things. Those same counters also let the conventional twenty floating point
-operations per interaction be checked against the
-\MeasuredFlopsPerInteraction{} actually retired.
+things. Those same counters also let the conventional
+\ConventionalFlopsPerInteraction{} floating point operations per interaction be checked
+against the \MeasuredFlopsPerInteraction{} actually retired, counting a fused multiply add as
+two. Interactions per second is the measurement, and TFLOP/s depends on which count is used.
 
-\entry{The specified tile width is not the fastest}
+\entry{The first default tile width is not the fastest}
 
-\field{Symptom.} A sweep of tile widths at one hundred thousand particles shows
-the specified width of thirty two is the slowest of the four measured.
+\field{Symptom.} A sweep of tile widths at \TileSweepParticles{} particles shows a width of
+thirty two, the \texttt{v1.0.0} default, is well behind the widest of the four measured.
 
 \begin{center}
 \input{../report/tables/tile_sweep}
 \end{center}
 
-\field{Root cause.} Two barriers are paid per tile, so a narrower tile pays
-them more often per unit of arithmetic. A width of \BestTileWidth{} runs at
-\BestTileMs{} milliseconds against \SpecifiedTileMs{}, a difference of
-\TileWidthGainPercent{} percent.
+\field{Root cause.} Two barriers are paid per tile, so a narrower tile pays them more often per
+unit of arithmetic. That fits the direction of the result, though the barrier cost was not
+measured on its own. A width of \BestTileWidth{} runs at \BestTileMs{} milliseconds against
+\TileThirtyTwoMs{}, a difference of \TileWidthGainPercent{} percent, and a paired ratio of
+\BestTileOverTileThirtyTwoRatio{} with an interquartile range of
+\BestTileOverTileThirtyTwoRatioIqr{}.
 
-\field{Fix and why.} The default stays at thirty two. The ladder exists to
-measure the design as specified, and changing the tile width partway would have
-made the rungs incomparable with the design they were meant to test. The sweep
-is reported instead, so the choice is informed rather than accidental, and the
-right resolution for future work is to expose the width as a configuration
-field.
+\field{Fix and why.} \texttt{v1.0.0} kept thirty two and reported the sweep. The default is now
+\BestTileWidth{}, and the ladder was measured there, because the difference is far outside the
+session drift of \RepeatabilitySpread{} percent.
+
+\field{A defect in the sweep itself.} The \texttt{v1.0.0} sweep timed the force kernel alone for
+tiled, with particles that never moved, against whole steps for fused, so any comparison across
+variants in its table was void. It also carried a claim here that thirty two was the slowest of
+the four, when its own table had sixty four slower. Both variants now time a whole step.
 
 \entry{Absolute timings depend on the thermal state of the card}
 
-\field{Symptom.} A tile width sweep run immediately after the full benchmark
-sweep produced timings about fifteen percent higher than the same sweep run
-from cold. Nothing in the code had changed.
+\field{Symptom.} In \texttt{v1.0.0}, a tile width sweep run immediately after the full benchmark
+sweep produced timings about fifteen percent higher than the same sweep run from cold. Nothing
+in the code had changed.
 
-\field{Root cause.} Sustained clocks fall as the card heats. This is ordinary
-behaviour, but it is large enough to swamp several of the effects being
-measured here, including the entire fusion result.
+\field{Root cause.} Sustained clocks falling as the card heats is the likely reason, though I did
+not log clocks. Either way it is large enough to swamp several of the effects being measured
+here, including the entire fusion result.
 
-\field{Fix and why.} Two measures. Every comparison in the reports is made
-within a single session, so all points in a comparison share a thermal state.
-And each point keeps the fastest of three trials rather than the mean, because
-everything that perturbs a measurement makes it slower and never faster, so the
-minimum is the least contaminated estimate.
+\field{First fix, and why it was not enough.} \texttt{v1.0.0} compared within one session, kept the
+fastest of three trials, and claimed relative differences were stable to a tenth of a percentage
+point. They were not. Later measurement of the same binaries found them 4.7 percent apart in
+separate blocks and 1.5 percent apart the other way when interleaved, because drift is confounded
+with which variant ran when, and more trials do not help.
 
-\field{Verification.} Across the hot and cold runs the relative ordering of the
-tile widths was identical and the percentage difference between the widest and
-narrowest tile was reproduced to within a tenth of a percentage point, even
-though the absolute milliseconds differed by fifteen percent. That is the
-evidence that the conclusions rest on relative differences and survive the
-variation.
+\field{Fix and why.} Measure in rounds: every configuration's first trial, then every
+configuration's second, with the order rotating. Report the median of ten trials with its
+dispersion. Take comparisons from the ratio inside each round, because two configurations in one
+round saw the same machine. Measure one reference configuration at the start, middle and end of
+the sweep, and treat the spread of those, \RepeatabilitySpread{} percent here, as the smallest
+difference worth quoting.
+
+\field{Verification.} Rerunning the sweep on a later commit reproduced the tile ratio to within a
+tenth of a percent, and \texttt{scripts/check\_provenance.py} holds every recorded row to a commit
+that resolves and a clean tree.

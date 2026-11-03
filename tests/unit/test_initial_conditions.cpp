@@ -176,7 +176,7 @@ TEST(SphDerivedParameters, PutARoughlyStandardNumberOfNeighboursInsideTheSupport
     const cps::SphDerivedParameters derived = cps::derive_sph_parameters(dam_break_config(50000));
     EXPECT_GT(derived.smoothing_radius, 0.0f);
     EXPECT_GT(derived.particle_mass, 0.0f);
-    // Two lattice spacings of support gives about thirty three neighbours.
+    // Two ideal spacings of support, on the lattice actually laid out.
     EXPECT_GT(derived.expected_neighbour_count, 20.0);
     EXPECT_LT(derived.expected_neighbour_count, 60.0);
 }

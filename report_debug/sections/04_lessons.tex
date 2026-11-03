@@ -2,11 +2,10 @@
 
 \section{The dangerous defects were the silent ones}
 
-Of the eleven entries in this report, three crashed, three failed to compile,
-and five produced plausible output while being wrong. The five silent ones took
-almost all the time.
+Of the \DebugEntryCount{} entries in this report, six are about plausible output that was
+wrong.
 
-A build targeting Turing instead of Blackwell compiles, links and runs. A
+A density gate reading mismatched particles passes and comes with a story. A build targeting Turing instead of Blackwell compiles, links and runs. A
 benchmark whose columns have shifted parses cleanly and plots. An optimisation
 that relieves a resource nothing was waiting on delivers a small positive
 number that is easy to accept. A neighbour search that counts some particles
@@ -15,40 +14,36 @@ perturbs the state it measures produces a smooth curve.
 
 None of these announces itself, and none is found by testing that the program
 runs. Each was caught by a different mechanism, and the pattern is that each
-mechanism compares the thing against something independent: the object file
-against the intended architecture, the figure against what a tile width could
-plausibly be, the optimisation against a bound computed from measured
-bandwidth, the neighbour search against a brute force sum, the diagnostic run
+mechanism compares the thing against something independent: the density's index against the
+position's, the object file against the intended architecture, the figure against what a tile width could
+plausibly be, the optimisation against a paired measurement, the neighbour search against a brute force sum, the diagnostic run
 against an undiagnosed one.
 
 \section{A tolerance without a scale is not a tolerance}
 
-Two defects came from this directly. The kernel continuity test compared a
+One defect came from this directly. The kernel continuity test compared a
 quantity of order $10^6$ against an absolute tolerance of $10^{-3}$ and failed a
 correct implementation. Had the comparison gone the other way, against a
 quantity of order $10^{-6}$, it would have passed anything at all.
 
 Every gate in the project is now expressed against a scale that means
 something. The momentum gate is bounded by $\epsilon_{\mathrm{f32}} \sqrt{N}
-n_{\mathrm{steps}}$, which is what single precision arithmetic can explain, and
-it passes with six orders of magnitude to spare, so the number reported is
-informative rather than merely a pass. The force gate is relative to the
+n_{\mathrm{steps}}$, which is what single precision arithmetic can explain. It passes with six
+orders of magnitude to spare, which means a pass only rules out gross breakage, and
+\texttt{docs/physics\_validation.md} now says so for each limit. The force gate is relative to the
 magnitude of the acceleration being checked. The density gate is relative to
 rest density.
 
 \section{Size the optimisation before writing it}
 
-The fusion result is the clearest lesson in the project. The saving was
-computable in advance from two numbers already measured at Phase 0: the bytes
-removed and the achievable bandwidth. That calculation gives
-\FusionCeilingPercent{} percent as an absolute ceiling at \LadderMaxN{}
-particles and takes two minutes.
+The fusion result taught this lesson and then its limit. Pricing the bytes removed at the
+measured bandwidth takes two minutes and gives \ModelSavingPercentAtMaxN{} percent of a step at
+\LadderMaxN{} particles, which would have corrected an expectation of ten to twenty. But
+\texttt{v1.0.0} called such a figure an absolute ceiling, and the measured gains are several times
+larger. Such a sum bounds the cost of one resource, not the benefit of a change.
 
-The same calculation would have reframed the tiling work correctly as well.
-Tiling is worth a factor of \TilingSpeedupAtMaxN{}, which no bandwidth argument
-can explain, because bandwidth was never the constraint. Knowing that in
-advance would have pointed at the load store pipeline from the beginning
-instead of at the memory bus.
+The same goes for tiling, which is worth a factor of \TilingSpeedupAtMaxN{} that no bandwidth
+argument can explain, because device memory was never the constraint.
 
 \section{Verification has to be independent of the thing verified}
 
@@ -68,10 +63,8 @@ guarantee a pass.
 
 \section{The environment is part of the experiment}
 
-Four of the eleven entries were toolchain problems, and one of them would have
+Four of the \DebugEntryCount{} entries were toolchain problems, and one of them would have
 invalidated every performance number in the main report while leaving no trace
-except numbers that were slightly disappointing. Phase 0 of this build existed
+except numbers that were slightly disappointing. The first phase of this build existed
 to probe the environment and record what it found, and that turned out to be
-time well spent rather than ceremony. The measured bandwidth figure recorded
-there is the denominator of the fusion ceiling calculation that explains the
-central performance result of the project.
+time well spent rather than ceremony.

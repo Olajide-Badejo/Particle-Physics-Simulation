@@ -236,13 +236,13 @@ SphDerivedParameters derive_sph_parameters(const Config& config) {
     const FluidBlock block = fluid_block(sph);
 
     SphDerivedParameters derived;
-    const double n = static_cast<double>(config.num_particles);
     derived.particle_spacing = ideal_spacing(block, config.num_particles);
     derived.lattice_pitch = sph_lattice(config).pitch;
 
-    // Two ideal spacings puts roughly thirty three particles inside the
-    // support, which is the usual working range: fewer and the density
-    // estimate is noisy, more and the neighbour loop dominates the step.
+    // Two ideal spacings puts roughly thirty three particles inside the support
+    // at the ideal spacing, and a few more on the tighter lattice actually laid
+    // out, which is the usual working range: fewer and the density estimate is
+    // noisy, more and the neighbour loop dominates the step.
     derived.smoothing_radius =
         sph.smoothing_radius > 0.0f ? sph.smoothing_radius : 2.0f * derived.particle_spacing;
     const double h = derived.smoothing_radius;
@@ -266,7 +266,9 @@ SphDerivedParameters derive_sph_parameters(const Config& config) {
             [h](double r) { return poly6_kernel_fp64(r, h); }));
     }
 
-    derived.expected_neighbour_count = (4.0 / 3.0) * PI_D * h * h * h * n / block.volume;
+    // Counted on the lattice laid out, whose pitch is what sets the number density.
+    const double pitch = derived.lattice_pitch;
+    derived.expected_neighbour_count = (4.0 / 3.0) * PI_D * h * h * h / (pitch * pitch * pitch);
     return derived;
 }
 

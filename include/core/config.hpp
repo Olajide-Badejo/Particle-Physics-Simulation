@@ -36,8 +36,13 @@ struct SphConfig {
     float smoothing_radius = 0.0f;
     float rest_density = 1000.0f;
     float gas_constant = 1000.0f;
+    // Dynamic viscosity in Pa s. The kernel forms a = mu / rho_i sum m_j / rho_j
+    // (v_j - v_i) lap W, so the default of 0.2 at the default rest density is a
+    // kinematic viscosity of 2e-4 m^2/s, about 200 times that of water.
     float viscosity = 0.2f;
     float particle_mass = 0.0f;
+    // Fraction of the normal velocity kept at a wall. The default of 0.4 keeps 16
+    // percent of the normal kinetic energy per impact.
     float boundary_damping = 0.4f;
     Vec3 domain_min{0.0f, 0.0f, 0.0f};
     Vec3 domain_max{1.0f, 1.0f, 1.0f};

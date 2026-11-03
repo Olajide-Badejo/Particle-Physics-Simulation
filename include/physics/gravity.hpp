@@ -16,15 +16,18 @@ namespace cps {
 // zero. Without it a close pass produces an unbounded acceleration, one step
 // of the integrator throws the pair to infinity, and the run is destroyed.
 // Softening is standard practice for collisionless systems, where the smooth
-// mean field rather than individual close encounters carries the dynamics.
+// mean field rather than individual close encounters carries the dynamics. The
+// shipped runs are not fully in that regime: eps = 0.01 in a 10,000 particle
+// Plummer sphere with a = 1 is about 7.5 times below the mean separation
+// (4 pi / 3 / N)^(1/3), so close encounters still matter and the run is mildly
+// collisional. Here softening keeps the integrator stable; it does not make the
+// system collisionless.
 //
 // Reciprocal square root policy. Benchmark builds use rsqrtf, which the fast
 // math switch lowers to the multifunction unit approximation. Validation
-// builds use an IEEE division by sqrtf instead, because the energy drift gate
-// resolves a relative error of 1e-3 over ten thousand steps and the
-// approximate reciprocal is not accurate enough to leave that headroom. The
-// two paths are selected by the CPS_FAST_MATH definition that the build
-// system attaches to each library target.
+// builds use an IEEE division by sqrtf instead, so that no compiler flag can
+// relax a physics gate. The two paths are selected by the CPS_FAST_MATH
+// definition that the build system attaches to each library target.
 
 #if defined(CPS_FAST_MATH) && CPS_FAST_MATH
 #define CPS_INV_SQRT(x) rsqrtf(x)

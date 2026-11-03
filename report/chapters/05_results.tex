@@ -4,26 +4,39 @@
 Every number in this chapter was read mechanically out of a file written by a
 run at commit \texttt{\BenchCommit}, on the machine described in
 Chapter~\ref{ch:background}, with fast math \BenchFastMath{} for the benchmark
-library and off for everything in Section~\ref{sec:gates}.
+library and off for everything in Section~\ref{sec:gates}. Session drift over
+the sweep was \RepeatabilitySpread{} percent, and a difference smaller than that
+is not quoted as a difference.
 
 \section{The kernel ladder}
 
 \begin{table}[htbp]
   \centering
   \input{tables/nbody_ladder}
-  \caption{The N-body ladder. Milliseconds per step for each variant, the
-  speedup of each against the naive baseline, and the sustained arithmetic
-  throughput of the tiled kernel.}
+  \caption{The N-body ladder at the default tile width of \BestTileWidth{}.
+  Median milliseconds per step for each variant, the speedup of each against the
+  naive baseline, and the throughput of the tiled kernel at the conventional
+  \ConventionalFlopsPerInteraction{} operations per interaction.}
   \label{tab:ladder}
 \end{table}
 
 \begin{table}[htbp]
   \centering
   \input{tables/nbody_rung_deltas}
-  \caption{What each rung of the ladder is worth on its own. The first pair of
-  columns is the effect of shared memory tiling; the second is the effect of
-  fusing the integrator into the force kernel.}
+  \caption{What each rung of the ladder is worth on its own, from the medians of
+  Table~\ref{tab:ladder}. The first pair of columns is the effect of shared memory
+  tiling; the second is the effect of fusing the integrator into the force kernel.
+  Table~\ref{tab:paired} is the better evidence for the second pair.}
   \label{tab:rungs}
+\end{table}
+
+\begin{table}[htbp]
+  \centering
+  \input{tables/paired_ratios}
+  \caption{Time ratios taken round by round from the raw trials, which cancels
+  session drift. Median and interquartile range over \PairedRoundsAtMaxN{} rounds.
+  A ratio below one favours the first variant named.}
+  \label{tab:paired}
 \end{table}
 
 \begin{figure}[htbp]
@@ -37,55 +50,90 @@ library and off for everything in Section~\ref{sec:gates}.
   \centering
   \includegraphics[width=\textwidth]{figures/fig_nbody_speedup}
   \caption{The same data as a speedup against the naive baseline. The tiled and
-  fused lines lie almost on top of each other, which is itself the result of
-  Section~\ref{sec:fusion}.}
+  fused lines lie close together; Section~\ref{sec:fusion} reads the gap between
+  them.}
   \label{fig:nbodyspeedup}
 \end{figure}
 
 Tiling is worth a factor of \TilingSpeedupAtMaxN{} at \LadderMaxN{} particles,
-taking the step from \NaiveMsAtMaxN{} to \TiledMsAtMaxN{} milliseconds. The
-advantage grows with particle count, which is what the mechanism predicts: the
-benefit comes from reuse within a block, and at small counts there are not
-enough blocks resident to matter and the launch overhead is a larger share of
-the step.
+taking the step from \NaiveMsAtMaxN{} to \TiledMsAtMaxN{} milliseconds. The paired
+ratio of tiled to naive there is \TiledOverNaiveRatioAtMaxN{}, with an interquartile
+range of \TiledOverNaiveRatioIqrAtMaxN{}. The factor does not grow with particle
+count: it is \TilingSpeedupAtTenThousand{} at \LadderMinN{} particles and close to
+two from twenty thousand up, \TilingSpeedupAtTwentyThousand{} there and
+\TilingSpeedupAtMaxN{} at the largest size. \texttt{v1.0.0} said here that the
+advantage grows with particle count and gave a mechanism for it, and its own table
+contradicted both. I have no measurement that explains the larger factor at
+\LadderMinN{}.
 
-The tiled kernel sustains \TiledTflopsAtMaxN{} TFLOP/s at the largest size, and
-the peak observed anywhere in the sweep is \PeakTflops{} TFLOP/s.
+At the largest size the tiled kernel computes \TiledGigaInteractionsAtMaxN{} billion
+pairwise interactions per second. That count is the measurement. Turning it into
+floating point operations takes a convention: at the
+\ConventionalFlopsPerInteraction{} operations per interaction used by Nyland, Harris
+and Prins \cite{nyland2007} it is \TiledTflopsAtMaxN{} TFLOP/s, and at the
+\MeasuredFlopsPerInteraction{} the hardware counters report, counting a fused multiply
+add as two, it is \TiledTflopsAtMeasuredFlops{} TFLOP/s. Every TFLOP/s figure in this
+report uses the convention, so it can be compared with other work that does. The peak
+anywhere in the sweep is \PeakTflops{} TFLOP/s on the same basis.
 
 \section{Fusion, expectation against measurement}
 \label{sec:fusion}
 
-Before measuring, I expected fusion to be worth ten to twenty percent. It is
-worth \FusionGainPercentAtMaxN{} percent at \LadderMaxN{} particles and
-\FusionGainPercentAtMinN{} percent at \LadderMinN{}. The expectation was wrong
-by more than an order of magnitude, and the reason is worth more than the
-optimisation would have been.
+Before measuring, I expected fusion to be worth ten to twenty percent. It is not
+worth that at any size. Table~\ref{tab:paired} gives the fused time over the tiled
+time. At \LadderMinN{} particles the ratio is \FusedOverTiledRatioAtTenThousand{},
+with an interquartile range of \FusedOverTiledIqrAtTenThousand{}, and at one hundred
+and fifty thousand it is \FusedOverTiledRatioAtHundredFiftyThousand{}, with a range of
+\FusedOverTiledIqrAtHundredFiftyThousand{}. From \LadderMinN{} to one hundred and fifty
+thousand the gain is larger than both its own interquartile range and the session
+drift of \RepeatabilitySpread{} percent, so at the default tile width the fused kernel
+is measurably faster, by about one percent over most of that range.
 
-The arithmetic settles it before any profiler is involved. Fusion removes a
-round trip of the acceleration array: $12N$ bytes written and $12N$ bytes read,
-which at \LadderMaxN{} particles is \FusionCeilingMs{} milliseconds at the
-measured streaming bandwidth of \GpuMeasuredBandwidth{} GB/s. Against a step of
-\TiledMsAtMaxN{} milliseconds that is \FusionCeilingPercent{} percent. That is
-not what fusion did deliver; it is the absolute ceiling on what fusion
-\emph{could} deliver. An optimisation that removes memory traffic cannot help a
-problem that is not waiting on memory.
+At \LadderMaxN{} particles the difference is not resolved. The ratio is
+\FusedOverTiledRatioAtMaxN{} with an interquartile range of
+\FusedOverTiledRatioIqrAtMaxN{}, because the tiled trials there are bimodal:
+\TiledHighModeRoundsAtMaxN{} of the \PairedRoundsAtMaxN{} rounds sit near
+\TiledHighModeMsAtMaxN{} milliseconds and the rest near \TiledLowModeMsAtMaxN{}. I do
+not yet understand why. One hundred and fifty thousand particles shows no such split.
 
-The hardware counters confirm it directly.
+What fusion removes is known from the code. The split path takes three launches: half
+kick and drift, force, closing half kick. Both integrator launches read the
+acceleration array, $24N$ bytes per step, and the velocities are read and written
+twice. The fused path takes one launch and does not read the acceleration array at
+all. It still writes it, $12N$ bytes, although the engine never reads that write,
+because the diagnostics and the velocity conversions recompute the force first.
+Counting each array once per launch, and leaving out the repeated source reads of the
+force sum, which both paths share and which dominate, the split path touches
+\ModelBytesPerParticleSplit{} bytes per particle per step and the fused path
+\ModelBytesPerParticleFused{}, so fusion removes \ModelBytesPerParticleSaved{}$N$ bytes
+and two launches.
+
+That traffic does not explain the gain. At the measured streaming bandwidth of
+\GpuMeasuredBandwidth{} GB/s, \ModelBytesPerParticleSaved{}$N$ bytes take
+\ModelSavingMsAtMaxN{} milliseconds at \LadderMaxN{} particles, which is
+\ModelSavingPercentAtMaxN{} percent of a step, and \ModelSavingPercentAtMinN{} percent
+at \LadderMinN{}. The measured gains are several times larger at every resolved size.
+\texttt{v1.0.0} called a figure of this kind the absolute ceiling on what fusion could
+deliver. It is not a ceiling: it prices one resource and says nothing about the rest
+of the step. The time saved rises with particle count up to one hundred and fifty
+thousand, so a fixed launch cost cannot be all of it either. The source of the gain
+has not been measured.
+
+The hardware counters do show why the expectation of ten to twenty percent was too
+high.
 
 \begin{table}[htbp]
   \centering
   \input{tables/profile_counters}
-  \caption{Nsight Compute counters for one force kernel launch at one hundred
-  thousand particles. Device memory throughput is below one percent of peak for
-  every variant.}
+  \caption{Nsight Compute counters for one launch at \ProfileParticles{} particles.
+  Device memory throughput is below one percent of peak for every variant.}
   \label{tab:counters}
 \end{table}
 
-Device memory throughput is \NaiveDramPct{} percent of peak for the naive
-kernel and \TiledDramPct{} percent for the tiled one. The all pairs sum is
-$O(N^2)$ arithmetic over $O(N)$ data, so the working set is small, it stays
-resident in cache, and device memory is almost idle throughout. There was never
-any device memory pressure for fusion to relieve.
+Device memory throughput is \NaiveDramPct{} percent of peak for the naive kernel and
+\TiledDramPct{} percent for the tiled one. The all pairs sum is $O(N^2)$ arithmetic over
+$O(N)$ data, and device memory is almost idle throughout, so there was no device memory
+pressure for fusion to relieve.
 
 \section{What tiling actually fixes}
 
@@ -96,26 +144,22 @@ reduces is pressure on the first level cache and the load store pipeline.
 
 Global load sectors fall by a factor of \SectorReduction{} and load store
 instructions by a factor of \LsuReduction{}. First level cache throughput falls
-from \NaiveLoneTexPct{} percent of peak, which is close to saturation and is the
-real bottleneck of the naive kernel, to \TiledLoneTexPct{} percent. The
-consequence shows up in warp issue efficiency, which rises from
-\NaiveIssuePct{} percent to \TiledIssuePct{} percent: the naive kernel spends
-about half its time with nothing to issue because its warps are waiting on the
-load store pipe.
+from \NaiveLoneTexPct{} percent of peak, which is close to saturation and the
+highest figure in the naive row, to \TiledLoneTexPct{} percent. Warp issue
+efficiency rises from \NaiveIssuePct{} percent to \TiledIssuePct{} percent. The
+naive kernel's SM throughput equals its first level cache figure, and the tiled
+kernel's equals its issue figure, which points at the limiting unit
+of each.
 
 The arithmetic instruction counts are the control in this experiment. They are
 equal across the three variants to within a fraction of a percent, confirming
-that the variants differ only in how they move data. Those counters also let
-the conventional operation count be checked rather than assumed: the twenty
-floating point operations per interaction used throughout this report compares
-with \MeasuredFlopsPerInteraction{} actually retired, counting a fused multiply
-add as two.
+that the variants differ only in how they move data.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig_nbody_throughput}
-  \caption{Sustained single precision throughput. The rise with particle count
-  is the GPU filling up.}
+  \caption{Throughput of each variant at the conventional
+  \ConventionalFlopsPerInteraction{} operations per interaction.}
   \label{fig:throughput}
 \end{figure}
 
@@ -125,7 +169,8 @@ add as two.
 \begin{table}[htbp]
   \centering
   \input{tables/tile_sweep}
-  \caption{Tile width sweep at one hundred thousand particles.}
+  \caption{Tile width sweep at \TileSweepParticles{} particles. Both variants time a
+  whole step.}
   \label{tab:tiles}
 \end{table}
 
@@ -136,14 +181,14 @@ add as two.
   \label{fig:tiles}
 \end{figure}
 
-The specified tile width of thirty two is not the fastest on this card. A width
-of \BestTileWidth{} runs at \BestTileMs{} milliseconds against \SpecifiedTileMs{}
-for a width of thirty two, a difference of \TileWidthGainPercent{} percent. The
-mechanism is the barrier count: two barriers are paid per tile, so a narrow tile
-pays them more often per unit of arithmetic. The default remains thirty two
-because that is what the specification names, and changing it would have made
-the ladder measurements incomparable with the design they were meant to test;
-the measurement is recorded here so the choice is an informed one.
+The default tile width is now \BestTileWidth{}, the fastest of the four measured. It
+runs at \BestTileMs{} milliseconds against \TileThirtyTwoMs{} for a width of thirty
+two, the \texttt{v1.0.0} default, a difference of \TileWidthGainPercent{} percent. Taken
+round by round the ratio is \BestTileOverTileThirtyTwoRatio{} with an interquartile
+range of \BestTileOverTileThirtyTwoRatioIqr{}, well outside the session drift of
+\RepeatabilitySpread{} percent. Two barriers are paid per tile, so a narrow tile pays
+them more often per unit of arithmetic, which fits the direction of the result; the
+barrier cost itself was not measured separately.
 
 \section{The fluid solver}
 \label{sec:sphresults}
@@ -162,46 +207,60 @@ the measurement is recorded here so the choice is an informed one.
   \label{fig:sph}
 \end{figure}
 
-At the fifty thousand particles the specification targets, a step costs
-\SphMsAtFiftyThousand{} milliseconds, or \SphFpsAtFiftyThousand{} steps per second. At \SphMaxN{}
-particles it costs \SphMsAtMaxN{} milliseconds, \SphFpsAtMaxN{} steps per
-second. The target of interactive rates at fifty thousand particles is met with
-a margin of roughly fifty times against a sixty frame per second budget.
+At fifty thousand particles, the size of the shipped dam break, a step costs
+\SphMsAtFiftyThousand{} milliseconds, or \SphFpsAtFiftyThousand{} steps per second,
+which is \SphInteractiveMargin{} times inside a sixty frame per second budget. At
+\SphMaxN{} particles it costs \SphMsAtMaxN{} milliseconds, \SphFpsAtMaxN{} steps per
+second. These results are not comparable with \texttt{v1.0.0}, because the particle mass
+changed and the fluid behaves differently.
 
-Scaling is markedly sublinear at the small end: ten times the particles costs
-about two and a half times the time. The fixed costs of the step, clearing a
-hash table sized by particle count and the six kernel launches, dominate when
-there is little work to spread them over.
+The interquartile range of the fluid trials is \SphIqrLeastPercent{} to
+\SphIqrMostPercent{} percent of the median, far above the session drift. That is the
+flow rather than noise: each engine stays alive across its trials, so a size advances
+through \SphTimedStepsLeast{} to \SphTimedStepsMost{} timed steps, and the per round
+times trace a smooth curve as the fluid moves and its neighbour lists change.
+
+Scaling is sublinear at the small end: \SphCountRatio{} times the particles cost
+\SphTimeRatio{} times the time. A step takes six launches whatever its size, and their
+fixed cost is a plausible reason, but I have not profiled the fluid step.
 
 \section{Physics gates}
 \label{sec:gates}
 
 \begin{table}[htbp]
   \centering
-  \input{tables/validation_gates}
+  \resizebox{\textwidth}{!}{\input{tables/validation_gates}}
   \caption{Every physics gate, its measured value and its limit. All values
   come from the artifacts written by the validation suite, which links the
   library compiled with fast math off.}
   \label{tab:gates}
 \end{table}
 
-All \GateCount{} gates pass, most with several orders of magnitude of margin.
+All \GateCount{} gates pass. The margins differ widely and not all of them mean the
+same thing: \texttt{docs/physics\_validation.md} classifies each as a gate, a
+consistency check or a sanity check, and gives the source of its limit.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig_energy_drift}
-  \caption{Energy conservation of the two body circular orbit.}
+  \caption{Relative energy error of the single precision two body orbit. At this step
+  size it is single precision rounding, not integrator truncation.}
   \label{fig:energy}
 \end{figure}
 
-The energy drift measured over ten thousand steps is \EnergyDriftMeasured{},
-seventy five times inside the limit of one part in a thousand.
-Figure~\ref{fig:energy} shows the shape that matters as much as the magnitude:
-the error rises and then settles onto a bounded plateau rather than growing
-without limit. That is the property a symplectic integrator guarantees. The
-test also compares the worst error in the first half of the run against the
-second, so a scheme that had begun to accumulate would fail even if its total
-error were still small.
+The two body energy error over ten thousand steps is \EnergyDriftMeasured{} against a
+limit of one part in a thousand. That figure is dominated by single precision rounding:
+the same orbit in double precision has a truncation error of about
+$9.9 \times 10^{-13}$. So it is a regression test for the single precision path and says
+nothing about the integrator's order, and the shape of
+Figure~\ref{fig:energy} is the shape of rounding. \texttt{v1.0.0} read that shape as the
+signature of a symplectic integrator, which it cannot show.
+
+Order is now tested in double precision. The slope of the energy error against the time
+step comes within \VerletSlopeErrorEccentric{} of two on an orbit of eccentricity 0.5,
+which is the method's order, and within \VerletSlopeErrorCircular{} of four on an
+unsoftened circular orbit, where symmetry cancels the second order term. Both limits were
+committed before the code that measures them existed.
 
 \begin{figure}[htbp]
   \centering
@@ -212,7 +271,7 @@ error were still small.
 
 Momentum holds to \MomentumDriftMeasured{} relative to the total absolute
 momentum in the system, six orders of magnitude inside the bound that single
-precision arithmetic can explain.
+precision arithmetic can explain. A bound that far away only rules out gross breakage.
 
 \begin{figure}[htbp]
   \centering
@@ -223,16 +282,20 @@ precision arithmetic can explain.
 \end{figure}
 
 The radial density fits the analytic profile at a chi squared p value of
-\PlummerPValue{}, comfortably above the threshold of 0.05. The same test
-applied to a model whose scale radius is ten percent wrong returns a p value
-below $10^{-6}$, which is what establishes that the test can reject at all.
+\PlummerPValue{}, above the threshold of 0.05. With a fixed seed that value is a fixed
+seed regression and does not vary from run to run. The same test applied to a model whose
+scale radius is ten percent wrong returns a p value below $10^{-6}$, which is what
+establishes that the test can reject at all.
 
 For the fluid solver, the poly6 kernel integrates to one with an error of
-\PolySixNormalisationError{}, and the density field from the hashed neighbour
-search agrees with a brute force $O(N^2)$ sum over the same positions to three
-parts in ten million. The interior of a block filled at rest density recovers
-that density to \SphDensityErrorPercent{} percent. The residual is the expected
-consequence of a finite smoothing radius on a jittered lattice rather than a
-defect: the density estimate is a weighted average over a finite neighbourhood,
-and near the free surface it legitimately falls short because there is no fluid
-on the outside.
+\PolySixNormalisationError{}, and the density field from the hashed neighbour search
+agrees with a brute force $O(N^2)$ sum over the same positions to \NeighbourSearchError{}.
+
+The particle mass now comes from a kernel sum over the lattice actually laid out, so that
+the interior of the block sits at rest density. Against that calibration the interior
+mean density error is \SphDensityErrorPercent{} percent. The calibration sets this value,
+so it shows the device agrees with the host calculation and is not evidence of physical
+accuracy. The figures the calibration does not set are the RMS deviation of
+\SphDensityRmsPercent{} percent, which lattice jitter drives, and the maximum deviation
+of \SphDensityMaxPercent{} percent. Chapter~\ref{ch:corrections} records what
+\texttt{v1.0.0} reported here and why it was wrong.

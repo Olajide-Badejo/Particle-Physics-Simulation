@@ -45,7 +45,10 @@ def read_table(path: Path) -> dict[str, str]:
 
 
 def tracked_markdown(root: Path) -> list[Path]:
-    names = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "*.md"],
+    # The changelog records what each release measured, so a later measurement
+    # must not rewrite it. It takes no marks and is not scanned.
+    names = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "*.md",
+                            ":(exclude)CHANGELOG.md"],
                            check=True, capture_output=True).stdout.decode("utf-8").split("\0")
     return [root / name for name in names if name and (root / name).is_file()]
 

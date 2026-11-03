@@ -72,8 +72,8 @@ class ParticleSystem {
     void upload(const HostParticleState& state);
     void download(HostParticleState& state) const;
 
-    // Total device bytes held by the particle state, reported at start up so
-    // the memory budget in the specification can be checked against reality.
+    // Total device bytes held by the particle state, reported at start up so a
+    // run's memory use is on the record.
     std::size_t device_bytes() const;
 
    private:

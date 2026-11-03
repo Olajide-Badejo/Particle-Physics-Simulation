@@ -49,9 +49,13 @@ There are three library targets and the split is not incidental.
 
 Building the device library twice from identical sources is what makes the
 physics gates trustworthy. The benchmark builds want `--use_fast_math`, which
-lowers the reciprocal square root to a hardware approximation. The energy drift
-gate resolves one part in a thousand and that approximation does not leave
-enough headroom. A gate that a compiler flag can relax is not a gate.
+lowers the reciprocal square root to a hardware approximation. A gate that a
+compiler flag can relax is not a gate. FMA contraction is not disabled in the
+strict library.
+
+The default build targets `sm_120`. `-DCPS_FAT_BINARY=ON` builds `physics_core`
+for `75;80;86;89;90;120`, which continuous integration and releases use;
+`physics_core_strict` and the tests stay on the default.
 
 ## The N-body step
 
@@ -70,6 +74,11 @@ runs the leapfrog form in one launch, which produces the same position sequence
 to rounding provided the velocity is offset backwards by half a step once
 before the loop begins.
 
+Both integrator launches on the split path read the acceleration array, 24N bytes
+per step. The fused launch reads it in neither. It still writes it, 12N bytes,
+though the engine no longer reads that write, because the diagnostics and the
+velocity conversions recompute the force first.
+
 Positions are double buffered on the fused path. There is no grid wide barrier
 inside a launch, so a block that has finished its force sum would otherwise
 overwrite a position another block is still reading. The second buffer costs
@@ -86,7 +95,10 @@ flowchart LR
     D --> F[6. force and integrate: pressure, viscosity, gravity, walls]
 ```
 
-Two points matter.
+Three points matter.
+
+The update in step 6 is the same kick drift leapfrog as the fused N-body kernel,
+with no initial offset applied, and its viscous term is first order.
 
 The permutation is kept. After a step the particle arrays are in cell sorted
 order, which is the order the next step wants, so the sort has an effect that
@@ -133,5 +145,14 @@ back, because in single precision that round trip does not return the original
 bits and would make a diagnostic perturb the run it measures.
 
 Accelerations are not stored in snapshots. They are a deterministic function of
-the positions, so recomputing them on load reproduces exactly the array the
-original run held.
+the positions, so on the N-body path recomputing them on load reproduces exactly
+the array the original run held. The fluid solver keeps no force pass outside its
+step, so the first diagnostic row after a fluid resume reads a zero acceleration;
+the trajectory is unaffected.
+
+## Snapshots
+
+The format is `CPS2`, laid out in `include/core/snapshot.hpp`: a 64 byte header, a
+table with one 40 byte entry per array, and the payload. It records a 64 bit step, the
+simulated time, a physics fingerprint and a payload checksum. `CPS1` from `v1.0.0` is still
+read, with a warning, and never written.

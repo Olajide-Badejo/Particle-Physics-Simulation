@@ -29,8 +29,8 @@ DeviceInfo query_device(int device) {
 
     // Double data rate, bus width in bytes, kilohertz to hertz, bytes to
     // gigabytes. This is the denominator of every bandwidth utilisation figure
-    // in the report, so it is measured on the machine rather than quoted from
-    // a specification sheet.
+    // in the report, so it is read from the device rather than quoted from a
+    // data sheet.
     info.peak_bandwidth_gb_s = 2.0 * static_cast<double>(info.memory_clock_khz) * 1.0e3 *
                                (static_cast<double>(info.memory_bus_width_bits) / 8.0) / 1.0e9;
 

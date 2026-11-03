@@ -36,7 +36,7 @@
 \title{\textbf{Particle Physics Simulation}\\[0.4em]
        \large Debug report: defects, surprises and corrections from the build}
 \author{Olajide Badejo}
-\date{August 2026}
+\date{November 2026}
 
 \begin{document}
 
@@ -53,12 +53,12 @@ right.
 Entries are grouped by theme. Environment covers the four toolchain defects
 that had to be cleared before a single kernel compiled, one of which would have
 silently produced a binary for the wrong GPU architecture. Performance covers
-the two results that contradicted my expectations: fusion delivering
-\FusionGainPercentAtMaxN{} percent where I expected ten to twenty, and shared
-memory tiling turning out not to be a bandwidth optimisation at all. Physics
+the results that contradicted my expectations: fusion delivering about one percent or an
+unresolved difference where I expected ten to twenty, and shared memory tiling turning out
+not to be a bandwidth optimisation at all. Physics
 and tooling covers the defects in the correctness apparatus itself, including
-two cases where the test rather than the code was wrong, and a data corruption
-bug that put a random seed into a tile width column.
+two cases where the test rather than the code was wrong, one of which passed a published
+gate on mismatched particles, and a data corruption bug that put a random seed into a tile width column.
 
 The most valuable entries here are the ones where nothing crashed. A build
 targeting the wrong architecture, a benchmark reading a corrupted column and an
