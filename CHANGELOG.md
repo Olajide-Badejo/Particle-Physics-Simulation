@@ -106,7 +106,8 @@ Values below that are labelled `v1.0.0` describe the past and are not regenerate
 - The default tile width is 256.
 - The SPH density gates are mean error below 1 percent, RMS below 5 percent and maximum below 10 percent,
   committed before the code that measures them. The registered gates number 14.
-- Documents no longer refer to an unpublished design document.
+- Documents no longer refer to an unpublished design document. `PROGRESS.md` is removed: this changelog and
+  the reports cover it.
 
 ### Added
 

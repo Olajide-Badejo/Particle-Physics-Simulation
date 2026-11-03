@@ -319,7 +319,6 @@ whose small gain was easy to accept.
 - [docs/physics_validation.md](docs/physics_validation.md), every gate with its theory and measured result
 - [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md), what was chosen, what was rejected, and what measurement later contradicted
 - [docs/ENGINEERING_LOG.md](docs/ENGINEERING_LOG.md), the dated log the debug report is built from
-- [PROGRESS.md](PROGRESS.md), where the project stands
 - [CHANGELOG.md](CHANGELOG.md), including the corrections to `v1.0.0`
 - [CONTRIBUTING.md](CONTRIBUTING.md), test levels and house rules
 
