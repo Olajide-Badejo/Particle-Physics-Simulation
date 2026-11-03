@@ -42,7 +42,7 @@ else()
 endif()
 
 project(cuda_physics_sim
-        VERSION 1.0.0
+        VERSION 1.1.0
         DESCRIPTION "CUDA particle physics engine: tiled and fused N-body gravity plus SPH fluids"
         LANGUAGES ${CPS_LANGUAGES})
 

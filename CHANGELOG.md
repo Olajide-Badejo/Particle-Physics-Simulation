@@ -3,7 +3,7 @@
 All notable changes to this project are recorded here. The format follows Keep
 a Changelog, and the project uses semantic versioning.
 
-## [1.1.0] Unreleased
+## [1.1.0] 2026-11-03
 
 A hardening release. It adds no algorithm. It fixes correctness defects in input handling,
 snapshots and diagnostics, makes published numbers trace to a commit that exists, and corrects
