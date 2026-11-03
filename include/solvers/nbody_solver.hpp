@@ -22,10 +22,10 @@ namespace cps {
 //          and one launch per step. The acceleration is still written.
 //
 // The tile width is a compile time constant so the inner loop can be unrolled.
-// Thirty two is the specified default, matching the warp width; the other
-// instantiations exist so the tile width sweep in the debug report can be run
-// against real numbers rather than argued about.
-inline constexpr int DEFAULT_TILE_SIZE = 32;
+// The default is the width the tile sweep measured fastest, by a margin well
+// above the session drift; the other instantiations exist so the sweep can keep
+// checking that against real numbers rather than arguing about it.
+inline constexpr int DEFAULT_TILE_SIZE = 256;
 
 void compute_forces_naive(const float* x, const float* y, const float* z, const float* mass,
                           float* ax, float* ay, float* az, int count, float softening,

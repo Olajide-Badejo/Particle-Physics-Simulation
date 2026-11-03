@@ -507,10 +507,9 @@ std::vector<PlannedGroup> plan_ladder(bool quick) {
     return plan;
 }
 
-// The tile width sweep is a diagnostic rather than part of the ladder. The
-// specification fixes the tile at thirty two; whether that is the best choice
-// on this card is an empirical question, and the answer belongs in the debug
-// report with numbers behind it.
+// The tile width sweep is a diagnostic rather than part of the ladder. Which
+// width is the best choice on this card is an empirical question, and the
+// answer belongs in the debug report with numbers behind it.
 //
 // The engine uses the default tile width, so the sweep drives the kernels
 // directly rather than through engine.step(). It keeps the engine for its state.

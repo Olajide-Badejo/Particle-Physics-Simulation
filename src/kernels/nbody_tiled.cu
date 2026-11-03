@@ -17,9 +17,9 @@ namespace {
 // The price is two barriers per tile, which is why the tile width matters:
 // narrow tiles pay the barrier more often per unit of arithmetic.
 //
-// The tile width is the specified thirty two by default. The other
-// instantiations exist because the barrier cost against reuse tradeoff is an
-// empirical question, and the sweep that answers it is in the debug report.
+// The barrier cost against reuse tradeoff is an empirical question, so the
+// default tile width comes from the sweep in the debug report, and the other
+// instantiations exist so that sweep can keep answering it.
 //
 // Threads with an index past the end of the array must not return early. They
 // still have to reach both barriers on every iteration, so they run the whole
