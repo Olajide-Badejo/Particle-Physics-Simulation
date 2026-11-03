@@ -51,6 +51,9 @@ def main() -> int:
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path, default=root / "experiments" / "results")
+    parser.add_argument("--particles", type=int, required=True,
+                        help="the particle count the exports were profiled at, which the report "
+                             "needs to turn counters into per interaction figures")
     args = parser.parse_args()
 
     rows = []
@@ -59,13 +62,14 @@ def main() -> int:
         if not values:
             continue
         values["variant"] = variant
+        values["num_particles"] = str(args.particles)
         rows.append(values)
 
     if not rows:
         print("no profiler exports found, nothing to summarise")
         return 0
 
-    fields = ["variant"] + list(COLUMNS.values())
+    fields = ["variant"] + list(COLUMNS.values()) + ["num_particles"]
     out = args.results / "profile_summary.csv"
     with out.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")

@@ -108,7 +108,10 @@ bench-quick: build
 profile: build
 	bash scripts/profile_kernels.sh
 
+# The colours are checked first, against the white page the figures are drawn on.
 plots:
+	$(PYTHON) scripts/validate_palette.py "$$($(PYTHON) scripts/plot_results.py --print-palette)" \
+		--surface "#ffffff" --pairs all
 	$(PYTHON) scripts/plot_results.py
 
 assets:

@@ -18,6 +18,9 @@ experiments/results/*
 !experiments/results/device.json
 !experiments/results/validation_gates.csv
 !experiments/results/profile_summary.csv
+!experiments/results/ncu_naive.csv
+!experiments/results/ncu_tiled.csv
+!experiments/results/ncu_fused.csv
 !experiments/results/energy_drift_two_body.csv
 !experiments/results/momentum_drift_plummer.csv
 !experiments/results/plummer_radial_density.csv

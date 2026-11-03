@@ -29,6 +29,7 @@ if(GIT_EXECUTABLE)
               ":(exclude)report/figures"
               ":(exclude)report/tables"
               ":(exclude)report/numbers.tex"
+              ":(exclude)docs/generated_numbers.md"
               ":(exclude)report/main.pdf"
               ":(exclude)report_debug/debug_report.pdf"
       WORKING_DIRECTORY ${SOURCE_DIR}

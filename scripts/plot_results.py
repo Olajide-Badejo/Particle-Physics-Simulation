@@ -14,8 +14,8 @@ unit it does not have: the gravitational runs use code units with the
 gravitational constant set to one, so their time axis is not in seconds and is
 not labelled as though it were.
 
-Colour is checked rather than judged. The three variant colours were run
-through `scripts/validate_palette.py`, which computes their OKLab separation
+Colour is checked rather than judged. `make plots` runs the three variant
+colours through `scripts/validate_palette.py`, which computes their OKLab separation
 under simulated protanopia and deuteranopia. All hard checks pass. The aqua
 sits at 2.82 to 1 against a white page, below the 3 to 1 guideline; the
 documented relief is a second channel carrying the same information, which here
@@ -441,7 +441,12 @@ def main() -> int:
     parser.add_argument("--out", type=Path,
                         help="default report/figures, or figures inside a --results directory "
                              "other than experiments/results")
+    parser.add_argument("--print-palette", action="store_true",
+                        help="print the series colours for validate_palette.py, and draw nothing")
     args = parser.parse_args()
+    if args.print_palette:
+        print(",".join(series["color"] for series in SERIES.values()))
+        return 0
     if args.out is None:
         scratch = args.results.resolve() != default_results.resolve()
         args.out = args.results / "figures" if scratch else root / "report" / "figures"

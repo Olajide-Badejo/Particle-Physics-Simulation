@@ -56,6 +56,12 @@ option(CPS_USE_FAST_MATH "Compile the benchmark library with --use_fast_math" OF
 option(CPS_BUILD_TESTS "Build the unit, integration and validation tests" ON)
 option(CPS_BUILD_BENCHMARKS "Build the benchmark sweep driver" ON)
 option(CPS_WERROR "Treat compiler warnings as errors" ON)
+# Everyday builds compile the device code for one architecture, which is fast.
+# A fat build adds every architecture a release should run on, but only to
+# physics_core: physics_core_strict and the test binaries run on the development
+# card, and leaving them out halves the extra device compiles.
+option(CPS_FAT_BINARY "Build physics_core for every release architecture" OFF)
+set(CPS_FAT_ARCHITECTURES 75 80 86 89 90 120)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -99,6 +105,10 @@ endif()
 # at configure time goes stale with the next commit.
 find_package(Git QUIET)
 
+# Only the custom targets and the test of the documentation tooling need Python,
+# so a machine without it can still build and test everything else.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+
 # ---------------------------------------------------------------------------
 # Third party dependencies
 # ---------------------------------------------------------------------------
@@ -128,14 +138,27 @@ endif()
 # ---------------------------------------------------------------------------
 # Shared warning configuration
 # ---------------------------------------------------------------------------
+# MSVC spells these differently. This only keeps the flags valid there: full MSVC
+# support is deferred.
 add_library(cps_warnings INTERFACE)
-target_compile_options(cps_warnings INTERFACE
-  $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra>
-  $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wall,-Wextra>)
-if(CPS_WERROR)
+if(MSVC)
   target_compile_options(cps_warnings INTERFACE
-    $<$<COMPILE_LANGUAGE:CXX>:-Werror>
-    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Werror>)
+    $<$<COMPILE_LANGUAGE:CXX>:/W4>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/W4>)
+  if(CPS_WERROR)
+    target_compile_options(cps_warnings INTERFACE
+      $<$<COMPILE_LANGUAGE:CXX>:/WX>
+      $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/WX>)
+  endif()
+else()
+  target_compile_options(cps_warnings INTERFACE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wall,-Wextra>)
+  if(CPS_WERROR)
+    target_compile_options(cps_warnings INTERFACE
+      $<$<COMPILE_LANGUAGE:CXX>:-Werror>
+      $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Werror>)
+  endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -173,12 +196,12 @@ set(CPS_DEVICE_SOURCES
   src/solvers/sph_solver.cpp
   src/utils/cuda_helpers.cpp)
 
-function(cps_add_device_library target fast_math)
+function(cps_add_device_library target fast_math architectures)
   add_library(${target} STATIC ${CPS_DEVICE_SOURCES})
   target_include_directories(${target} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(${target} PUBLIC physics_host CUDA::cudart PRIVATE cps_warnings)
   set_target_properties(${target} PROPERTIES
-    CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+    CUDA_ARCHITECTURES "${architectures}"
     CUDA_SEPARABLE_COMPILATION OFF)
   if(fast_math)
     target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
@@ -188,8 +211,14 @@ function(cps_add_device_library target fast_math)
   endif()
 endfunction()
 
-cps_add_device_library(physics_core ${CPS_USE_FAST_MATH})
-cps_add_device_library(physics_core_strict OFF)
+if(CPS_FAT_BINARY)
+  set(CPS_CORE_ARCHITECTURES ${CPS_FAT_ARCHITECTURES})
+else()
+  set(CPS_CORE_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES})
+endif()
+
+cps_add_device_library(physics_core ${CPS_USE_FAST_MATH} "${CPS_CORE_ARCHITECTURES}")
+cps_add_device_library(physics_core_strict OFF "${CMAKE_CUDA_ARCHITECTURES}")
 
 # ---------------------------------------------------------------------------
 # Build-time version stamp
@@ -276,6 +305,14 @@ if(CPS_BUILD_TESTS)
   set_tests_properties(validation_host PROPERTIES
     LABELS "host;validation" RESOURCE_LOCK validation_gates)
 
+  # The tool that keeps the numbers in the Markdown files from drifting.
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME doc_numbers_tool
+      COMMAND ${Python3_EXECUTABLE}
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts/test_check_doc_numbers.py)
+    set_tests_properties(doc_numbers_tool PROPERTIES LABELS "host")
+  endif()
+
   # Everything below needs the CUDA runtime, so it is skipped entirely in host
   # only mode rather than built and skipped at run time.
   if(NOT CPS_HOST_ONLY)
@@ -325,16 +362,27 @@ endif()
 # ---------------------------------------------------------------------------
 # Style gate
 # ---------------------------------------------------------------------------
-add_custom_target(check_style
-  COMMAND ${CMAKE_COMMAND} -E echo "Running the dash gate over ${CMAKE_CURRENT_SOURCE_DIR}"
-  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_no_dashes.py
-          ${CMAKE_CURRENT_SOURCE_DIR}
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  VERBATIM)
+if(Python3_Interpreter_FOUND)
+  add_custom_target(check_style
+    COMMAND ${CMAKE_COMMAND} -E echo "Running the dash gate over ${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_no_dashes.py
+            ${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    VERBATIM)
+endif()
 
 message(STATUS "cuda_physics_sim ${PROJECT_VERSION}")
-message(STATUS "  CUDA toolkit      : ${CUDAToolkit_VERSION}")
-message(STATUS "  CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+if(NOT CPS_HOST_ONLY)
+  message(STATUS "  CUDA toolkit      : ${CUDAToolkit_VERSION}")
+  if(CPS_FAT_BINARY)
+    message(STATUS "  CUDA architectures: physics_core ${CPS_CORE_ARCHITECTURES}, "
+                   "everything else ${CMAKE_CUDA_ARCHITECTURES}")
+  else()
+    message(STATUS "  CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES} (for the release list use "
+                   "-DCPS_FAT_BINARY=ON, for this machine's GPU "
+                   "-DCMAKE_CUDA_ARCHITECTURES=native)")
+  endif()
+endif()
 message(STATUS "  Host compiler     : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "  Host standard     : C++${CMAKE_CXX_STANDARD}")
 if(NOT CPS_HOST_ONLY)

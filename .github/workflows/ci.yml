@@ -4,25 +4,31 @@ name: ci
 #
 #   host-tests   runs the style gate and the gate registry check
 #                (check_provenance.py --gates-only), then builds the CUDA free
-#                half of the project and runs both of its ctest entries:
-#                unit_host (unit_tests_host) and validation_host
+#                half of the project and runs its three ctest entries:
+#                unit_host (unit_tests_host), validation_host
 #                (validation_tests_host, the physics gates that need no device:
 #                the pair force expression, the Plummer sampler and the SPH
-#                kernel normalisation). No toolkit involved at all.
-#   cuda-build   compiles the whole project for sm_120 inside the official
-#                CUDA image, with warnings as errors, checks that real sm_120
-#                code was emitted, and runs the same two host entries again.
-#                unit_gpu, integration and validation are compiled but not run.
-#   reports      rebuilds the figures, tables and both PDFs from the committed
-#                results, fails if the regenerated tables differ from the
-#                committed ones, and runs the style gate over the PDFs.
+#                kernel normalisation) and doc_numbers_tool (the test of
+#                check_doc_numbers.py). No toolkit involved at all.
+#   cuda-build   compiles the whole project inside the official CUDA image with
+#                -DCPS_FAT_BINARY=ON and warnings as errors, so physics_core
+#                targets sm_75 to sm_120 and everything else sm_120. It checks
+#                that real sm_120 and sm_75 code was emitted, then runs the full
+#                ctest: the three host entries run again, and unit_gpu,
+#                integration and validation find no device, exit with code 77
+#                and show as Skipped.
+#   reports      runs the full provenance check, which resolves every commit
+#                hash in experiments/results and so needs the whole history.
+#                It then rebuilds the figures, tables, docs/generated_numbers.md
+#                and both PDFs from the committed results, fails if the
+#                regenerated tables or numbers differ from the committed ones,
+#                runs check_doc_numbers.py over the tracked Markdown files, and
+#                runs the style gate over the PDFs.
 #
-# Not run anywhere in CI: the device unit tests, the integration and resume
+# Not executed anywhere in CI: the device unit tests, the integration and resume
 # tests, and the device validation gates (energy drift, orbit shape, momentum,
 # the force kernel against its reference, SPH density and neighbour search).
-# Those need a GPU. The full provenance check, which resolves every commit hash
-# in experiments/results, is not run either. Nothing in CI writes to
-# experiments/results.
+# Those need a GPU. Nothing in CI writes to experiments/results.
 
 on:
   push:
@@ -44,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build dependencies
         run: |
@@ -63,11 +69,11 @@ jobs:
       - name: Build with warnings as errors
         run: cmake --build build -j "$(nproc)"
 
-      - name: Run the host unit and validation tests
+      - name: Run the host tests
         run: ctest --test-dir build --output-on-failure -L host
 
   cuda-build:
-    name: CUDA build for sm_120
+    name: CUDA fat build, sm_75 to sm_120
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # The official image pins the same toolkit the results were measured with,
@@ -80,7 +86,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             cmake git ca-certificates python3 build-essential
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Report the toolchain
         run: |
@@ -89,12 +95,13 @@ jobs:
           g++ --version | head -1
 
       - name: Configure
-        # No GPU is present, so the tests are built but not run. Compiling them
-        # is the point: it is what catches a kernel that no longer compiles.
+        # No GPU is present, so the device tests are built but skip when run.
+        # Compiling them is the point: it is what catches a kernel that no longer
+        # compiles.
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CUDA_ARCHITECTURES=120 \
+            -DCPS_FAT_BINARY=ON \
             -DCPS_BUILD_TESTS=ON \
             -DCPS_BUILD_BENCHMARKS=ON \
             -DCPS_USE_FAST_MATH=ON
@@ -102,7 +109,7 @@ jobs:
       - name: Build everything with warnings as errors
         run: cmake --build build -j "$(nproc)"
 
-      - name: Confirm real sm_120 code was emitted, not just PTX
+      - name: Confirm real sm_120 and sm_75 code was emitted, not just PTX
         # A build can silently target the wrong architecture and still run
         # through just in time compilation, at the wrong speed. The object file
         # is the only thing that settles it.
@@ -110,16 +117,20 @@ jobs:
           cuobjdump --list-elf build/CMakeFiles/physics_core.dir/src/kernels/nbody_tiled.cu.o \
             | tee /tmp/elf.txt
           grep -q "sm_120" /tmp/elf.txt
+          grep -q "sm_75" /tmp/elf.txt
 
-      - name: Run the host unit and validation tests, which need no device
-        run: ctest --test-dir build --output-on-failure -L host
+      - name: Run the full test suite, with the device entries skipped
+        run: ctest --test-dir build --output-on-failure
 
   reports:
     name: Reports and style gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # The provenance check resolves commit hashes from the whole history.
+          fetch-depth: 0
 
       - name: Install TeX and Python dependencies
         run: |
@@ -128,6 +139,9 @@ jobs:
             latexmk texlive-latex-recommended texlive-latex-extra \
             texlive-fonts-recommended texlive-science lmodern poppler-utils \
             make git python3 python3-matplotlib python3-tqdm
+
+      - name: Every committed result traces back to a commit in this repository
+        run: python3 scripts/check_provenance.py
 
       - name: Regenerate figures and tables from the committed results
         # The canonical result files are committed, so the documents rebuild
@@ -139,10 +153,16 @@ jobs:
       - name: Confirm the generated assets match the committed ones
         # If this fails, someone edited a figure or a table by hand instead of
         # regenerating it, which is exactly what the pipeline exists to prevent.
+        # Status rather than diff, so that a generated file nobody committed
+        # fails too.
         run: |
-          git diff --stat -- report/tables report/numbers.tex
-          git diff --quiet -- report/tables report/numbers.tex \
+          git status --short -- report/tables report/numbers.tex docs/generated_numbers.md \
+            | tee /tmp/assets.txt
+          test ! -s /tmp/assets.txt \
             || (echo "generated assets differ from the committed ones" && exit 1)
+
+      - name: Confirm the numbers marked in the Markdown files match
+        run: python3 scripts/check_doc_numbers.py
 
       - name: Build both reports
         run: |
@@ -155,7 +175,7 @@ jobs:
         run: python3 scripts/check_no_dashes.py .
 
       - name: Upload the reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports
           path: |
