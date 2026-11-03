@@ -11,7 +11,7 @@ name: ci
 #                kernel normalisation) and doc_numbers_tool (the test of
 #                check_doc_numbers.py). No toolkit involved at all.
 #   cuda-build   compiles the whole project inside the official CUDA image with
-#                -DCPS_FAT_BINARY=ON and warnings as errors, so physics_core
+#                the ci preset, a fat build with warnings as errors, so physics_core
 #                targets sm_75 to sm_120 and everything else sm_120. It checks
 #                that real sm_120 and sm_75 code was emitted, then runs the full
 #                ctest: the three host entries run again, and unit_gpu,
@@ -64,13 +64,13 @@ jobs:
         run: python3 scripts/check_provenance.py --gates-only
 
       - name: Configure without CUDA
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCPS_HOST_ONLY=ON -DCPS_BUILD_TESTS=ON
+        run: cmake --preset host-only
 
       - name: Build with warnings as errors
-        run: cmake --build build -j "$(nproc)"
+        run: cmake --build --preset host-only -j "$(nproc)"
 
       - name: Run the host tests
-        run: ctest --test-dir build --output-on-failure -L host
+        run: ctest --preset host-only
 
   cuda-build:
     name: CUDA fat build, sm_75 to sm_120
@@ -98,29 +98,23 @@ jobs:
         # No GPU is present, so the device tests are built but skip when run.
         # Compiling them is the point: it is what catches a kernel that no longer
         # compiles.
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCPS_FAT_BINARY=ON \
-            -DCPS_BUILD_TESTS=ON \
-            -DCPS_BUILD_BENCHMARKS=ON \
-            -DCPS_USE_FAST_MATH=ON
+        run: cmake --preset ci
 
       - name: Build everything with warnings as errors
-        run: cmake --build build -j "$(nproc)"
+        run: cmake --build --preset ci -j "$(nproc)"
 
       - name: Confirm real sm_120 and sm_75 code was emitted, not just PTX
         # A build can silently target the wrong architecture and still run
         # through just in time compilation, at the wrong speed. The object file
         # is the only thing that settles it.
         run: |
-          cuobjdump --list-elf build/CMakeFiles/physics_core.dir/src/kernels/nbody_tiled.cu.o \
+          cuobjdump --list-elf build-ci/CMakeFiles/physics_core.dir/src/kernels/nbody_tiled.cu.o \
             | tee /tmp/elf.txt
           grep -q "sm_120" /tmp/elf.txt
           grep -q "sm_75" /tmp/elf.txt
 
       - name: Run the full test suite, with the device entries skipped
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --preset ci
 
   reports:
     name: Reports and style gate
@@ -132,13 +126,22 @@ jobs:
           # The provenance check resolves commit hashes from the whole history.
           fetch-depth: 0
 
-      - name: Install TeX and Python dependencies
+      # The pinned Python packages have wheels for this version. The Docker image
+      # builds on the same one.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned Python packages
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Install TeX
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             latexmk texlive-latex-recommended texlive-latex-extra \
             texlive-fonts-recommended texlive-science lmodern poppler-utils \
-            make git python3 python3-matplotlib python3-tqdm
+            make git
 
       - name: Every committed result traces back to a commit in this repository
         run: python3 scripts/check_provenance.py

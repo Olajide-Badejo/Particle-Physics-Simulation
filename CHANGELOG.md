@@ -10,6 +10,26 @@ a Changelog, and the project uses semantic versioning.
 - **Breaking:** the public headers moved under `cps/`, from `include/core`, `include/physics`,
   `include/solvers` and `include/utils` to `include/cps/core` and so on. Include them as
   `#include "cps/core/config.hpp"`. The old paths have no forwarding headers.
+- **Breaking:** the generated version header is now `cps/version.hpp`, not `cps_version.hpp`.
+- Each CUDA compile now has one `-std`. The seed that gets the compiler probe through no longer
+  stays in `CMAKE_CUDA_FLAGS` next to the standard CMake adds, which ends the `nvcc` warning about
+  redefining the option on every file. The effective standard does not change. A second configure
+  now also produces the same flags as the first, so it no longer rebuilds everything.
+- `make setup` and `make setup-host-only` delegate to the `dev` and `host-only` presets.
+- Continuous integration uses the presets, and the reports job installs from `requirements.txt`
+  on Python 3.12 rather than the distribution's packages.
+
+### Added
+
+- `CMakePresets.json`, with configure, build and test presets `dev`, `release-fat`, `host-only`
+  and `ci`.
+- `cmake --install` and `find_package(cps)`, with the targets `cps::physics_host`,
+  `cps::physics_core` and `cps::cuda_physics_sim`, also available under those names in the build
+  tree. `tests/install_consumer` is a small project that uses them.
+- A `Dockerfile` on the image continuous integration uses, with a `.dockerignore`, and
+  `requirements.txt` with pinned versions for the plotting and report scripts.
+- An installed nlohmann/json or GoogleTest at the pinned version or newer is used instead of
+  fetching one. Fetching at the same pinned tags stays the fallback.
 
 ## [1.1.0] 2026-11-03
 

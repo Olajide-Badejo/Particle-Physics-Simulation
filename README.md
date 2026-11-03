@@ -339,19 +339,62 @@ profiler. It is **not** needed to build the project or run the host test suite.
 ```bash
 git clone https://github.com/Olajide-Badejo/Particle-Physics-Simulation.git
 cd Particle-Physics-Simulation
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
+```
+
+The presets are in `CMakePresets.json`:
+
+| Preset | Build directory | What it is |
+|---|---|---|
+| `dev` | `build` | `sm_120` with fast math; the benchmarks are measured in this one |
+| `release-fat` | `build-fat` | `physics_core` for every release architecture |
+| `host-only` | `build-host` | no CUDA at all: the host library and its tests |
+| `ci` | `build-ci` | the fat build with warnings as errors, as continuous integration runs it |
+
+Each has a configure, a build and a test preset of the same name. The build presets use 8
+jobs; add `-j` to change that. nlohmann/json and GoogleTest come from an installed copy at the
+pinned version or newer, and are fetched at the pinned tag otherwise.
+
+To reproduce everything, including the benchmarks and both reports:
+
+```bash
 make setup
 make all
 ```
 
-`make all` builds everything, runs the style gate, runs the full test suite while recording
+`make setup` is the `dev` preset. `make all` builds everything, runs the style gate, runs the full test suite while recording
 the gates, probes the device, runs the benchmark sweep and the profiler, regenerates every
 figure and table, and compiles both reports.
 
 No GPU or CUDA toolkit at hand:
 
 ```bash
-make setup-host-only   # configures without CUDA entirely
-make test              # the host tests: formulas, parsing, snapshots, the number checker
+cmake --preset host-only          # configures without CUDA entirely
+cmake --build --preset host-only
+ctest --preset host-only          # the host tests: formulas, parsing, snapshots, the number checker
+```
+
+To use the engine from another CMake project, install it and use `find_package`:
+
+```bash
+cmake --install build --prefix /tmp/cps-inst
+cmake -S tests/install_consumer -B /tmp/cps-cons -DCMAKE_PREFIX_PATH=/tmp/cps-inst
+cmake --build /tmp/cps-cons
+/tmp/cps-cons/cps_consumer
+```
+
+That consumer is a small example: `find_package(cps REQUIRED)`, then link `cps::physics_core`.
+The comments in `cmake/cpsConfig.cmake.in` say what a consumer must provide.
+
+In Docker, on the same image continuous integration uses, with the NVIDIA runtime for the GPU:
+
+```bash
+docker build -t cps:dev --build-arg CPS_GIT_COMMIT="$(git rev-parse --short=12 HEAD)" .
+docker run --rm cps:dev ctest --preset release-fat               # device tests read Skipped
+docker run --rm --gpus all cps:dev ctest --preset release-fat    # the whole suite
+docker run --rm --gpus all cps:dev cuda_physics_sim --config configs/two_body.json
 ```
 
 Individual targets:
@@ -467,11 +510,14 @@ Values no CSV records, typed here and labelled: the double precision truncation 
 ```text
 include/cps/physics/ force law, SPH kernels, spatial hash (host and device)
 include/cps/core/    configuration, particle state, engine, snapshots, diagnostics
+include/cps/solvers/ the N-body and fluid solver interfaces
+include/cps/utils/   CUDA helpers and the progress bar
 src/kernels/         every CUDA kernel
 src/core/            engine, parsing, snapshots, initial conditions
-tests/               unit (host and device), integration, validation
+tests/               unit (host and device), integration, validation, install consumer
 benchmarks/          the sweep driver
 scripts/             style gate, plotting, report assets, profiling, number and provenance checks
+cmake/               version stamp and the find_package configuration
 configs/             the three shipped configurations
 experiments/         recorded results
 report/              main report sources and figures

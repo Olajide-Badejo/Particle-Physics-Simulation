@@ -14,23 +14,28 @@ Toolchain floors, all verified on the reference machine:
 - CUDA Toolkit 13.3 or newer
 - GCC 15 (nvcc 13.3 refuses anything newer)
 - CMake 3.28 or newer
-- Python 3 with matplotlib and tqdm for the figures
+- Python 3 with the packages in `requirements.txt` for the figures
 - TeX Live with latexmk, and poppler for `pdftotext`, for the reports
 
 ## Building
 
 ```bash
-make setup
-make build
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
 ```
 
-`make setup` configures with fast math on. That switch reaches only the
+`make setup` and `make build` do the same first two steps. The options live in
+`CMakePresets.json`, and `CMakeUserPresets.json` is ignored for your own.
+
+The `dev` preset configures with fast math on. That switch reaches only the
 benchmark library. The validation library is compiled from identical sources
 with fast math forced off, so a physics gate can never be relaxed by a compiler
 flag.
 
-The default build targets `sm_120`. `-DCPS_FAT_BINARY=ON` builds `physics_core`
-for `75;80;86;89;90;120`, which continuous integration and releases use.
+The default build targets `sm_120`. The `release-fat` and `ci` presets build
+`physics_core` for `75;80;86;89;90;120`, which continuous integration and
+releases use. The `host-only` preset needs no CUDA toolkit.
 
 The binaries land in `build/bin`: `cuda_physics_sim`, `gpu_probe`, `bench_all`,
 `unit_tests_host`, `validation_tests_host`, `unit_tests_gpu`, `integration_tests`

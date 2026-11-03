@@ -14,8 +14,20 @@ cmake_minimum_required(VERSION 3.28)
 # probe through on every libstdc++ tested, and it does not assume the running
 # CMake knows that nvcc can do C++23. The real standard for targets is chosen
 # by capability below.
-if(NOT DEFINED CMAKE_CUDA_FLAGS)
-  set(CMAKE_CUDA_FLAGS "-std=c++20")
+#
+# The seed is only for project(). It is a normal variable shadowing the cache,
+# and it is withdrawn once the standard is chosen, so that a compile carries one
+# -std; see there. Flags that already name a standard, from the cache or from
+# the CUDAFLAGS environment variable, belong to the user and are left alone, and
+# any other user flags stay in the cache and keep applying. The test is on the
+# flags rather than on whether the variable is defined, because after the first
+# configure the cache always defines it, and the second configure has to come
+# out the same as the first.
+set(CPS_CUDA_SEED "-std=c++20")
+set(CPS_CUDA_FLAGS_SEEDED OFF)
+if(NOT "${CMAKE_CUDA_FLAGS} $ENV{CUDAFLAGS}" MATCHES "-std=")
+  string(STRIP "${CMAKE_CUDA_FLAGS} ${CPS_CUDA_SEED}" CMAKE_CUDA_FLAGS)
+  set(CPS_CUDA_FLAGS_SEEDED ON)
 endif()
 
 # Also before project(), and for a related reason: project() assigns a default
@@ -86,6 +98,13 @@ if(NOT CPS_HOST_ONLY)
   set(CMAKE_CUDA_STANDARD ${CPS_CUDA_STANDARD})
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 endif()
+# The probe is done, so the seed comes out of the flags, which leaves the cached
+# value: empty, or whatever the user supplied. CMAKE_CUDA_STANDARD now provides
+# the one -std. It does so for C++20 as well, although the probe measured that as
+# the default under the seed: CMake 3.28 and 4.4 were both checked.
+if(CPS_CUDA_FLAGS_SEEDED)
+  unset(CMAKE_CUDA_FLAGS)
+endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -105,6 +124,9 @@ endif()
 # at configure time goes stale with the next commit.
 find_package(Git QUIET)
 
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
 # Only the custom targets and the test of the documentation tooling need Python,
 # so a machine without it can still build and test everything else.
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -112,13 +134,19 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 # ---------------------------------------------------------------------------
 # Third party dependencies
 # ---------------------------------------------------------------------------
+# An installed copy is used when there is one at the pinned version or newer, so
+# a machine with the packages needs no network. Otherwise the pinned tag is
+# fetched. The floor is the pin rather than nothing because Ubuntu 24.04 packages
+# older copies of both, and an older JSON library or test framework would change
+# what a build was tested against without saying so.
 include(FetchContent)
 
 FetchContent_Declare(nlohmann_json
   GIT_REPOSITORY https://github.com/nlohmann/json.git
   GIT_TAG v3.12.0
   GIT_SHALLOW TRUE
-  SYSTEM)
+  SYSTEM
+  FIND_PACKAGE_ARGS 3.12.0 CONFIG QUIET)
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 FetchContent_MakeAvailable(nlohmann_json)
 
@@ -127,7 +155,8 @@ if(CPS_BUILD_TESTS)
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG v1.17.0
     GIT_SHALLOW TRUE
-    SYSTEM)
+    SYSTEM
+    FIND_PACKAGE_ARGS 1.17.0 NAMES GTest QUIET)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(googletest)
@@ -173,8 +202,34 @@ add_library(physics_host STATIC
   src/core/snapshot.cpp
   src/core/initial_conditions.cpp
   src/utils/progress.cpp)
-target_include_directories(physics_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(physics_host PUBLIC nlohmann_json::nlohmann_json PRIVATE cps_warnings)
+target_include_directories(physics_host PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+# No installed header includes the JSON library, and it is header only, so it
+# ends at the build tree: an installed consumer never needs it, and the export
+# never names a fetched target. The same goes for the warning flags.
+target_link_libraries(physics_host
+  PUBLIC $<BUILD_LOCAL_INTERFACE:nlohmann_json::nlohmann_json>
+  PRIVATE $<BUILD_LOCAL_INTERFACE:cps_warnings>)
+target_compile_features(physics_host PUBLIC cxx_std_20)
+add_library(cps::physics_host ALIAS physics_host)
+
+# ---------------------------------------------------------------------------
+# Build-time version stamp
+# ---------------------------------------------------------------------------
+# Always runs, and rewrites the header only when its contents change, so a build
+# of an unchanged tree recompiles nothing. It is generated under cps/, so the
+# include reads the same in the build tree and the installed tree.
+set(CPS_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+add_custom_target(cps_version ALL
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_VERSION=${PROJECT_VERSION}
+          -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+          -DOUTPUT=${CPS_GENERATED_DIR}/cps/version.hpp
+          -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/write_version_header.cmake
+  BYPRODUCTS ${CPS_GENERATED_DIR}/cps/version.hpp
+  VERBATIM)
 
 # ---------------------------------------------------------------------------
 # The device library is built twice from identical sources. The only
@@ -198,8 +253,12 @@ set(CPS_DEVICE_SOURCES
 
 function(cps_add_device_library target fast_math architectures)
   add_library(${target} STATIC ${CPS_DEVICE_SOURCES})
-  target_include_directories(${target} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(${target} PUBLIC physics_host CUDA::cudart PRIVATE cps_warnings)
+  target_include_directories(${target} PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_link_libraries(${target}
+    PUBLIC physics_host CUDA::cudart
+    PRIVATE $<BUILD_LOCAL_INTERFACE:cps_warnings>)
   set_target_properties(${target} PROPERTIES
     CUDA_ARCHITECTURES "${architectures}"
     CUDA_SEPARABLE_COMPILATION OFF)
@@ -219,31 +278,19 @@ endif()
 
 cps_add_device_library(physics_core ${CPS_USE_FAST_MATH} "${CPS_CORE_ARCHITECTURES}")
 cps_add_device_library(physics_core_strict OFF "${CMAKE_CUDA_ARCHITECTURES}")
+add_library(cps::physics_core ALIAS physics_core)
 
-# ---------------------------------------------------------------------------
-# Build-time version stamp
-# ---------------------------------------------------------------------------
-# Always runs, and rewrites the header only when its contents change, so a build
-# of an unchanged tree recompiles nothing. Only the two executables that report
-# a version include it.
-set(CPS_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
-add_custom_target(cps_version
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_VERSION=${PROJECT_VERSION}
-          -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-          -DOUTPUT=${CPS_GENERATED_DIR}/cps_version.hpp
-          -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/write_version_header.cmake
-  BYPRODUCTS ${CPS_GENERATED_DIR}/cps_version.hpp
-  VERBATIM)
+# The stamp is for whoever links physics_core, the same as in the installed
+# tree. INTERFACE, because nothing physics_core compiles includes it.
+target_include_directories(physics_core INTERFACE $<BUILD_INTERFACE:${CPS_GENERATED_DIR}>)
+add_dependencies(physics_core cps_version)
 
 # ---------------------------------------------------------------------------
 # Executables
 # ---------------------------------------------------------------------------
 add_executable(cuda_physics_sim src/main.cpp)
 target_link_libraries(cuda_physics_sim PRIVATE physics_core cps_warnings)
-target_include_directories(cuda_physics_sim PRIVATE ${CPS_GENERATED_DIR})
-add_dependencies(cuda_physics_sim cps_version)
+add_executable(cps::cuda_physics_sim ALIAS cuda_physics_sim)
 
 add_executable(gpu_probe src/tools/gpu_probe.cu)
 target_link_libraries(gpu_probe PRIVATE physics_core cps_warnings)
@@ -252,8 +299,6 @@ set_target_properties(gpu_probe PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCH
 if(CPS_BUILD_BENCHMARKS)
   add_executable(bench_all benchmarks/bench_all.cpp)
   target_link_libraries(bench_all PRIVATE physics_core cps_warnings)
-  target_include_directories(bench_all PRIVATE ${CPS_GENERATED_DIR})
-  add_dependencies(bench_all cps_version)
   target_compile_definitions(bench_all PRIVATE
     CPS_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
@@ -371,6 +416,54 @@ if(Python3_Interpreter_FOUND)
     VERBATIM)
 endif()
 
+# ---------------------------------------------------------------------------
+# Install and export
+# ---------------------------------------------------------------------------
+# physics_core_strict and the test binaries exist to test this repository, so
+# they stay out. Only the headers, the libraries and the simulator are installed.
+set(CPS_INSTALL_CMAKEDIR ${CMAKE_INSTALL_LIBDIR}/cmake/cps)
+
+set(CPS_INSTALL_TARGETS physics_host)
+if(NOT CPS_HOST_ONLY)
+  list(APPEND CPS_INSTALL_TARGETS physics_core cuda_physics_sim)
+  # The CUDA runtime is a shared library outside the prefix, and the build tree
+  # path to it is dropped on install. Keep it, so the installed simulator runs
+  # without LD_LIBRARY_PATH on a toolkit that is not on the loader's path.
+  set_target_properties(cuda_physics_sim PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
+endif()
+
+install(TARGETS ${CPS_INSTALL_TARGETS}
+  EXPORT cpsTargets
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(DIRECTORY include/cps DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES ${CPS_GENERATED_DIR}/cps/version.hpp
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/cps)
+install(EXPORT cpsTargets
+  NAMESPACE cps::
+  DESTINATION ${CPS_INSTALL_CMAKEDIR})
+
+# For the consumer notes and the find_dependency in cpsConfig.cmake.
+if(CPS_HOST_ONLY)
+  set(CPS_CUDA_TOOLKIT_FLOOR "(none, this is a host only build)")
+  set(CPS_CORE_ARCH_LIST "(none, this is a host only build)")
+else()
+  set(CPS_CUDA_TOOLKIT_FLOOR ${CUDAToolkit_VERSION_MAJOR}.${CUDAToolkit_VERSION_MINOR})
+  string(REPLACE ";" ", " CPS_CORE_ARCH_LIST "${CPS_CORE_ARCHITECTURES}")
+endif()
+
+configure_package_config_file(cmake/cpsConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/cpsConfig.cmake
+  INSTALL_DESTINATION ${CPS_INSTALL_CMAKEDIR})
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/cpsConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion)
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/cpsConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/cpsConfigVersion.cmake
+  DESTINATION ${CPS_INSTALL_CMAKEDIR})
+
 message(STATUS "cuda_physics_sim ${PROJECT_VERSION}")
 if(NOT CPS_HOST_ONLY)
   message(STATUS "  CUDA toolkit      : ${CUDAToolkit_VERSION}")
@@ -389,3 +482,15 @@ if(NOT CPS_HOST_ONLY)
   message(STATUS "  Device standard   : C++${CMAKE_CUDA_STANDARD}")
 endif()
 message(STATUS "  Fast math         : ${CPS_USE_FAST_MATH} (validation library always off)")
+if(nlohmann_json_SOURCE_DIR)
+  message(STATUS "  nlohmann_json     : fetched at the pinned tag")
+else()
+  message(STATUS "  nlohmann_json     : found ${nlohmann_json_VERSION} at ${nlohmann_json_DIR}")
+endif()
+if(CPS_BUILD_TESTS)
+  if(googletest_SOURCE_DIR)
+    message(STATUS "  GoogleTest        : fetched at the pinned tag")
+  else()
+    message(STATUS "  GoogleTest        : found ${googletest_VERSION} at ${googletest_DIR}")
+  endif()
+endif()

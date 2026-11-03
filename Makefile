@@ -48,21 +48,16 @@ help:
 	@echo "  clean          remove build outputs but keep recorded results"
 	@echo "  distclean      also remove recorded results and snapshots"
 
+# Both setups are the presets of the same name in CMakePresets.json, which hold
+# the options. BUILD_DIR and BUILD_TYPE still override them from here.
 setup:
-	$(CMAKE) -S . -B $(BUILD_DIR) \
-		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DCPS_BUILD_TESTS=ON \
-		-DCPS_BUILD_BENCHMARKS=ON \
-		-DCPS_USE_FAST_MATH=ON
+	$(CMAKE) --preset dev -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
 # No CUDA toolkit required. Builds the configuration layer, the snapshot
 # format, the initial condition generators and the physics formulas, with the
 # unit tests that cover them.
 setup-host-only:
-	$(CMAKE) -S . -B $(BUILD_DIR) \
-		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DCPS_HOST_ONLY=ON \
-		-DCPS_BUILD_TESTS=ON
+	$(CMAKE) --preset host-only -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
 $(BUILD_DIR)/CMakeCache.txt:
 	@$(MAKE) setup

@@ -6,7 +6,7 @@
 #include "cps/core/cli.hpp"
 #include "cps/core/initial_conditions.hpp"
 #include "cps/core/simulation_engine.hpp"
-#include "cps_version.hpp"
+#include "cps/version.hpp"
 #include "cps/utils/cuda_helpers.hpp"
 #include "cps/utils/progress.hpp"
 
