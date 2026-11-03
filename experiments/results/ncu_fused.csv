@@ -1,0 +1,41 @@
+==PROF== Connected to process 708797 (/mnt/c/Users/jidro/Documents/Elijah/ML_DL_ETC/Projects/Updated Github Projects/GPU_Physics_Simulation/build/bin/cuda_physics_sim)
+device 0: NVIDIA GeForce RTX 5070 (compute capability 12.0)
+  multiprocessors      : 48
+  core clock           : 2625 MHz
+  memory clock         : 14001 MHz effective
+  memory bus           : 192 bits
+  peak bandwidth       : 672.0 GB/s
+  global memory        : 11.94 GiB
+  shared memory/block  : 49152 bytes
+  max threads/block    : 1024
+  cuda runtime/driver  : 13030 / 13030
+
+configuration: plummer_10k
+  solver        : nbody (fused)
+  particles     : 200,000
+  steps         : 6
+  time step     : 0.001
+  seed          : 20260802
+  fast math     : on
+  device state  : 9.92 MiB
+
+
+completed 6 steps in this process, final step 6
+  solver ms/step: 165.7687 (0.995 s in step(), 6.0 steps/s)
+  wall ms/step  : 166.9423 (1.002 s in run(), 6.0 steps/s)
+final energy: kinetic 0.147192765 potential -0.295314593 total -0.148121829
+final momentum magnitude: 5.33606e-09
+==PROF== Disconnected from process 708797
+"ID","Process ID","Process Name","Host Name","Kernel Name","Context","Stream","Block Size","Grid Size","Device","CC","Section Name","Metric Name","Metric Unit","Metric Value"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed","%","0.31"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","gpu__time_duration.sum","ns","45204128"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum","sector","78350000"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","l1tex__throughput.avg.pct_of_peak_sustained_elapsed","%","45.90"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","lts__throughput.avg.pct_of_peak_sustained_elapsed","%","1.64"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","sm__throughput.avg.pct_of_peak_sustained_elapsed","%","83.59"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","smsp__inst_executed_pipe_fma.sum","inst","16300958804"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","smsp__inst_executed_pipe_lsu.sum","inst","1306315288"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","smsp__issue_active.avg.pct_of_peak_sustained_elapsed","%","83.59"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","smsp__sass_thread_inst_executed_op_fadd_pred_on.sum","inst","160307347456"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","smsp__sass_thread_inst_executed_op_ffma_pred_on.sum","inst","200385384320"
+"0","708797","cuda_physics_sim","127.0.0.1","void unnamed>::nbody_fused_step_kernel<256>(const float *, const float *, const float *, float *, float *, float *, float *, float *, float *, float *, float *, float *, const float *, int, float, float, float)","1","7","(256, 1, 1)","(782, 1, 1)","0","12.0","Command line profiler metrics","smsp__sass_thread_inst_executed_op_fmul_pred_on.sum","inst","160307947456"
