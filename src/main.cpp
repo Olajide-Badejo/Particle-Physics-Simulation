@@ -79,14 +79,25 @@ int main(int argc, char** argv) {
 
         engine.run();
 
-        const double seconds = engine.solver_milliseconds() / 1.0e3;
-        const long long done = engine.current_step();
-        std::printf("\ncompleted %s steps in %.3f s", cps::format_count(done).c_str(), seconds);
-        if (seconds > 0.0) {
-            std::printf(" (%.1f steps/s, %.3f ms/step)", static_cast<double>(done) / seconds,
-                        engine.solver_milliseconds() / static_cast<double>(done));
+        // Both figures divide by the steps this process ran, not by the step
+        // index, which after a resume includes the steps before the snapshot.
+        // Solver time covers only the step() calls; wall time also covers
+        // diagnostics, snapshot writes and the progress bar.
+        const long long done = engine.steps_run();
+        const double solver_ms = engine.solver_milliseconds();
+        const double wall_ms = engine.wall_milliseconds();
+        std::printf("\ncompleted %s steps in this process, final step %s\n",
+                    cps::format_count(done).c_str(),
+                    cps::format_count(engine.current_step()).c_str());
+        if (done > 0) {
+            const double per_step = static_cast<double>(done);
+            std::printf("  solver ms/step: %.4f (%.3f s in step(), %.1f steps/s)\n",
+                        solver_ms / per_step, solver_ms / 1.0e3,
+                        solver_ms > 0.0 ? per_step / (solver_ms / 1.0e3) : 0.0);
+            std::printf("  wall ms/step  : %.4f (%.3f s in run(), %.1f steps/s)\n",
+                        wall_ms / per_step, wall_ms / 1.0e3,
+                        wall_ms > 0.0 ? per_step / (wall_ms / 1.0e3) : 0.0);
         }
-        std::printf("\n");
 
         if (config.solver == cps::SolverType::NBody) {
             const cps::Diagnostics final_row = engine.diagnostics(true);

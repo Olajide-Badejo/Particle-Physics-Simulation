@@ -23,7 +23,12 @@ namespace cps {
 //   5. density   poly6 sum over the twenty seven surrounding cells, then the
 //                equation of state
 //   6. force     spiky pressure gradient, viscosity Laplacian, external
-//                gravity, leapfrog update and boundary handling
+//                gravity, kick-drift leapfrog update and boundary handling
+//
+// The update is the same kick-drift leapfrog as the fused N-body kernel. The
+// initial half step offset is not applied, and the viscous term is first order
+// because it reads the half step velocity. The first diagnostic row after a
+// resume uses a zero acceleration, since nothing recomputes it on load.
 //
 // The permutation is kept. After a step the particle arrays are in cell sorted
 // order, which is the order the next step wants anyway, so the sort has an

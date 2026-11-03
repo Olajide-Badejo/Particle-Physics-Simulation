@@ -43,9 +43,9 @@ void sph_compute_density(const float* sx, const float* sy, const float* sz, cons
                          float rest_density, float gas_constant, int block_size,
                          cudaStream_t stream = nullptr);
 
-// Pressure gradient, viscosity, external gravity, leapfrog update and boundary
-// handling in one pass, writing the result back into the primary particle
-// arrays in cell sorted order.
+// Pressure gradient, viscosity, external gravity, kick-drift leapfrog update
+// and boundary handling in one pass, writing the result back into the primary
+// particle arrays in cell sorted order.
 void sph_forces_and_integrate(const float* sx, const float* sy, const float* sz, const float* svx,
                               const float* svy, const float* svz, const float* smass,
                               const float* density, const float* pressure,

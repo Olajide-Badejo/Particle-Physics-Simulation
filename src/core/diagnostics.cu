@@ -1,7 +1,13 @@
 #include "core/diagnostics.hpp"
 
+#include <charconv>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <system_error>
 #include <vector>
 
 #include "physics/gravity.hpp"
@@ -225,7 +231,106 @@ DiagnosticsWriter::DiagnosticsWriter(const std::string& path) {
     if (file_ == nullptr) {
         throw std::runtime_error("cannot open diagnostics file " + path);
     }
-    std::fprintf(file_, "step,time,kinetic,potential,total,px,py,pz,momentum_magnitude\n");
+    std::fprintf(file_, "%s\n", DIAGNOSTICS_HEADER);
+}
+
+DiagnosticsWriter::DiagnosticsWriter(const std::string& path, long long resume_step) {
+    if (path.empty()) {
+        return;
+    }
+
+    std::string text;
+    {
+        std::ifstream in(path, std::ios::binary);
+        if (in) {
+            std::ostringstream buffer;
+            buffer << in.rdbuf();
+            text = buffer.str();
+        }
+    }
+
+    if (text.empty()) {
+        file_ = std::fopen(path.c_str(), "w");
+        if (file_ == nullptr) {
+            throw std::runtime_error("cannot open diagnostics file " + path);
+        }
+        std::fprintf(file_, "%s\n", DIAGNOSTICS_HEADER);
+        return;
+    }
+
+    // Split into complete lines. Whatever follows the last newline is a row
+    // a crash cut short, and is dropped with the rows the resume rewrites.
+    std::vector<std::string> lines;
+    std::size_t start = 0;
+    bool dropped = false;
+    while (start < text.size()) {
+        const std::size_t end = text.find('\n', start);
+        if (end == std::string::npos) {
+            // A header cut short of its newline is still a header.
+            if (lines.empty() && text.compare(start, std::string::npos, DIAGNOSTICS_HEADER) == 0) {
+                lines.emplace_back(DIAGNOSTICS_HEADER);
+            }
+            dropped = true;
+            break;
+        }
+        lines.push_back(text.substr(start, end - start));
+        start = end + 1;
+    }
+
+    if (lines.empty() || lines.front() != DIAGNOSTICS_HEADER) {
+        const std::string first = lines.empty() ? text.substr(0, 80) : lines.front();
+        throw std::runtime_error("diagnostics file " + path + " starts with \"" + first +
+                                 "\" rather than the expected header \"" + DIAGNOSTICS_HEADER +
+                                 "\", so a resumed run cannot append to it; move it aside or " +
+                                 "choose another diagnostics path");
+    }
+
+    std::string kept = lines.front() + "\n";
+    for (std::size_t i = 1; i < lines.size(); ++i) {
+        const std::string& line = lines[i];
+        long long step = 0;
+        const char* first = line.data();
+        const char* last = first + line.size();
+        const auto [end, error] = std::from_chars(first, last, step);
+        if (error != std::errc() || end == last || *end != ',') {
+            throw std::runtime_error("diagnostics file " + path + " has a row at line " +
+                                     std::to_string(i + 1) + " whose step cannot be read: \"" +
+                                     line.substr(0, 80) + "\"");
+        }
+        if (step >= resume_step) {
+            dropped = true;
+            continue;
+        }
+        kept += line;
+        kept += '\n';
+    }
+
+    if (dropped) {
+        const std::string temporary = path + ".tmp";
+        std::FILE* out = std::fopen(temporary.c_str(), "wb");
+        if (out == nullptr) {
+            throw std::runtime_error("cannot write diagnostics file " + temporary);
+        }
+        const bool written = std::fwrite(kept.data(), 1, kept.size(), out) == kept.size();
+        const bool closed = std::fclose(out) == 0;
+        std::error_code ignored;
+        if (!written || !closed) {
+            std::filesystem::remove(temporary, ignored);
+            throw std::runtime_error("cannot write diagnostics file " + temporary);
+        }
+        std::error_code renamed;
+        std::filesystem::rename(temporary, path, renamed);
+        if (renamed) {
+            std::filesystem::remove(temporary, ignored);
+            throw std::runtime_error("cannot replace diagnostics file " + path + ": " +
+                                     renamed.message());
+        }
+    }
+
+    file_ = std::fopen(path.c_str(), "a");
+    if (file_ == nullptr) {
+        throw std::runtime_error("cannot open diagnostics file " + path);
+    }
 }
 
 DiagnosticsWriter::~DiagnosticsWriter() { close(); }
@@ -240,6 +345,12 @@ void DiagnosticsWriter::write(const Diagnostics& row) {
     std::fprintf(file_, "%lld,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g\n", row.step,
                  row.time, row.kinetic, row.potential, row.total, row.px, row.py, row.pz,
                  row.momentum_magnitude);
+}
+
+void DiagnosticsWriter::flush() {
+    if (file_ != nullptr) {
+        std::fflush(file_);
+    }
 }
 
 void DiagnosticsWriter::close() {

@@ -46,7 +46,9 @@ class DiagnosticsReducer {
     // than by shifting the velocity array and shifting it back is deliberate:
     // adding and then subtracting the same quantity in single precision does
     // not return the original bits, and that would break the bit identity
-    // guarantee of the resume path for any run that took a diagnostic.
+    // guarantee of the resume path for any run that took a diagnostic. The
+    // acceleration array has to hold a_{n+1} for that to be the synchronised
+    // velocity, so the engine refreshes it first on the fused path.
     void reduce_kinetic_and_momentum(const ParticleSystem& particles, double& kinetic, double& px,
                                      double& py, double& pz, float half_dt = 0.0f);
 
@@ -68,12 +70,32 @@ class DiagnosticsReducer {
     DeviceBuffer<double> result_;
 };
 
+// The first line of every diagnostics file, without its newline.
+inline constexpr const char* DIAGNOSTICS_HEADER =
+    "step,time,kinetic,potential,total,px,py,pz,momentum_magnitude";
+
 // Streams diagnostics rows to a comma separated file. The header names the
 // units so a reader never has to guess what the numbers are.
 class DiagnosticsWriter {
    public:
     DiagnosticsWriter() = default;
+
+    // A fresh run: truncates the file and writes the header.
     explicit DiagnosticsWriter(const std::string& path);
+
+    // A resumed run: continues the file the original run wrote, so the file
+    // ends up holding every step exactly once. A missing or empty file gets
+    // the header. Otherwise the first line must be the header, and every row
+    // at or past resume_step is dropped before appending, because the resumed
+    // run writes those steps again; that also covers a run that died after
+    // its diagnostics got ahead of its last snapshot. An unterminated last
+    // line, which is what a crash in the middle of a write leaves, is dropped
+    // too. The drop rewrites the file through a temporary file and a rename,
+    // so an interruption leaves either the old file or the new one. Throws
+    // std::runtime_error on a header that does not match or a row whose step
+    // cannot be read, rather than mixing two formats in one file.
+    DiagnosticsWriter(const std::string& path, long long resume_step);
+
     ~DiagnosticsWriter();
 
     DiagnosticsWriter(const DiagnosticsWriter&) = delete;
@@ -81,6 +103,11 @@ class DiagnosticsWriter {
 
     bool is_open() const { return file_ != nullptr; }
     void write(const Diagnostics& row);
+
+    // Pushes buffered rows to the file. The engine calls it before every
+    // snapshot, so a run that dies later has diagnostics on disk up to the
+    // step a resume will start from.
+    void flush();
     void close();
 
    private:

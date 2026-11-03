@@ -1,6 +1,9 @@
 #include "core/simulation_engine.hpp"
 
+#include <bit>
+#include <chrono>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
@@ -19,11 +22,18 @@ namespace {
 
 // Which velocity convention a solver carries between steps. The split velocity
 // Verlet keeps the velocity synchronised with the positions; the fused kernel
-// and the fluid solver both advance a leapfrog half step velocity. Resuming a
-// snapshot written under one convention into a solver that wants the other is
-// the one case where the loaded velocity has to be shifted, and getting that
-// wrong offsets the whole trajectory by half a step in a way that looks like
-// a subtly wrong force.
+// advances a leapfrog half step velocity. Resuming a snapshot written under one
+// convention into a solver that wants the other is the one case where the
+// loaded velocity has to be shifted, and getting that wrong offsets the whole
+// trajectory by half a step in a way that looks like a subtly wrong force.
+//
+// The fluid solver runs the same kick-drift leapfrog update as the fused
+// kernel, but its initial offset is not applied: the acceleration is still
+// zero when the offset runs, so the initial velocity is taken as v_{-1/2} as
+// it stands. Its viscous term is evaluated with that half step velocity, which
+// makes it first order. The flag stays true for the fluid because it decides
+// how the diagnostics read the velocity, and v + a dt/2 is a better estimate
+// of the synchronised velocity than v alone.
 bool solver_wants_half_step(const Config& config) {
     if (config.solver == SolverType::Sph) {
         return true;
@@ -40,21 +50,35 @@ SimulationEngine::SimulationEngine(Config config) : config_(std::move(config)) {
     if (config_.solver == SolverType::Sph) {
         sph_ = std::make_unique<SphSolver>(config_, config_.num_particles);
     }
-    if (!config_.diagnostics_path.empty() && config_.diagnostics_interval > 0) {
-        const fs::path path(config_.diagnostics_path);
-        if (!path.parent_path().empty()) {
-            fs::create_directories(path.parent_path());
-        }
-        writer_ = std::make_unique<DiagnosticsWriter>(config_.diagnostics_path);
-    }
 }
 
 SimulationEngine::~SimulationEngine() = default;
+
+// The file is opened only once the engine knows whether this is a fresh run or
+// a resume, and for a resume only after every check has passed, so a refused
+// resume leaves the original run's diagnostics untouched.
+void SimulationEngine::open_diagnostics(long long resume_step) {
+    writer_.reset();
+    if (config_.diagnostics_path.empty() || config_.diagnostics_interval <= 0) {
+        return;
+    }
+    const fs::path path(config_.diagnostics_path);
+    if (!path.parent_path().empty()) {
+        fs::create_directories(path.parent_path());
+    }
+    if (resume_step < 0) {
+        writer_ = std::make_unique<DiagnosticsWriter>(config_.diagnostics_path);
+    } else {
+        writer_ = std::make_unique<DiagnosticsWriter>(config_.diagnostics_path, resume_step);
+    }
+}
 
 void SimulationEngine::initialize() {
     const HostParticleState state = make_initial_state(config_);
     particles_->upload(state);
     current_step_ = 0;
+    time_origin_step_ = 0;
+    time_origin_ = 0.0;
     half_step_velocity_ = false;
 
     if (config_.solver == SolverType::NBody) {
@@ -69,8 +93,11 @@ void SimulationEngine::initialize() {
     }
 
     // For the fluid case the acceleration array is still zero here, so this
-    // records the convention without touching a single velocity.
+    // records the convention without touching a single velocity: the initial
+    // half step offset is not applied, and the initial velocity is used as
+    // v_{-1/2} as it stands.
     ensure_velocity_convention(solver_wants_half_step(config_));
+    open_diagnostics(-1);
     initialized_ = true;
 }
 
@@ -156,6 +183,21 @@ long long SimulationEngine::resume(bool force) {
     current_step_ = static_cast<long long>(snapshot.step);
     half_step_velocity_ = (snapshot.flags & SNAPSHOT_FLAG_HALF_STEP_VELOCITY) != 0u;
 
+    // Time carries on from the snapshot's own clock. When that clock is
+    // exactly what step * dt gives under this configuration, which is every
+    // resume that did not force a change of dt, the origin stays at zero so
+    // the resumed run reports bit for bit the times the straight run would
+    // have. A CPS1 snapshot has no clock, so it gets step * dt as well.
+    const double resumed_at =
+        static_cast<double>(current_step_) * static_cast<double>(config_.dt);
+    time_origin_step_ = 0;
+    time_origin_ = 0.0;
+    if (std::isfinite(snapshot.time) &&
+        std::bit_cast<uint64_t>(snapshot.time) != std::bit_cast<uint64_t>(resumed_at)) {
+        time_origin_step_ = current_step_;
+        time_origin_ = snapshot.time;
+    }
+
     if (config_.solver == SolverType::NBody) {
         // Accelerations are a deterministic function of the positions, so
         // recomputing them here reproduces exactly the array the original run
@@ -168,7 +210,12 @@ long long SimulationEngine::resume(bool force) {
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
+    // After a fluid resume the acceleration array is zero, because the fluid
+    // solver keeps no force pass outside its step, so the first diagnostic row
+    // after the resume reads the velocity with a zero acceleration. The state
+    // itself is unaffected and the trajectory stays bit identical.
     ensure_velocity_convention(solver_wants_half_step(config_));
+    open_diagnostics(current_step_);
     initialized_ = true;
     std::fprintf(stderr, "resumed from %s at step %lld\n", path.string().c_str(), current_step_);
     return current_step_;
@@ -221,6 +268,17 @@ void SimulationEngine::step() {
 }
 
 Diagnostics SimulationEngine::diagnostics(bool include_potential) {
+    if (config_.solver == SolverType::NBody && config_.variant == NBodyVariant::Fused) {
+        // The fused kernel leaves a_n in the acceleration array, the force at
+        // the positions it started from, but the synchronised velocity is
+        // v_{n+1/2} + a_{n+1} dt/2. Recomputing the force at the current
+        // positions gives a_{n+1}. The fused kernel never reads this array,
+        // so overwriting it changes nothing the trajectory depends on.
+        compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
+                             particles_->ax(), particles_->ay(), particles_->az(),
+                             particles_->size(), config_.softening, config_.gravitational_constant,
+                             config_.block_size);
+    }
     const float half_dt = half_step_velocity_ ? 0.5f * config_.dt : 0.0f;
     const bool with_potential = include_potential && config_.solver == SolverType::NBody;
     return reducer_->compute(*particles_, current_step_, simulated_time(), config_.softening,
@@ -241,9 +299,11 @@ void SimulationEngine::write_snapshot_now() const {
 }
 
 void SimulationEngine::run() {
+    using Clock = std::chrono::steady_clock;
     if (!initialized_) {
         initialize();
     }
+    const Clock::time_point wall_start = Clock::now();
 
     if (writer_ && writer_->is_open()) {
         writer_->write(diagnostics());
@@ -252,23 +312,45 @@ void SimulationEngine::run() {
     ProgressBar bar(config_.name.empty() ? std::string("simulation") : config_.name, config_.steps);
     bar.update(current_step_);
 
+    // The solver clock runs on device events around each unbroken stretch of
+    // step() calls and stops just before a diagnostic or a snapshot. Both of
+    // those copy from the device and so synchronise anyway; stopping the
+    // clock there adds no synchronisation that would not have happened.
     CudaTimer timer;
-    timer.start();
+    bool timing = false;
 
     for (long long remaining = config_.steps - current_step_; remaining > 0; --remaining) {
+        if (!timing) {
+            timer.start();
+            timing = true;
+        }
         step();
+        ++steps_run_;
 
-        if (config_.diagnostics_interval > 0 && writer_ && writer_->is_open() &&
-            current_step_ % config_.diagnostics_interval == 0) {
+        const bool diagnostic_due = config_.diagnostics_interval > 0 && writer_ &&
+                                    writer_->is_open() &&
+                                    current_step_ % config_.diagnostics_interval == 0;
+        const bool snapshot_due =
+            config_.snapshot_interval > 0 && current_step_ % config_.snapshot_interval == 0;
+        if (diagnostic_due || snapshot_due) {
+            solver_ms_ += timer.stop();
+            timing = false;
+        }
+        if (diagnostic_due) {
             writer_->write(diagnostics());
         }
-        if (config_.snapshot_interval > 0 && current_step_ % config_.snapshot_interval == 0) {
+        if (snapshot_due) {
+            if (writer_) {
+                writer_->flush();
+            }
             write_snapshot_now();
         }
         bar.update(current_step_);
     }
 
-    solver_ms_ += timer.stop();
+    if (timing) {
+        solver_ms_ += timer.stop();
+    }
     CUDA_CHECK(cudaDeviceSynchronize());
     bar.finish();
 
@@ -276,6 +358,11 @@ void SimulationEngine::run() {
         current_step_ % config_.diagnostics_interval != 0) {
         writer_->write(diagnostics());
     }
+    if (writer_) {
+        writer_->flush();
+    }
+
+    wall_ms_ += std::chrono::duration<double, std::milli>(Clock::now() - wall_start).count();
 }
 
 }  // namespace cps

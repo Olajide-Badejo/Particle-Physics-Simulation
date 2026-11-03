@@ -74,7 +74,7 @@ __global__ void density_kernel(const float* __restrict__ sx, const float* __rest
     pressure[k] = equation_of_state(rho, rest_density, gas_constant);
 }
 
-// Pressure gradient, viscosity, gravity, leapfrog update and walls.
+// Pressure gradient, viscosity, gravity, kick-drift leapfrog update and walls.
 //
 // Fusing the update into the force pass is the same trade the fused N-body
 // kernel makes and it is safe for the same reason: the sorted arrays this pass

@@ -287,7 +287,8 @@ if(CPS_BUILD_TESTS)
 
   add_executable(integration_tests
     tests/integration/test_solver_smoke.cpp
-    tests/integration/test_snapshot_resume.cpp)
+    tests/integration/test_snapshot_resume.cpp
+    tests/integration/test_diagnostics.cpp)
   target_link_libraries(integration_tests
     PRIVATE physics_core_strict cps_gpu_test_main cps_warnings cps_test_support)
   add_test(NAME integration COMMAND integration_tests)

@@ -33,6 +33,18 @@ the velocity is offset backwards by half a step once before the loop. The cost
 is that the stored velocity is no longer synchronised with the positions, which
 propagates into the snapshot format and the diagnostics.
 
+### The fluid update is a kick-drift leapfrog with no initial offset
+
+The fluid solver updates `v <- v + a dt`, then `x <- x + v dt`, which is the same
+kick-drift leapfrog as the fused kernel. The initial offset is not applied: the
+acceleration is still zero when the engine would apply it, so the initial
+velocity is taken as `v_{-1/2}` as it stands. The viscous term reads the half
+step velocity, which makes it first order. The half step flag stays set, because
+it tells the diagnostics to read `v + a dt/2`, a better estimate of the
+synchronised velocity than `v` alone. The fluid acceleration is not recomputed on
+load, so the first diagnostic row after a resume uses a zero acceleration. The
+trajectory is unaffected and stays bit identical.
+
 ### Double buffered positions on the fused path
 
 Required for correctness, not performance. There is no grid wide barrier inside
@@ -117,6 +129,26 @@ last bits, which the bit identity test forbids.
 Shifting the velocity array forward and back would not return the original bits
 in single precision, so a run that took a diagnostic would diverge from one that
 did not.
+
+On the fused path the engine recomputes the force at the current positions before
+each reduction, because the kernel leaves `a_n` in the array and the synchronised
+velocity needs `a_{n+1}`. The fused kernel never reads that array, so the extra
+pass costs one all pairs sum per diagnostic and cannot affect the trajectory.
+
+### A resumed run continues its diagnostics file
+
+The file is opened after the resume checks pass, so a refused resume leaves it
+alone. Rows at or past the resume step are dropped before appending, because the
+resumed run writes them again, which also covers a run that died with its
+diagnostics ahead of its last snapshot. A header that does not match is an error
+rather than a file holding two formats.
+
+### Solver time and wall time are reported separately
+
+Solver time comes from device events around the stretches of `step()` calls
+between diagnostics and snapshots. Those two already synchronise, so stopping the
+clock there adds no synchronisation to the solver path. Wall time is the host
+clock over all of `run()`. Neither counts the steps before a resume.
 
 ### Accelerations are not stored in snapshots
 

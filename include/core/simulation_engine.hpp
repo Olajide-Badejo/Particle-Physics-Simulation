@@ -41,7 +41,9 @@ class SimulationEngine {
     void step();
 
     // Runs to the configured step count, writing snapshots and diagnostics on
-    // their configured cadences and drawing a progress bar.
+    // their configured cadences and drawing a progress bar. After initialize()
+    // the diagnostics file starts afresh; after resume() it is continued (see
+    // the resuming DiagnosticsWriter constructor).
     void run();
 
     Diagnostics diagnostics(bool include_potential = true);
@@ -53,13 +55,39 @@ class SimulationEngine {
     const Config& config() const { return config_; }
     long long current_step() const { return current_step_; }
 
-    // The engine's simulated time: the step count times the fixed time step.
+    // The engine's simulated time, t0 + (step - s0) dt. A fresh run has s0 = 0
+    // and t0 = 0, which is exactly step * dt. A resume takes s0 and t0 from
+    // the snapshot, so a resume forced across a change of dt keeps the time
+    // the snapshot was written at and advances it with the new dt from there.
+    // When the snapshot's time is exactly step * dt under this configuration,
+    // as it is for every resume that did not change dt, and for CPS1, which
+    // stores no time, the origin is left at zero so the reported times are bit
+    // for bit those of a run that never stopped.
     double simulated_time() const {
-        return static_cast<double>(current_step_) * static_cast<double>(config_.dt);
+        return time_origin_ + static_cast<double>(current_step_ - time_origin_step_) *
+                                  static_cast<double>(config_.dt);
     }
 
-    // Milliseconds of device time spent inside step(), accumulated.
+    // Timing of run(), accumulated over every call in this process.
+    //
+    // solver_milliseconds() is device time from CUDA events spanning only the
+    // step() calls. Each unbroken stretch of steps between diagnostics and
+    // snapshots is timed as one segment, so the figure excludes diagnostics,
+    // snapshot writes and the progress bar. Host time spent launching steps
+    // inside a segment counts only where it leaves the device idle.
+    //
+    // wall_milliseconds() is host wall clock time from the start of run() to
+    // its return, not counting an initialize() or resume() done beforehand:
+    // the steps, every diagnostic (the opening and closing rows included),
+    // snapshot writes and the progress bar. It is never less than the solver
+    // time.
+    //
+    // steps_run() counts the steps run() advanced in this process. After a
+    // resume it excludes the steps before the snapshot, so dividing either
+    // time by it gives a per step cost; current_step() is the step index.
     double solver_milliseconds() const { return solver_ms_; }
+    double wall_milliseconds() const { return wall_ms_; }
+    long long steps_run() const { return steps_run_; }
 
    private:
     void step_nbody_split();
@@ -67,6 +95,9 @@ class SimulationEngine {
     void ensure_velocity_convention(bool want_half_step);
     void check_physics(const Snapshot& snapshot, const std::filesystem::path& path,
                        bool force) const;
+    // A negative resume_step starts the file afresh; otherwise the file is
+    // continued from that step.
+    void open_diagnostics(long long resume_step);
 
     Config config_;
     std::unique_ptr<ParticleSystem> particles_;
@@ -74,7 +105,11 @@ class SimulationEngine {
     std::unique_ptr<DiagnosticsReducer> reducer_;
     std::unique_ptr<DiagnosticsWriter> writer_;
     long long current_step_ = 0;
+    long long time_origin_step_ = 0;  // s0 in simulated_time()
+    double time_origin_ = 0.0;        // t0 in simulated_time()
     double solver_ms_ = 0.0;
+    double wall_ms_ = 0.0;
+    long long steps_run_ = 0;
 
     // True when the velocity array holds the leapfrog half step velocity
     // rather than the velocity synchronised with the positions.
