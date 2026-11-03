@@ -20,6 +20,7 @@ SphSolver::SphSolver(const Config& config, int count)
         throw std::runtime_error("the derived smoothing radius is not positive");
     }
     check_sph_domain_cell_range(config.sph.domain_min, config.sph.domain_max, cell_size_);
+    check_sph_time_step(config, derived_.smoothing_radius);
 
     // Twice the particle count keeps the average occupancy near one half, which
     // is where the collision rate stops mattering. A prime modulus is what

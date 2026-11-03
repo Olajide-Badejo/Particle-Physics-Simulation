@@ -256,6 +256,7 @@ if(CPS_BUILD_TESTS)
   # Both validation entries merge rows into the same gate file, so they never
   # run at the same time.
   add_executable(validation_tests_host
+    tests/validation/host/test_convergence_host.cpp
     tests/validation/host/test_force_antisymmetry_host.cpp
     tests/validation/host/test_plummer_density_host.cpp
     tests/validation/host/test_sph_validation_host.cpp)

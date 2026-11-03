@@ -37,6 +37,19 @@ CPS_HD CPS_INLINE float poly6_kernel(float r_sq, float h) {
     return coeff * d * d * d;
 }
 
+// The same poly6 in double precision and in terms of r, for host side work that
+// must not inherit single precision rounding, such as the mass calibration. The
+// device only ever evaluates the single precision version above.
+inline double poly6_kernel_fp64(double r, double h) {
+    if (r >= h) {
+        return 0.0;
+    }
+    const double h_sq = h * h;
+    const double h9 = h_sq * h_sq * h_sq * h_sq * h;
+    const double d = h_sq - r * r;
+    return 315.0 / (64.0 * PI_D * h9) * d * d * d;
+}
+
 // Magnitude of grad W_spiky, which is 45 / (pi h^6) * (h - r)^2.
 // The gradient itself points along the unit separation vector; the caller
 // multiplies by that direction and by the sign convention of the pressure

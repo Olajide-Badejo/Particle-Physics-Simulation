@@ -177,13 +177,20 @@ TEST(SolverSmoke, InteriorDensityRecoversTheRestDensity) {
     CUDA_CHECK(cudaMemcpy(density.data(), solver.density(), density.size() * sizeof(float),
                           cudaMemcpyDeviceToHost));
 
+    // The density is in cell sorted order and the positions are in particle
+    // order, so sorted_index is what pairs the two.
+    std::vector<uint32_t> sorted_index(static_cast<std::size_t>(config.num_particles));
+    CUDA_CHECK(cudaMemcpy(sorted_index.data(), solver.sorted_index(),
+                          sorted_index.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+
     cps::HostParticleState state;
     engine.particles().download(state);
 
     const float h = solver.derived().smoothing_radius;
     double sum = 0.0;
     int interior = 0;
-    for (std::size_t i = 0; i < density.size(); ++i) {
+    for (std::size_t k = 0; k < density.size(); ++k) {
+        const std::size_t i = sorted_index[k];
         const bool inside = state.x[i] > config.sph.fluid_min.x + 2.0f * h &&
                             state.x[i] < config.sph.fluid_max.x - 2.0f * h &&
                             state.y[i] > config.sph.fluid_min.y + 2.0f * h &&
@@ -191,11 +198,11 @@ TEST(SolverSmoke, InteriorDensityRecoversTheRestDensity) {
                             state.z[i] > config.sph.fluid_min.z + 2.0f * h &&
                             state.z[i] < config.sph.fluid_max.z - 2.0f * h;
         if (inside) {
-            sum += density[i];
+            sum += density[k];
             ++interior;
         }
-        ASSERT_TRUE(std::isfinite(density[i])) << "index " << i;
-        ASSERT_GT(density[i], 0.0f) << "index " << i;
+        ASSERT_TRUE(std::isfinite(density[k])) << "sorted index " << k;
+        ASSERT_GT(density[k], 0.0f) << "sorted index " << k;
     }
     ASSERT_GT(interior, 100) << "not enough interior particles to judge the density";
 

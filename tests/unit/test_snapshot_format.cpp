@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "core/config.hpp"
+#include "core/initial_conditions.hpp"
 #include "core/physics_fingerprint.hpp"
 #include "core/snapshot.hpp"
 
@@ -748,6 +749,21 @@ TEST_P(FingerprintField, MovesExactlyWhenThePhysicsMoves) {
     }
 }
 
+// The fingerprint records the mass the solver uses, which for a derived fluid is
+// the calibrated one.
+TEST(PhysicsFields, ListTheCalibratedMass) {
+    const cps::Config config = sph_derived_reference();
+    const float calibrated = cps::derive_sph_parameters(config).particle_mass;
+    bool found = false;
+    for (const cps::PhysicsField& field : cps::physics_fields(config)) {
+        if (field.name == "sph.particle_mass") {
+            found = true;
+            EXPECT_EQ(field.bits, std::bit_cast<uint32_t>(calibrated));
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Fields, FingerprintField,
     ::testing::Values(
@@ -820,6 +836,8 @@ INSTANTIATE_TEST_SUITE_P(
         FingerprintCase{"name", Base::NBody, [](cps::Config& c) { c.name = "renamed"; }, false},
         FingerprintCase{"block_size", Base::NBody, [](cps::Config& c) { c.block_size = 64; },
                         false},
+        FingerprintCase{"allow_unstable_dt", Base::Sph,
+                        [](cps::Config& c) { c.allow_unstable_dt = true; }, false},
         FingerprintCase{"sph_block_size", Base::Sph, [](cps::Config& c) { c.block_size = 64; },
                         false},
         // Excluded: initial state only.

@@ -20,6 +20,9 @@ struct CliOptions {
     bool force_resume = false;
     bool device_info = false;
     bool print_config = false;
+    // Downgrades the fluid solver's refusal of an unstable time step to a
+    // warning. Only ever sets the configuration field, never clears it.
+    bool allow_unstable_dt = false;
     std::string config_path;
 
     std::optional<SolverType> solver;

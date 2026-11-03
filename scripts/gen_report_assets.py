@@ -297,7 +297,13 @@ class Assets:
                 "Plummer radial density, chi squared p value",
             "sph_poly6_kernel_normalisation_error": "SPH poly6 kernel normalisation error",
             "sph_spiky_kernel_normalisation_error": "SPH spiky kernel normalisation error",
-            "sph_interior_density_relative_error": "SPH interior density, relative error",
+            "sph_interior_density_mean_error": "SPH interior density, mean error",
+            "sph_interior_density_rms_deviation": "SPH interior density, RMS deviation",
+            "sph_interior_density_max_deviation": "SPH interior density, maximum deviation",
+            "verlet_energy_slope_error_eccentric":
+                "Velocity Verlet energy order, eccentric orbit, distance of slope from 2",
+            "verlet_energy_slope_error_circular":
+                "Velocity Verlet energy order, circular orbit, distance of slope from 4",
             "sph_neighbour_search_vs_brute_force":
                 "SPH neighbour search against a brute force sum",
         }
@@ -333,8 +339,12 @@ class Assets:
                 self.macro("PlummerPValue", f"{float(row['measured']):.4f}")
             if row["gate"] == "sph_poly6_kernel_normalisation_error":
                 self.macro("PolySixNormalisationError", sci(float(row["measured"])))
-            if row["gate"] == "sph_interior_density_relative_error":
+            if row["gate"] == "sph_interior_density_mean_error":
                 self.macro("SphDensityErrorPercent", f"{100.0 * float(row['measured']):.2f}")
+            if row["gate"] == "sph_interior_density_rms_deviation":
+                self.macro("SphDensityRmsPercent", f"{100.0 * float(row['measured']):.2f}")
+            if row["gate"] == "sph_interior_density_max_deviation":
+                self.macro("SphDensityMaxPercent", f"{100.0 * float(row['measured']):.2f}")
 
     # -- hardware counters ------------------------------------------------
     def profile(self) -> None:

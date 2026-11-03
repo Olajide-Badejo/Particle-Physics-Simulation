@@ -43,13 +43,18 @@ TEST(SphValidation, InteriorDensityRecoversTheRestDensity) {
     CUDA_CHECK(cudaMemcpy(density.data(), solver.density(), density.size() * sizeof(float),
                           cudaMemcpyDeviceToHost));
 
+    std::vector<uint32_t> sorted_index(static_cast<std::size_t>(count));
+    CUDA_CHECK(cudaMemcpy(sorted_index.data(), solver.sorted_index(),
+                          sorted_index.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+
     cps::HostParticleState state;
     engine.particles().download(state);
 
     const float h = solver.derived().smoothing_radius;
     std::vector<double> interior;
-    for (std::size_t i = 0; i < density.size(); ++i) {
-        ASSERT_TRUE(std::isfinite(density[i])) << "index " << i;
+    for (std::size_t k = 0; k < density.size(); ++k) {
+        ASSERT_TRUE(std::isfinite(density[k])) << "sorted index " << k;
+        const std::size_t i = sorted_index[k];
         const bool inside = state.x[i] > config.sph.fluid_min.x + 2.0f * h &&
                             state.x[i] < config.sph.fluid_max.x - 2.0f * h &&
                             state.y[i] > config.sph.fluid_min.y + 2.0f * h &&
@@ -57,14 +62,17 @@ TEST(SphValidation, InteriorDensityRecoversTheRestDensity) {
                             state.z[i] > config.sph.fluid_min.z + 2.0f * h &&
                             state.z[i] < config.sph.fluid_max.z - 2.0f * h;
         if (inside) {
-            interior.push_back(density[i]);
+            interior.push_back(density[k]);
         }
     }
     ASSERT_GT(interior.size(), 500u);
 
+    const double rest = config.sph.rest_density;
     double sum = 0.0;
+    double worst = 0.0;
     for (double d : interior) {
         sum += d;
+        worst = std::max(worst, std::abs(d - rest));
     }
     const double mean = sum / static_cast<double>(interior.size());
     double variance = 0.0;
@@ -73,13 +81,27 @@ TEST(SphValidation, InteriorDensityRecoversTheRestDensity) {
     }
     const double deviation = std::sqrt(variance / static_cast<double>(interior.size()));
 
+    // The limits and kinds are stated in docs/physics_validation.md. The mean
+    // error is what the calibration sets, so it shows the device agrees with the
+    // host calibration. The RMS is taken about the mean, so it measures the
+    // jitter and not the calibration. The maximum is taken about the rest
+    // density, because that is what the equation of state turns into pressure.
+    const double mean_error = std::abs(mean - rest) / rest;
+    const double rms_deviation = deviation / rest;
+    const double max_deviation = worst / rest;
     std::printf("interior density: mean %.2f, standard deviation %.2f, over %zu particles\n", mean,
                 deviation, interior.size());
-    const double density_error = std::abs(mean - config.sph.rest_density) / config.sph.rest_density;
-    cps_test::record_gate("sph_interior_density_relative_error", density_error, 0.05, "less_than",
-                          density_error < 0.05);
-    EXPECT_NEAR(mean, config.sph.rest_density, config.sph.rest_density * 0.05);
-    EXPECT_LT(deviation, config.sph.rest_density * 0.10);
+    std::printf("interior density errors: mean %.4f percent, RMS %.4f percent, max %.4f percent\n",
+                100.0 * mean_error, 100.0 * rms_deviation, 100.0 * max_deviation);
+    cps_test::record_gate("sph_interior_density_mean_error", mean_error, 0.01, "less_than",
+                          mean_error < 0.01);
+    cps_test::record_gate("sph_interior_density_rms_deviation", rms_deviation, 0.05, "less_than",
+                          rms_deviation < 0.05);
+    cps_test::record_gate("sph_interior_density_max_deviation", max_deviation, 0.10, "less_than",
+                          max_deviation < 0.10);
+    EXPECT_LT(mean_error, 0.01);
+    EXPECT_LT(rms_deviation, 0.05);
+    EXPECT_LT(max_deviation, 0.10);
 }
 
 // A hash based neighbour search that silently drops or double counts

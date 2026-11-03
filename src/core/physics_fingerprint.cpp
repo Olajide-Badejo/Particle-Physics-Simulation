@@ -87,13 +87,14 @@ void hash_u64(uint64_t& hash, uint64_t value) { hash = fnv1a_64(&value, sizeof(v
 // the time step, the force law constants and external gravity and, for the
 // fluid solver, its physical parameters and walls. The smoothing radius and
 // particle mass are listed as the solver resolves them, so a derived value
-// that moves with the particle count is caught.
+// that moves with the particle count or the mass calibration is caught.
 //
 // Excluded on purpose: run control (steps, snapshot_*, diagnostics_*, name,
-// block_size, which only changes the launch shape), and fields that only shape
-// the initial state (seed, initial_condition, sph.jitter, sph.fluid_min and
-// sph.fluid_max, plummer_radius, total_mass, two_body_separation). A resumed
-// run never regenerates its initial state, so those cannot affect it.
+// allow_unstable_dt, block_size, which only changes the launch shape), and
+// fields that only shape the initial state (seed, initial_condition, sph.jitter,
+// sph.fluid_min and sph.fluid_max, plummer_radius, total_mass,
+// two_body_separation). A resumed run never regenerates its initial state, so
+// those cannot affect it.
 //
 // The general group is listed for every solver, even where one solver ignores
 // a field (the fluid solver never reads softening or variant), because a

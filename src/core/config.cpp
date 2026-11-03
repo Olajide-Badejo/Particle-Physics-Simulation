@@ -55,6 +55,16 @@ public:
         }
     }
 
+    void read(const char* key, bool& target) {
+        if (const json* value = find(key)) {
+            if (!value->is_boolean()) {
+                throw std::runtime_error("configuration field '" + path(key) +
+                                         "' must be true or false, got " + value->dump());
+            }
+            target = value->get<bool>();
+        }
+    }
+
     void read(const char* key, float& target) {
         if (const json* value = find(key)) {
             target = number(*value, path(key));
@@ -343,6 +353,7 @@ Config Config::from_json_string(std::string_view text) {
     top.read("num_particles", config.num_particles);
     top.read("steps", config.steps);
     top.read("dt", config.dt);
+    top.read("allow_unstable_dt", config.allow_unstable_dt);
     top.read("softening", config.softening);
     top.read("gravitational_constant", config.gravitational_constant);
     top.read("seed", config.seed);
@@ -483,6 +494,7 @@ std::string Config::to_json_string(int indent) const {
     root["num_particles"] = num_particles;
     root["steps"] = steps;
     root["dt"] = dt;
+    root["allow_unstable_dt"] = allow_unstable_dt;
     root["softening"] = softening;
     root["gravitational_constant"] = gravitational_constant;
     root["seed"] = seed;

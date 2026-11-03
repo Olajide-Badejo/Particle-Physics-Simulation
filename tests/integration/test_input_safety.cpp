@@ -329,6 +329,29 @@ TEST(InputSafetySph, TheSolverRefusesADomainTooLargeForItsCellSize) {
     EXPECT_TRUE(has_text(message, "raise the smoothing radius")) << message;
 }
 
+// The check itself is tested on the host. These show the solver applies it.
+TEST(InputSafetySph, TheSolverRefusesATooLargeTimeStep) {
+    SKIP_WITHOUT_GPU();
+    cps::Config config = sph_config(50000, 0);
+    config.sph.gas_constant = 1.0e4f;
+    const std::string message = error_from([&] { cps::SimulationEngine engine(config); });
+    EXPECT_TRUE(has_text(message, "acoustic limit")) << message;
+    EXPECT_TRUE(has_text(message, "--allow-unstable-dt")) << message;
+}
+
+TEST(InputSafetySph, TheFlagLetsTheSolverRunATooLargeTimeStep) {
+    SKIP_WITHOUT_GPU();
+    cps::Config config = sph_config(50000, 3);
+    config.sph.gas_constant = 1.0e4f;
+    config.allow_unstable_dt = true;
+    ::testing::internal::CaptureStderr();
+    cps::SimulationEngine engine(config);
+    const std::string warning = ::testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(has_text(warning, "acoustic limit")) << warning;
+    engine.initialize();
+    EXPECT_NO_THROW(engine.step());
+}
+
 // With both cadences off the only checks left are the ones at the end of run().
 TEST(InputSafetySph, RunChecksTheFlagAtTheEndWhenNothingElseDoes) {
     SKIP_WITHOUT_GPU();

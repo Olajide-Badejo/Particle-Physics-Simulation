@@ -390,6 +390,14 @@ TEST(Config, UnrelatedUnknownKeyGetsNoSuggestion) {
     EXPECT_EQ(message.find("did you mean"), std::string::npos) << message;
 }
 
+TEST(Config, AllowUnstableDtMustBeABoolean) {
+    EXPECT_FALSE(cps::Config::from_json_string("{}").allow_unstable_dt);
+    EXPECT_TRUE(cps::Config::from_json_string(R"({"allow_unstable_dt": true})").allow_unstable_dt);
+    EXPECT_THROW(cps::Config::from_json_string(R"({"allow_unstable_dt": 1})"), std::runtime_error);
+    EXPECT_THROW(cps::Config::from_json_string(R"({"allow_unstable_dt": "yes"})"),
+                 std::runtime_error);
+}
+
 // Round tripping matters because the benchmark driver records the resolved
 // configuration next to every result row.
 TEST(Config, SurvivesARoundTripThroughJson) {
@@ -415,6 +423,7 @@ void expect_same_vec3(const cps::Vec3& a, const cps::Vec3& b, const char* field)
 // Exact equality on every field. The serialised form is the canonical
 // fingerprint of a run, so nothing may be lost or rounded on the way through.
 void expect_same_config(const cps::Config& a, const cps::Config& b) {
+    EXPECT_EQ(a.allow_unstable_dt, b.allow_unstable_dt);
     EXPECT_EQ(a.name, b.name);
     EXPECT_EQ(a.solver, b.solver);
     EXPECT_EQ(a.variant, b.variant);
@@ -453,7 +462,8 @@ TEST(Config, RoundTripsEveryFieldExactly) {
     const cps::Config original = cps::Config::from_json_string(R"({
         "name": "every_field", "solver": "sph", "variant": "fused",
         "initial_condition": "dam_break", "num_particles": 12345, "steps": 9876543210,
-        "dt": 0.0001234, "softening": 0.1, "gravitational_constant": 6.674e-3,
+        "dt": 0.0001234, "allow_unstable_dt": true, "softening": 0.1,
+        "gravitational_constant": 6.674e-3,
         "seed": 4294967295, "block_size": 512, "total_mass": 3.3,
         "plummer_radius": 0.7, "two_body_separation": 2.2,
         "external_gravity": [0.1, -9.80665, 0.3], "snapshot_interval": 77,

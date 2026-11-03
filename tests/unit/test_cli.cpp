@@ -71,6 +71,17 @@ TEST(Cli, ParsesEveryFlag) {
     EXPECT_TRUE(options.print_config);
 }
 
+TEST(Cli, AllowUnstableDtSetsTheConfigFieldAndAbsenceLeavesItAlone) {
+    EXPECT_FALSE(parse({"--config", "c.json"}).allow_unstable_dt);
+    cps::Config config;
+    cps::apply_cli_overrides(parse({"--allow-unstable-dt"}), config);
+    EXPECT_TRUE(config.allow_unstable_dt);
+
+    // The file can ask for it too, and leaving the flag off does not clear it.
+    cps::apply_cli_overrides(parse({"--config", "c.json"}), config);
+    EXPECT_TRUE(config.allow_unstable_dt);
+}
+
 // Forcing a resume past a physics mismatch only makes sense when resuming, so
 // the flag implies --resume rather than needing both.
 TEST(Cli, ForceResumeParsesAndImpliesResume) {

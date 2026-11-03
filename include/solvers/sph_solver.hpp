@@ -35,7 +35,8 @@ namespace cps {
 // effect that outlives the step that paid for it.
 //
 // The constructor refuses a domain too large for the cell size, which is what
-// keeps every finite position's cell key free of aliasing.
+// keeps every finite position's cell key free of aliasing, and a time step above
+// the stability limits, unless the configuration allows that.
 class SphSolver {
    public:
     SphSolver(const Config& config, int count);
@@ -46,8 +47,13 @@ class SphSolver {
     // structure and the density field without advancing time.
     void build_neighbours_and_density(ParticleSystem& particles);
 
+    // Device arrays in cell sorted order, not particle order: density()[k] and
+    // pressure()[k] belong to the particle at index sorted_index()[k] of the
+    // particle arrays the last pass read. Reading them against those arrays by
+    // the same k pairs each value with a different particle.
     const float* density() const { return density_.get(); }
     const float* pressure() const { return pressure_.get(); }
+    const uint32_t* sorted_index() const { return index_sorted_.get(); }
     uint32_t table_size() const { return table_size_; }
     const SphDerivedParameters& derived() const { return derived_; }
 

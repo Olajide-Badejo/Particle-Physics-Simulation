@@ -28,8 +28,9 @@ struct Vec3 {
 };
 
 struct SphConfig {
-    // A smoothing radius or particle mass of zero means derive it from the
-    // fluid volume and the particle count. Fixing either by hand while the
+    // A smoothing radius or particle mass of zero means derive it: the radius
+    // from the fluid volume and the particle count, the mass from a kernel sum
+    // over the lattice actually laid out. Fixing either by hand while the
     // particle count moves is the fastest way to end up with a resolution the
     // kernel cannot support, so the derived value is the default.
     float smoothing_radius = 0.0f;
@@ -55,6 +56,9 @@ struct Config {
     int num_particles = 10000;
     long long steps = 1000;
     float dt = 1.0e-3f;
+    // Run control, not physics: turns the fluid solver's refusal of a time step
+    // above its stability limits into a warning.
+    bool allow_unstable_dt = false;
     float softening = 0.01f;
     float gravitational_constant = 1.0f;
     uint32_t seed = 20260802u;

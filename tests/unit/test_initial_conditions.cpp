@@ -10,6 +10,7 @@
 
 #include "core/initial_conditions.hpp"
 #include "physics/spatial_hash.hpp"
+#include "physics/sph_kernels.hpp"
 
 namespace {
 
@@ -180,12 +181,83 @@ TEST(SphDerivedParameters, PutARoughlyStandardNumberOfNeighboursInsideTheSupport
     EXPECT_LT(derived.expected_neighbour_count, 60.0);
 }
 
-TEST(SphDerivedParameters, SetTheParticleMassSoTheBlockSitsAtRestDensity) {
+TEST(SphDerivedParameters, ExposeThePitchTheLatticeActuallyHas) {
+    const cps::Config config = dam_break_config(50000);
+    const cps::SphLattice lattice = cps::sph_lattice(config);
+    const cps::SphDerivedParameters derived = cps::derive_sph_parameters(config);
+    EXPECT_NEAR(lattice.pitch, 9.667551e-03, 1.0e-9);
+    EXPECT_EQ(derived.lattice_pitch, lattice.pitch);
+    EXPECT_EQ(lattice.nx, 31);
+    EXPECT_EQ(lattice.ny, 41);
+    EXPECT_EQ(lattice.nz, 41);
+
+    // The smoothing radius still derives from the ideal spacing, which one pass
+    // of the search shrank away from.
+    EXPECT_FLOAT_EQ(derived.smoothing_radius, 2.0f * derived.particle_spacing);
+    EXPECT_LT(derived.lattice_pitch, static_cast<double>(derived.particle_spacing));
+}
+
+TEST(SphDerivedParameters, CalibrateTheMassAgainstTheLatticeKernelSum) {
     const cps::Config config = dam_break_config(50000);
     const cps::SphDerivedParameters derived = cps::derive_sph_parameters(config);
-    const double volume = 0.3 * 0.4 * 0.4;
-    const double expected = config.sph.rest_density * volume / config.num_particles;
-    EXPECT_NEAR(derived.particle_mass, expected, expected * 1.0e-4);
+    const double h = derived.smoothing_radius;
+    const double pitch = derived.lattice_pitch;
+    const double sum = cps::lattice_kernel_sum(
+        pitch, h, [h](double r) { return cps::poly6_kernel_fp64(r, h); });
+
+    // The value this configuration predicts, by a separate calculation.
+    EXPECT_NEAR(sum * pitch * pitch * pitch, 1.01257, 5.0e-6);
+
+    // Times the sum, the mass recovers the rest density on the ideal lattice.
+    const double recovered = static_cast<double>(derived.particle_mass) * sum;
+    EXPECT_NEAR(recovered, config.sph.rest_density, config.sph.rest_density * 1.0e-6);
+}
+
+// A kernel with a known sum, to show the sum really is over the lattice and is
+// not tied to poly6. Sites strictly closer than two pitches are the 27 with
+// squared distances 0, 1, 2 and 3: 1 + 6 + 12 + 8. The sites at exactly two
+// pitches are out.
+TEST(SphCalibration, WorksWithAnyKernel) {
+    const double pitch = 0.5;
+    const double support = 2.0 * pitch;
+    const auto top_hat = [support](double r) { return r < support ? 1.0 : 0.0; };
+    EXPECT_EQ(cps::lattice_kernel_sum(pitch, support, top_hat), 27.0);
+    EXPECT_DOUBLE_EQ(cps::calibrated_particle_mass(1000.0, pitch, support, top_hat), 1000.0 / 27.0);
+}
+
+// A wider kernel than its radius parameter, as a kernel with support 2h has: the
+// support is what bounds the sum.
+TEST(SphCalibration, TheSumReachesTheWholeSupport) {
+    const double pitch = 1.0;
+    const auto top_hat = [](double r) { return r < 3.5 ? 1.0 : 0.0; };
+    int expected = 0;
+    for (int ix = -4; ix <= 4; ++ix) {
+        for (int iy = -4; iy <= 4; ++iy) {
+            for (int iz = -4; iz <= 4; ++iz) {
+                expected += ix * ix + iy * iy + iz * iz < 3.5 * 3.5 ? 1 : 0;
+            }
+        }
+    }
+    EXPECT_EQ(cps::lattice_kernel_sum(pitch, 3.5, top_hat), static_cast<double>(expected));
+}
+
+TEST(SphCalibration, TheDoublePrecisionPolySixMatchesTheOneTheDeviceRuns) {
+    const float h = 0.02f;
+    for (int i = 0; i <= 25; ++i) {
+        const double r = 0.001 * i;
+        const double single = cps::poly6_kernel(static_cast<float>(r * r), h);
+        const double fp64 = cps::poly6_kernel_fp64(r, static_cast<double>(h));
+        EXPECT_NEAR(single, fp64, 1.0e-5 * std::max(1.0, fp64)) << "r = " << r;
+    }
+}
+
+TEST(SphCalibration, RefusesASupportTooWideToSum) {
+    cps::Config config = dam_break_config(50000);
+    config.sph.smoothing_radius = 1.0e3f;
+    EXPECT_THROW(cps::derive_sph_parameters(config), std::runtime_error);
+    // An explicit mass needs no sum, so the same radius is not refused here.
+    config.sph.particle_mass = 0.001f;
+    EXPECT_NO_THROW(cps::derive_sph_parameters(config));
 }
 
 TEST(SphDerivedParameters, RespectExplicitOverrides) {
@@ -244,6 +316,19 @@ TEST(DamBreak, JittersTheLatticeOffItsExactSites) {
     EXPECT_GT(off_lattice, static_cast<int>(state.size()) / 2);
 }
 
+// The lattice laid out and the lattice the mass was calibrated for must be the
+// same one. A row of neighbouring sites steps by the exposed pitch.
+TEST(DamBreak, LaysOutTheLatticeTheMassWasCalibratedFor) {
+    const cps::Config config = dam_break_config(50000);
+    const cps::HostParticleState state = cps::make_dam_break(config);
+    const cps::SphLattice lattice = cps::sph_lattice(config);
+    const double pitch = cps::derive_sph_parameters(config).lattice_pitch;
+    const std::size_t last = static_cast<std::size_t>(lattice.nx) - 1;
+    const double span = static_cast<double>(state.x[last]) - static_cast<double>(state.x[0]);
+    const double jitter = 2.0 * static_cast<double>(config.sph.jitter) * pitch;
+    EXPECT_NEAR(span, static_cast<double>(last) * pitch, jitter + 1.0e-6);
+}
+
 TEST(DamBreak, IsReproducibleFromTheSeed) {
     const cps::HostParticleState first = cps::make_dam_break(dam_break_config(3000));
     const cps::HostParticleState second = cps::make_dam_break(dam_break_config(3000));
@@ -258,6 +343,109 @@ TEST(InitialConditions, DispatchOnTheConfiguredCase) {
     EXPECT_EQ(cps::make_initial_state(two_body_config()).size(), 2u);
     EXPECT_EQ(cps::make_initial_state(plummer_config(128)).size(), 128u);
     EXPECT_EQ(cps::make_initial_state(dam_break_config(512)).size(), 512u);
+}
+
+// The message of the error the time step check has to raise.
+std::string time_step_error(const cps::Config& config) {
+    const float h = cps::derive_sph_parameters(config).smoothing_radius;
+    try {
+        cps::check_sph_time_step(config, h);
+    } catch (const std::runtime_error& error) {
+        return error.what();
+    }
+    ADD_FAILURE() << "expected the time step check to throw";
+    return "";
+}
+
+cps::Config shipped_dam_break() {
+    return cps::Config::from_json_file(std::filesystem::path(CPS_PROJECT_ROOT) / "configs" /
+                                       "dam_break_50k.json");
+}
+
+TEST(SphTimeStep, TheLimitsFollowTheirFormulas) {
+    const cps::Config config = shipped_dam_break();
+    const float h = cps::derive_sph_parameters(config).smoothing_radius;
+    const double wide_h = h;
+    const double viscosity = config.sph.viscosity;
+    const double gravity = std::abs(static_cast<double>(config.external_gravity.y));
+    const cps::SphTimeStepLimits limits = cps::sph_time_step_limits(config, h);
+    EXPECT_DOUBLE_EQ(limits.acoustic, 0.25 * wide_h / std::sqrt(1000.0));
+    EXPECT_DOUBLE_EQ(limits.viscous, 0.125 * wide_h * wide_h * 1000.0 / viscosity);
+    EXPECT_DOUBLE_EQ(limits.body_force, 0.25 * std::sqrt(wide_h / gravity));
+    EXPECT_STREQ(limits.smallest_name(), "acoustic");
+    EXPECT_DOUBLE_EQ(limits.smallest(), limits.acoustic);
+}
+
+TEST(SphTimeStep, TheShippedConfigurationPasses) {
+    const cps::Config config = shipped_dam_break();
+    EXPECT_NO_THROW(cps::check_sph_time_step(
+        config, cps::derive_sph_parameters(config).smoothing_radius));
+}
+
+// With k = 1e4 the sound speed is 100, so the limit is 0.25 h / 100, about
+// 4.93e-5, which a step of 1e-4 exceeds.
+TEST(SphTimeStep, AStiffGasConstantIsRefusedAndNamed) {
+    cps::Config config = shipped_dam_break();
+    config.sph.gas_constant = 1.0e4f;
+    const std::string message = time_step_error(config);
+    EXPECT_NE(message.find("acoustic limit 4.93"), std::string::npos) << message;
+    EXPECT_NE(message.find("dt = 0.0001"), std::string::npos) << message;
+    EXPECT_NE(message.find("--allow-unstable-dt"), std::string::npos) << message;
+}
+
+TEST(SphTimeStep, TheFlagDowngradesTheRefusalToAWarning) {
+    cps::Config config = shipped_dam_break();
+    config.sph.gas_constant = 1.0e4f;
+    config.allow_unstable_dt = true;
+    const float h = cps::derive_sph_parameters(config).smoothing_radius;
+    ::testing::internal::CaptureStderr();
+    EXPECT_NO_THROW(cps::check_sph_time_step(config, h));
+    const std::string warning = ::testing::internal::GetCapturedStderr();
+    EXPECT_NE(warning.find("warning:"), std::string::npos) << warning;
+    EXPECT_NE(warning.find("acoustic limit"), std::string::npos) << warning;
+}
+
+TEST(SphTimeStep, WarnsOfNothingWhenTheStepIsStable) {
+    cps::Config config = shipped_dam_break();
+    config.allow_unstable_dt = true;
+    const float h = cps::derive_sph_parameters(config).smoothing_radius;
+    ::testing::internal::CaptureStderr();
+    cps::check_sph_time_step(config, h);
+    EXPECT_EQ(::testing::internal::GetCapturedStderr(), "");
+}
+
+TEST(SphTimeStep, TheViscousLimitIsNamedWhenItIsTheSmallest) {
+    cps::Config config = shipped_dam_break();
+    config.sph.viscosity = 1.0e4f;
+    EXPECT_NE(time_step_error(config).find("viscous limit"), std::string::npos);
+}
+
+TEST(SphTimeStep, TheBodyForceLimitIsNamedWhenItIsTheSmallest) {
+    cps::Config config = shipped_dam_break();
+    config.external_gravity = {0.0f, -1.0e9f, 0.0f};
+    EXPECT_NE(time_step_error(config).find("body force limit"), std::string::npos);
+}
+
+TEST(SphTimeStep, ZeroViscosityAndGravitySkipTheirLimits) {
+    cps::Config config = shipped_dam_break();
+    config.sph.viscosity = 0.0f;
+    config.external_gravity = {0.0f, 0.0f, 0.0f};
+    const cps::SphTimeStepLimits limits = cps::sph_time_step_limits(config, 0.02f);
+    EXPECT_TRUE(std::isinf(limits.viscous));
+    EXPECT_TRUE(std::isinf(limits.body_force));
+    EXPECT_DOUBLE_EQ(limits.smallest(), limits.acoustic);
+    EXPECT_STREQ(limits.smallest_name(), "acoustic");
+}
+
+// Walls clamp positions, so all of these used to run to the end, finite and
+// meaningless, with no error at all.
+TEST(SphTimeStep, EveryStepTheWallsWouldHaveHiddenIsRefused) {
+    for (const float dt : {0.002f, 0.01f, 0.1f, 1.0f, 100.0f, 1.0e4f}) {
+        SCOPED_TRACE(dt);
+        cps::Config config = shipped_dam_break();
+        config.dt = dt;
+        EXPECT_NE(time_step_error(config).find("acoustic limit"), std::string::npos);
+    }
 }
 
 // The message of the error the check has to raise.

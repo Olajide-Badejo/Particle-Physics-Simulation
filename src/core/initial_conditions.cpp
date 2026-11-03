@@ -1,14 +1,17 @@
 #include "core/initial_conditions.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
 
 #include "physics/hd_macros.hpp"
 #include "physics/spatial_hash.hpp"
+#include "physics/sph_kernels.hpp"
 
 namespace cps {
 namespace {
@@ -173,36 +176,153 @@ HostParticleState make_plummer_sphere(const Config& config) {
     return state;
 }
 
-SphDerivedParameters derive_sph_parameters(const Config& config) {
-    const SphConfig& sph = config.sph;
-    const double lx = static_cast<double>(sph.fluid_max.x) - static_cast<double>(sph.fluid_min.x);
-    const double ly = static_cast<double>(sph.fluid_max.y) - static_cast<double>(sph.fluid_min.y);
-    const double lz = static_cast<double>(sph.fluid_max.z) - static_cast<double>(sph.fluid_min.z);
-    const double volume = lx * ly * lz;
-    if (!(volume > 0.0)) {
+namespace {
+
+// Past this many lattice pitches inside the support, each particle would have
+// tens of millions of neighbours, and the cubic lattice sum would stall start up.
+constexpr double MAX_SUPPORT_IN_PITCHES = 256.0;
+
+struct FluidBlock {
+    double lx = 0.0;
+    double ly = 0.0;
+    double lz = 0.0;
+    double volume = 0.0;
+};
+
+FluidBlock fluid_block(const SphConfig& sph) {
+    FluidBlock block;
+    block.lx = static_cast<double>(sph.fluid_max.x) - static_cast<double>(sph.fluid_min.x);
+    block.ly = static_cast<double>(sph.fluid_max.y) - static_cast<double>(sph.fluid_min.y);
+    block.lz = static_cast<double>(sph.fluid_max.z) - static_cast<double>(sph.fluid_min.z);
+    block.volume = block.lx * block.ly * block.lz;
+    if (!(block.volume > 0.0)) {
         throw std::runtime_error("the initial fluid block has no volume");
     }
+    return block;
+}
+
+float ideal_spacing(const FluidBlock& block, int count) {
+    return static_cast<float>(std::cbrt(block.volume / static_cast<double>(count)));
+}
+
+}  // namespace
+
+SphLattice sph_lattice(const Config& config) {
+    const FluidBlock block = fluid_block(config.sph);
+    const int n = config.num_particles;
+
+    // Shrink the lattice pitch until the block holds at least the requested
+    // number of sites. One pass of the ideal spacing usually falls a little
+    // short because each axis rounds down.
+    SphLattice lattice;
+    lattice.pitch = ideal_spacing(block, n);
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        lattice.nx = static_cast<long long>(std::floor(block.lx / lattice.pitch));
+        lattice.ny = static_cast<long long>(std::floor(block.ly / lattice.pitch));
+        lattice.nz = static_cast<long long>(std::floor(block.lz / lattice.pitch));
+        lattice.nx = lattice.nx < 1 ? 1 : lattice.nx;
+        lattice.ny = lattice.ny < 1 ? 1 : lattice.ny;
+        lattice.nz = lattice.nz < 1 ? 1 : lattice.nz;
+        if (lattice.nx * lattice.ny * lattice.nz >= n) {
+            return lattice;
+        }
+        lattice.pitch *= 0.98;
+    }
+    throw std::runtime_error("cannot fit the requested particle count into the fluid block");
+}
+
+SphDerivedParameters derive_sph_parameters(const Config& config) {
+    const SphConfig& sph = config.sph;
+    const FluidBlock block = fluid_block(sph);
 
     SphDerivedParameters derived;
     const double n = static_cast<double>(config.num_particles);
-    derived.particle_spacing = static_cast<float>(std::cbrt(volume / n));
+    derived.particle_spacing = ideal_spacing(block, config.num_particles);
+    derived.lattice_pitch = sph_lattice(config).pitch;
 
-    // Mass follows from asking the block to sit at rest density when it is
-    // filled. Choosing mass and density independently guarantees the fluid
-    // either explodes or collapses on the first step.
-    derived.particle_mass = sph.particle_mass > 0.0f
-                                ? sph.particle_mass
-                                : static_cast<float>(sph.rest_density * volume / n);
-
-    // Two lattice spacings puts roughly thirty three particles inside the
+    // Two ideal spacings puts roughly thirty three particles inside the
     // support, which is the usual working range: fewer and the density
     // estimate is noisy, more and the neighbour loop dominates the step.
     derived.smoothing_radius =
         sph.smoothing_radius > 0.0f ? sph.smoothing_radius : 2.0f * derived.particle_spacing;
-
     const double h = derived.smoothing_radius;
-    derived.expected_neighbour_count = (4.0 / 3.0) * PI_D * h * h * h * n / volume;
+
+    // Mass follows from asking the lattice actually laid out to sit at rest
+    // density. Dividing the block's mass by the count instead assumes a spacing
+    // the lattice does not have and ignores the kernel's own lattice sum error,
+    // and by the equation of state the excess density is pressure, which
+    // launches the fluid on the first step.
+    if (sph.particle_mass > 0.0f) {
+        derived.particle_mass = sph.particle_mass;
+    } else {
+        if (h / derived.lattice_pitch > MAX_SUPPORT_IN_PITCHES) {
+            throw std::runtime_error(
+                "the smoothing radius " + std::to_string(h) + " spans more than " +
+                std::to_string(static_cast<int>(MAX_SUPPORT_IN_PITCHES)) + " lattice pitches of " +
+                std::to_string(derived.lattice_pitch) + "; lower it, or set sph.particle_mass");
+        }
+        derived.particle_mass = static_cast<float>(calibrated_particle_mass(
+            sph.rest_density, derived.lattice_pitch, h,
+            [h](double r) { return poly6_kernel_fp64(r, h); }));
+    }
+
+    derived.expected_neighbour_count = (4.0 / 3.0) * PI_D * h * h * h * n / block.volume;
     return derived;
+}
+
+double SphTimeStepLimits::smallest() const {
+    return std::min(acoustic, std::min(viscous, body_force));
+}
+
+const char* SphTimeStepLimits::smallest_name() const {
+    const double limit = smallest();
+    if (limit == acoustic) {
+        return "acoustic";
+    }
+    return limit == viscous ? "viscous" : "body force";
+}
+
+SphTimeStepLimits sph_time_step_limits(const Config& config, float smoothing_radius) {
+    const SphConfig& sph = config.sph;
+    const double h = smoothing_radius;
+    const double unbounded = std::numeric_limits<double>::infinity();
+    const double gx = config.external_gravity.x;
+    const double gy = config.external_gravity.y;
+    const double gz = config.external_gravity.z;
+    const double gravity = std::sqrt(gx * gx + gy * gy + gz * gz);
+    const double viscosity = sph.viscosity;
+
+    SphTimeStepLimits limits;
+    // The linear equation of state p = k (rho - rho_0) has a sound speed of
+    // sqrt(k), whatever the rest density.
+    limits.acoustic = 0.25 * h / std::sqrt(static_cast<double>(sph.gas_constant));
+    limits.viscous = viscosity > 0.0
+                         ? 0.125 * h * h * static_cast<double>(sph.rest_density) / viscosity
+                         : unbounded;
+    limits.body_force = gravity > 0.0 ? 0.25 * std::sqrt(h / gravity) : unbounded;
+    return limits;
+}
+
+void check_sph_time_step(const Config& config, float smoothing_radius) {
+    const SphTimeStepLimits limits = sph_time_step_limits(config, smoothing_radius);
+    const double dt = config.dt;
+    if (!(dt > limits.smallest())) {
+        return;
+    }
+    char buffer[192];
+    std::snprintf(buffer, sizeof(buffer),
+                  "the time step dt = %g exceeds the %s limit %g (acoustic %g, viscous %g, body "
+                  "force %g)",
+                  dt, limits.smallest_name(), limits.smallest(), limits.acoustic, limits.viscous,
+                  limits.body_force);
+    if (!config.allow_unstable_dt) {
+        throw std::runtime_error(std::string(buffer) +
+                                 ". The walls would keep such a run finite and its results "
+                                 "meaningless; lower dt, or pass --allow-unstable-dt to run "
+                                 "anyway");
+    }
+    std::fprintf(stderr, "warning: %s; running anyway because unstable time steps are allowed\n",
+                 buffer);
 }
 
 void check_sph_domain_cell_range(const Vec3& domain_min, const Vec3& domain_max, float cell_size) {
@@ -236,34 +356,18 @@ HostParticleState make_dam_break(const Config& config) {
     const int n = config.num_particles;
     const SphConfig& sph = config.sph;
     const SphDerivedParameters derived = derive_sph_parameters(config);
+    const SphLattice lattice = sph_lattice(config);
+    const FluidBlock block = fluid_block(sph);
+    const double spacing = lattice.pitch;
+    const long long nx = lattice.nx;
+    const long long ny = lattice.ny;
+    const long long nz = lattice.nz;
+    const double lx = block.lx;
+    const double ly = block.ly;
+    const double lz = block.lz;
 
     HostParticleState state;
     state.resize(static_cast<std::size_t>(n));
-
-    const double lx = static_cast<double>(sph.fluid_max.x) - static_cast<double>(sph.fluid_min.x);
-    const double ly = static_cast<double>(sph.fluid_max.y) - static_cast<double>(sph.fluid_min.y);
-    const double lz = static_cast<double>(sph.fluid_max.z) - static_cast<double>(sph.fluid_min.z);
-
-    // Shrink the lattice pitch until the block holds at least the requested
-    // number of sites. One pass of the ideal spacing usually falls a little
-    // short because each axis rounds down.
-    double spacing = derived.particle_spacing;
-    long long nx = 0, ny = 0, nz = 0;
-    for (int attempt = 0; attempt < 64; ++attempt) {
-        nx = static_cast<long long>(std::floor(lx / spacing));
-        ny = static_cast<long long>(std::floor(ly / spacing));
-        nz = static_cast<long long>(std::floor(lz / spacing));
-        nx = nx < 1 ? 1 : nx;
-        ny = ny < 1 ? 1 : ny;
-        nz = nz < 1 ? 1 : nz;
-        if (nx * ny * nz >= n) {
-            break;
-        }
-        spacing *= 0.98;
-    }
-    if (nx * ny * nz < n) {
-        throw std::runtime_error("cannot fit the requested particle count into the fluid block");
-    }
 
     Rng rng(config.seed);
     const double jitter = static_cast<double>(sph.jitter) * spacing;

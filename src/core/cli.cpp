@@ -80,6 +80,8 @@ std::string cli_usage() {
            "  --steps <n>           override the step count\n"
            "  --particles <n>       override the particle count\n"
            "  --dt <value>          override the time step\n"
+           "  --allow-unstable-dt   warn instead of refusing a fluid time step above its\n"
+           "                        stability limits\n"
            "  --seed <n>            override the random seed\n"
            "  --snapshot-dir <path> override the snapshot directory\n"
            "  --snapshot-every <n>  override the snapshot cadence, 0 disables\n"
@@ -116,6 +118,8 @@ CliOptions parse_cli(int argc, const char* const* argv) {
                 parse_integer(require_value(argc, argv, i, "--particles"), "--particles", 1, INT_MAX));
         } else if (arg == "--dt") {
             options.dt = parse_positive_float(require_value(argc, argv, i, "--dt"), "--dt");
+        } else if (arg == "--allow-unstable-dt") {
+            options.allow_unstable_dt = true;
         } else if (arg == "--seed") {
             options.seed = static_cast<uint32_t>(
                 parse_integer(require_value(argc, argv, i, "--seed"), "--seed", 0, UINT32_MAX));
@@ -160,6 +164,9 @@ void apply_cli_overrides(const CliOptions& options, Config& config) {
     }
     if (options.dt) {
         config.dt = *options.dt;
+    }
+    if (options.allow_unstable_dt) {
+        config.allow_unstable_dt = true;
     }
     if (options.seed) {
         config.seed = *options.seed;

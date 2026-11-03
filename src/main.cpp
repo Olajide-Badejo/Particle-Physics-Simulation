@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <string>
@@ -63,6 +64,18 @@ int main(int argc, char** argv) {
             std::printf("  particle mass : %g\n", static_cast<double>(derived.particle_mass));
             std::printf("  neighbours    : %.1f expected inside the support\n",
                         derived.expected_neighbour_count);
+            const cps::SphTimeStepLimits limits =
+                cps::sph_time_step_limits(config, derived.smoothing_radius);
+            const auto print_limit = [](const char* name, double value) {
+                if (std::isfinite(value)) {
+                    std::printf("  dt limit      : %s %g\n", name, value);
+                } else {
+                    std::printf("  dt limit      : %s skipped\n", name);
+                }
+            };
+            print_limit("acoustic", limits.acoustic);
+            print_limit("viscous", limits.viscous);
+            print_limit("body force", limits.body_force);
         }
 
         cps::SimulationEngine engine(config);

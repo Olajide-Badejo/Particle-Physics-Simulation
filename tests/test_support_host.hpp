@@ -30,10 +30,17 @@ namespace cps_test {
 // tiling, no reciprocal square root, no single precision anywhere. Its only
 // job is to be obviously correct, so that when it disagrees with a kernel the
 // kernel is what is wrong.
-inline void reference_accelerations(const cps::HostParticleState& state, double softening,
-                                    double gravitational_constant, std::vector<double>& ax,
-                                    std::vector<double>& ay, std::vector<double>& az) {
-    const std::size_t n = state.size();
+//
+// The positions and masses are taken as arrays of any floating type, because a
+// HostParticleState holds single precision and an integrator that must stay in
+// double precision cannot go through one.
+template <typename Real>
+inline void reference_accelerations(const std::vector<Real>& x, const std::vector<Real>& y,
+                                    const std::vector<Real>& z, const std::vector<Real>& mass,
+                                    double softening, double gravitational_constant,
+                                    std::vector<double>& ax, std::vector<double>& ay,
+                                    std::vector<double>& az) {
+    const std::size_t n = x.size();
     ax.assign(n, 0.0);
     ay.assign(n, 0.0);
     az.assign(n, 0.0);
@@ -47,12 +54,12 @@ inline void reference_accelerations(const cps::HostParticleState& state, double 
             if (i == j) {
                 continue;
             }
-            const double dx = static_cast<double>(state.x[j]) - static_cast<double>(state.x[i]);
-            const double dy = static_cast<double>(state.y[j]) - static_cast<double>(state.y[i]);
-            const double dz = static_cast<double>(state.z[j]) - static_cast<double>(state.z[i]);
+            const double dx = static_cast<double>(x[j]) - static_cast<double>(x[i]);
+            const double dy = static_cast<double>(y[j]) - static_cast<double>(y[i]);
+            const double dz = static_cast<double>(z[j]) - static_cast<double>(z[i]);
             const double dist_sq = dx * dx + dy * dy + dz * dz + softening_sq;
             const double inv = 1.0 / std::sqrt(dist_sq);
-            const double scale = static_cast<double>(state.mass[j]) * inv * inv * inv;
+            const double scale = static_cast<double>(mass[j]) * inv * inv * inv;
             sum_x += dx * scale;
             sum_y += dy * scale;
             sum_z += dz * scale;
@@ -63,21 +70,36 @@ inline void reference_accelerations(const cps::HostParticleState& state, double 
     }
 }
 
-inline double reference_potential(const cps::HostParticleState& state, double softening,
-                                  double gravitational_constant) {
-    const std::size_t n = state.size();
+inline void reference_accelerations(const cps::HostParticleState& state, double softening,
+                                    double gravitational_constant, std::vector<double>& ax,
+                                    std::vector<double>& ay, std::vector<double>& az) {
+    reference_accelerations(state.x, state.y, state.z, state.mass, softening,
+                            gravitational_constant, ax, ay, az);
+}
+
+template <typename Real>
+inline double reference_potential(const std::vector<Real>& x, const std::vector<Real>& y,
+                                  const std::vector<Real>& z, const std::vector<Real>& mass,
+                                  double softening, double gravitational_constant) {
+    const std::size_t n = x.size();
     const double softening_sq = softening * softening;
     double total = 0.0;
     for (std::size_t i = 0; i < n; ++i) {
         for (std::size_t j = i + 1; j < n; ++j) {
-            const double dx = static_cast<double>(state.x[j]) - static_cast<double>(state.x[i]);
-            const double dy = static_cast<double>(state.y[j]) - static_cast<double>(state.y[i]);
-            const double dz = static_cast<double>(state.z[j]) - static_cast<double>(state.z[i]);
+            const double dx = static_cast<double>(x[j]) - static_cast<double>(x[i]);
+            const double dy = static_cast<double>(y[j]) - static_cast<double>(y[i]);
+            const double dz = static_cast<double>(z[j]) - static_cast<double>(z[i]);
             const double dist = std::sqrt(dx * dx + dy * dy + dz * dz + softening_sq);
-            total -= static_cast<double>(state.mass[i]) * static_cast<double>(state.mass[j]) / dist;
+            total -= static_cast<double>(mass[i]) * static_cast<double>(mass[j]) / dist;
         }
     }
     return gravitational_constant * total;
+}
+
+inline double reference_potential(const cps::HostParticleState& state, double softening,
+                                  double gravitational_constant) {
+    return reference_potential(state.x, state.y, state.z, state.mass, softening,
+                               gravitational_constant);
 }
 
 // A reproducible cloud with no two particles on top of each other.
