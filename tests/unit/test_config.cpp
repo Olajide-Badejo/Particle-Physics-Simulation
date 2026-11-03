@@ -198,6 +198,7 @@ INSTANTIATE_TEST_SUITE_P(
         InvalidJsonCase{"dt_infinite", R"({"dt": 1e39})", "dt"},
         InvalidJsonCase{"dt_string", R"({"dt": "0.1"})", "dt"},
         InvalidJsonCase{"softening_negative", R"({"softening": -0.01})", "softening"},
+        InvalidJsonCase{"softening_zero_for_nbody", R"({"softening": 0})", "softening"},
         InvalidJsonCase{"softening_infinite", R"({"softening": 1e39})", "softening"},
         InvalidJsonCase{"gravitational_constant_zero", R"({"gravitational_constant": 0})",
                         "gravitational_constant"},
@@ -326,7 +327,10 @@ INSTANTIATE_TEST_SUITE_P(
     [](const ::testing::TestParamInfo<NanCase>& info) { return std::string(info.param.label); });
 
 TEST(Config, AcceptsTheEdgesOfEachRange) {
-    EXPECT_NO_THROW(cps::Config::from_json_string(R"({"softening": 0, "steps": 0})"));
+    EXPECT_NO_THROW(cps::Config::from_json_string(R"({"steps": 0})"));
+    // The fluid solver has no self pair for softening to protect.
+    EXPECT_NO_THROW(cps::Config::from_json_string(
+        R"({"solver": "sph", "initial_condition": "dam_break", "softening": 0})"));
     EXPECT_NO_THROW(cps::Config::from_json_string(
         R"({"snapshot_interval": 0, "diagnostics_interval": 0, "seed": 4294967295})"));
     EXPECT_NO_THROW(cps::Config::from_json_string(

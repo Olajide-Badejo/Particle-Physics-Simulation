@@ -419,7 +419,13 @@ void Config::validate() const {
         throw std::runtime_error("steps must not be negative, got " + std::to_string(steps));
     }
     require_positive("dt", dt);
-    require_non_negative("softening", softening);
+    // The N-body kernels sum every pair including a particle with itself, and
+    // only the softening keeps that zero over zero finite.
+    if (solver == SolverType::NBody) {
+        require_positive("softening", softening);
+    } else {
+        require_non_negative("softening", softening);
+    }
     require_positive("gravitational_constant", gravitational_constant);
     if (block_size <= 0 || block_size % 32 != 0 || block_size > 1024) {
         throw std::runtime_error("block_size must be a positive multiple of 32 up to 1024, got " +
