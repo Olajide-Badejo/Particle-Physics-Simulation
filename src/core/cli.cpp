@@ -92,6 +92,7 @@ std::string cli_usage() {
            "                        configuration (implies --resume)\n"
            "  --device-info         print the device properties and exit\n"
            "  --print-config        print the resolved configuration and exit\n"
+           "  --version             print the version and commit, then exit\n"
            "  --help                print this message\n";
 }
 
@@ -102,6 +103,9 @@ CliOptions parse_cli(int argc, const char* const* argv) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
             options.show_help = true;
+            return options;
+        } else if (arg == "--version") {
+            options.show_version = true;
             return options;
         } else if (arg == "--config") {
             options.config_path = require_value(argc, argv, i, "--config");

@@ -33,6 +33,85 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+# What the v1.1 benchmark protocol adds to a summary row. A file without them
+# was measured in separate blocks and cannot support a quoted difference, so the
+# report is not built from it.
+DISPERSION_COLUMNS = ("trials", "ms_min", "ms_median", "ms_mean", "ms_stddev", "ms_iqr", "dirty")
+RERUN_HINT = (
+    "Rerun bench_all under the current protocol. This script has no fallback for older "
+    "results, because the report quotes these figures."
+)
+
+
+def require_summary(path: Path) -> None:
+    """Stop unless a summary CSV exists and carries the dispersion columns."""
+    if not path.exists():
+        raise SystemExit(f"error: {path} does not exist. {RERUN_HINT}")
+    with path.open(newline="", encoding="utf-8") as handle:
+        header = next(csv.reader(handle), [])
+    missing = [column for column in DISPERSION_COLUMNS if column not in header]
+    if missing:
+        raise SystemExit(
+            f"error: {path} has no dispersion column(s) {', '.join(missing)}. {RERUN_HINT}"
+        )
+
+
+def require_file(path: Path, what: str) -> None:
+    if not path.exists():
+        raise SystemExit(f"error: {path} does not exist, so there is no {what}. {RERUN_HINT}")
+
+
+def require_benchmark_inputs(results: Path) -> None:
+    """Fail before anything is written, so a refused run leaves the report as it was."""
+    require_summary(results / "benchmarks.csv")
+    require_file(results / "benchmark_trials.csv", "raw trial data")
+    require_file(results / "benchmark_repeatability.csv", "session drift figure")
+    if (results / "tile_sweep.csv").exists():
+        require_summary(results / "tile_sweep.csv")
+        require_file(results / "tile_sweep_trials.csv", "raw trial data for the tile sweep")
+
+
+def quantile(values: list[float], fraction: float) -> float:
+    """Linear interpolation on the sorted sample, as in include/core/bench_rows.hpp."""
+    ordered = sorted(values)
+    position = fraction * (len(ordered) - 1)
+    below = math.floor(position)
+    above = min(below + 1, len(ordered) - 1)
+    return ordered[below] + (position - below) * (ordered[above] - ordered[below])
+
+
+def trials_by_round(trials: list[dict[str, str]], variant: str, count: int,
+                    tile: int | None = None) -> dict[int, float]:
+    """One configuration's time in each round. A repeated round is an error."""
+    times: dict[int, float] = {}
+    for row in trials:
+        if (row["variant"] != variant or int(row["num_particles"]) != count
+                or (tile is not None and int(row["tile_size"]) != tile)):
+            continue
+        number = int(row["round"])
+        if number in times:
+            raise SystemExit(
+                f"error: the raw trials hold round {number} of {variant} at N={count} twice, so "
+                "a sweep was interrupted between writing its trials and its rows. Rerun it."
+            )
+        times[number] = float(row["ms_per_step"])
+    return times
+
+
+def paired_ratio(numerator: dict[int, float],
+                 denominator: dict[int, float]) -> tuple[float, float, int]:
+    """Median and IQR of the per round time ratio, and the number of rounds.
+
+    Two configurations measured in the same round saw the same machine, so the
+    ratio inside a round cancels the session drift that a ratio of two medians
+    keeps.
+    """
+    if not numerator or numerator.keys() != denominator.keys():
+        raise SystemExit("error: the raw trials of a compared pair do not cover the same rounds")
+    ratios = [numerator[number] / denominator[number] for number in numerator]
+    return (quantile(ratios, 0.5), quantile(ratios, 0.75) - quantile(ratios, 0.25), len(ratios))
+
+
 def read_gate_registry(path: Path) -> list[str]:
     """Registered gate names from tests/validation/gates.txt, in order.
 
@@ -68,8 +147,11 @@ def sci(value: float) -> str:
 
 
 class Assets:
-    def __init__(self, results: Path, out_root: Path, registry: Path) -> None:
+    def __init__(self, results: Path, out_root: Path, registry: Path, scratch: bool) -> None:
         self.results = results
+        # A results directory other than the committed one, usually holding only
+        # what bench_all wrote. The report is never built from one.
+        self.scratch = scratch
         self.registry = registry
         self.tables = out_root / "tables"
         self.tables.mkdir(parents=True, exist_ok=True)
@@ -175,6 +257,7 @@ class Assets:
         self.macro("FusionSpeedupAtMaxN", f"{tiled / fused:.3f}")
         self.macro("FusionGainPercentAtMaxN", f"{100.0 * (tiled - fused) / tiled:+.1f}")
         self.macro("TiledTflopsAtMaxN", f"{by_variant['tiled'][largest]['gflops'] / 1000.0:.2f}")
+        self.paired_ladder(counts)
 
         smallest = counts[0]
         self.macro("LadderMinN", f"{smallest:,}")
@@ -197,6 +280,55 @@ class Assets:
             trip_ms = return_trip_bytes / (measured_bandwidth * 1.0e9) * 1.0e3
             self.macro("FusionCeilingMs", f"{trip_ms:.4f}")
             self.macro("FusionCeilingPercent", f"{100.0 * trip_ms / tiled:.3f}")
+
+    def paired_ladder(self, counts: list[int]) -> None:
+        """Per round time ratios for each variant pair, a ratio below 1 favouring the first."""
+        trials = [r for r in read_csv(self.results / "benchmark_trials.csv")
+                  if r["solver"] == "nbody"]
+        lines = [
+            r"\begin{tabular}{r rr rr}",
+            r"\toprule",
+            r"& \multicolumn{2}{c}{fused / tiled} & \multicolumn{2}{c}{tiled / naive} \\",
+            r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}",
+            r"particles & median & IQR & median & IQR \\",
+            r"\midrule",
+        ]
+        for count in counts:
+            naive = trials_by_round(trials, "naive", count)
+            tiled = trials_by_round(trials, "tiled", count)
+            fused = trials_by_round(trials, "fused", count)
+            fused_median, fused_iqr, rounds = paired_ratio(fused, tiled)
+            tiled_median, tiled_iqr, _ = paired_ratio(tiled, naive)
+            lines.append(
+                f"{count:,} & {fused_median:.4f} & {fused_iqr:.4f} & "
+                f"{tiled_median:.4f} & {tiled_iqr:.4f} \\\\"
+            )
+        lines += [r"\bottomrule", r"\end{tabular}"]
+        self.write_table("paired_ratios", "\n".join(lines) + "\n")
+
+        # The loop ended on the largest particle count.
+        self.macro("FusedOverTiledRatioAtMaxN", f"{fused_median:.4f}")
+        self.macro("FusedOverTiledRatioIqrAtMaxN", f"{fused_iqr:.4f}")
+        self.macro("TiledOverNaiveRatioAtMaxN", f"{tiled_median:.4f}")
+        self.macro("TiledOverNaiveRatioIqrAtMaxN", f"{tiled_iqr:.4f}")
+        self.macro("PairedRoundsAtMaxN", str(rounds))
+
+    # -- session drift ----------------------------------------------------
+    def repeatability(self) -> None:
+        path = self.results / "benchmark_repeatability.csv"
+        rows = read_csv(path)
+        checkpoints = {row["checkpoint"]: row for row in rows}
+        missing = [name for name in ("start", "middle", "end") if name not in checkpoints]
+        if missing or len(rows) != 3:
+            raise SystemExit(
+                f"error: {path} must hold one row each for start, middle and end, and it lacks "
+                f"{', '.join(missing) or 'that shape'}. {RERUN_HINT}"
+            )
+        medians = [float(row["ms_median"]) for row in rows]
+        spread = (max(medians) - min(medians)) / quantile(medians, 0.5)
+        self.macro("RepeatabilitySpread", f"{100.0 * spread:.2f}")
+        self.macro("RepeatabilityVariant", latex_escape(rows[0]["variant"]))
+        self.macro("RepeatabilityParticles", f"{int(rows[0]['num_particles']):,}")
 
     # -- fluid ------------------------------------------------------------
     def sph(self, rows: list[dict[str, str]]) -> None:
@@ -266,12 +398,23 @@ class Assets:
             self.macro("BestTileMs", f"{best_ms:.3f}")
             self.macro("SpecifiedTileMs", f"{spec_ms:.3f}")
             self.macro("TileWidthGainPercent", f"{100.0 * (spec_ms - best_ms) / spec_ms:.1f}")
+            # What deciding the default rests on: the fastest width against the
+            # specified one, round by round.
+            trials = read_csv(self.results / "tile_sweep_trials.csv")
+            count = int(specified[0]["num_particles"])
+            ratio, ratio_iqr, _ = paired_ratio(trials_by_round(trials, "tiled", count, best_tile),
+                                               trials_by_round(trials, "tiled", count, 32))
+            self.macro("BestTileOverSpecifiedRatio", f"{ratio:.4f}")
+            self.macro("BestTileOverSpecifiedRatioIqr", f"{ratio_iqr:.4f}")
 
     # -- validation gates -------------------------------------------------
     def gates(self) -> None:
         # A missing gate would leave a hole in the table and a macro the prose
         # quotes undefined, so the report is never built from a partial file.
         path = self.results / "validation_gates.csv"
+        if self.scratch and not path.exists():
+            print(f"  no validation_gates.csv in {self.results}, skipping the gates")
+            return
         if not self.registry.exists():
             raise SystemExit(f"error: the gate registry {self.registry} does not exist")
         rows = read_csv(path)
@@ -429,19 +572,31 @@ class Assets:
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description="Generate report tables and macros.")
-    parser.add_argument("--results", type=Path, default=root / "experiments" / "results")
-    parser.add_argument("--out", type=Path, default=root / "report")
+    default_results = root / "experiments" / "results"
+    parser.add_argument("results_dir", type=Path, nargs="?",
+                        help="results to read (default experiments/results). Anything else is "
+                             "a scratch directory, whose output goes to report_assets inside it "
+                             "unless --out says otherwise")
+    parser.add_argument("--results", type=Path, help="the same as the positional argument")
+    parser.add_argument("--out", type=Path)
     parser.add_argument("--gates", type=Path, default=root / "tests" / "validation" / "gates.txt",
                         help="the registry of gates validation_gates.csv must contain")
     args = parser.parse_args()
 
-    print(f"reading results from {args.results}")
-    assets = Assets(args.results, args.out, args.gates)
-    benchmarks = read_csv(args.results / "benchmarks.csv")
+    results = args.results_dir or args.results or default_results
+    scratch = results.resolve() != default_results.resolve()
+    out = args.out or (results / "report_assets" if scratch else root / "report")
+
+    print(f"reading results from {results}")
+    print(f"writing assets to {out}")
+    require_benchmark_inputs(results)
+    assets = Assets(results, out, args.gates, scratch)
+    benchmarks = read_csv(results / "benchmarks.csv")
 
     steps = [
         ("device properties", lambda: assets.device()),
         ("N-body ladder", lambda: assets.nbody(benchmarks)),
+        ("session drift", lambda: assets.repeatability()),
         ("fluid scaling", lambda: assets.sph(benchmarks)),
         ("tile width sweep", lambda: assets.tile_sweep()),
         ("validation gates", lambda: assets.gates()),

@@ -12,6 +12,9 @@ experiments/results/*
 !experiments/results/.gitkeep
 !experiments/results/benchmarks.csv
 !experiments/results/tile_sweep.csv
+!experiments/results/benchmark_trials.csv
+!experiments/results/tile_sweep_trials.csv
+!experiments/results/benchmark_repeatability.csv
 !experiments/results/device.json
 !experiments/results/validation_gates.csv
 !experiments/results/profile_summary.csv

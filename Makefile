@@ -99,8 +99,11 @@ record-results: build
 bench: build
 	./$(BUILD_DIR)/bin/bench_all --tile-sweep
 
+# A smoke test of the driver, on whatever tree is checked out. Its rows go to the
+# temporary directory and are labelled as quick, so they can never pass for
+# results.
 bench-quick: build
-	./$(BUILD_DIR)/bin/bench_all --quick
+	./$(BUILD_DIR)/bin/bench_all --quick --allow-dirty
 
 profile: build
 	bash scripts/profile_kernels.sh

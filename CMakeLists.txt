@@ -94,21 +94,10 @@ if(NOT CPS_HOST_ONLY)
 endif()
 
 # Every benchmark row records the commit it was produced by, so a number in the
-# report can always be traced back to the exact tree that generated it.
+# report can always be traced back to the exact tree that generated it. The
+# hash is read at build time, by the cps_version target below, because one read
+# at configure time goes stale with the next commit.
 find_package(Git QUIET)
-set(CPS_GIT_COMMIT "unknown")
-if(Git_FOUND)
-  execute_process(
-    COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    OUTPUT_VARIABLE CPS_GIT_COMMIT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET)
-  if(CPS_GIT_COMMIT STREQUAL "")
-    set(CPS_GIT_COMMIT "unknown")
-  endif()
-endif()
-message(STATUS "  Commit            : ${CPS_GIT_COMMIT}")
 
 # ---------------------------------------------------------------------------
 # Third party dependencies
@@ -203,10 +192,29 @@ cps_add_device_library(physics_core ${CPS_USE_FAST_MATH})
 cps_add_device_library(physics_core_strict OFF)
 
 # ---------------------------------------------------------------------------
+# Build-time version stamp
+# ---------------------------------------------------------------------------
+# Always runs, and rewrites the header only when its contents change, so a build
+# of an unchanged tree recompiles nothing. Only the two executables that report
+# a version include it.
+set(CPS_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+add_custom_target(cps_version
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_VERSION=${PROJECT_VERSION}
+          -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+          -DOUTPUT=${CPS_GENERATED_DIR}/cps_version.hpp
+          -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/write_version_header.cmake
+  BYPRODUCTS ${CPS_GENERATED_DIR}/cps_version.hpp
+  VERBATIM)
+
+# ---------------------------------------------------------------------------
 # Executables
 # ---------------------------------------------------------------------------
 add_executable(cuda_physics_sim src/main.cpp)
 target_link_libraries(cuda_physics_sim PRIVATE physics_core cps_warnings)
+target_include_directories(cuda_physics_sim PRIVATE ${CPS_GENERATED_DIR})
+add_dependencies(cuda_physics_sim cps_version)
 
 add_executable(gpu_probe src/tools/gpu_probe.cu)
 target_link_libraries(gpu_probe PRIVATE physics_core cps_warnings)
@@ -215,8 +223,9 @@ set_target_properties(gpu_probe PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCH
 if(CPS_BUILD_BENCHMARKS)
   add_executable(bench_all benchmarks/bench_all.cpp)
   target_link_libraries(bench_all PRIVATE physics_core cps_warnings)
+  target_include_directories(bench_all PRIVATE ${CPS_GENERATED_DIR})
+  add_dependencies(bench_all cps_version)
   target_compile_definitions(bench_all PRIVATE
-    CPS_GIT_COMMIT="${CPS_GIT_COMMIT}"
     CPS_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
@@ -238,6 +247,7 @@ if(CPS_BUILD_TESTS)
 
   # Host only: no CUDA runtime, no GPU, safe for continuous integration.
   add_executable(unit_tests_host
+    tests/unit/test_bench_rows.cpp
     tests/unit/test_cli.cpp
     tests/unit/test_config.cpp
     tests/unit/test_gate_recording.cpp

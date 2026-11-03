@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import textwrap
 from pathlib import Path
 
@@ -133,6 +134,23 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def require_dispersion(path: Path, rows: list[dict[str, str]]) -> None:
+    """Stop on results that predate the dispersion columns the error bars come from."""
+    if rows and not {"ms_median", "ms_iqr"} <= rows[0].keys():
+        raise SystemExit(
+            f"error: {path} has no ms_median and ms_iqr columns, so its figures cannot show "
+            "their error bars. Rerun bench_all under the current protocol."
+        )
+
+
+def half_iqr(rows: list[dict[str, str]]) -> dict[str, dict[int, float]]:
+    """Half the interquartile range, by variant and particle count."""
+    out: dict[str, dict[int, float]] = {}
+    for row in rows:
+        out.setdefault(row["variant"], {})[int(row["num_particles"])] = float(row["ms_iqr"]) / 2.0
+    return out
+
+
 def save(fig, out_dir: Path, name: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for suffix in ("pdf", "png"):
@@ -160,11 +178,13 @@ def plot_nbody_time(rows, out_dir: Path) -> None:
     data = nbody_series(rows, "ms_per_step")
     if not data:
         return
+    spread = half_iqr([r for r in rows if r["solver"] == "nbody"])
     fig, ax = plt.subplots(figsize=FIGSIZE)
     for variant, (xs, ys) in data.items():
         style = SERIES[variant]
-        ax.plot(xs, ys, color=style["color"], marker=style["marker"], markersize=5,
-                linewidth=1.8, label=style["label"])
+        ax.errorbar(xs, ys, yerr=[spread[variant][x] for x in xs], color=style["color"],
+                    marker=style["marker"], markersize=5, linewidth=1.8, capsize=2,
+                    label=style["label"])
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("number of particles $N$ (count)")
@@ -175,7 +195,8 @@ def plot_nbody_time(rows, out_dir: Path) -> None:
     strip_spines(ax)
     caption(fig,
             "Both axes logarithmic. The slope near two is the all pairs sum; "
-            "the vertical offset between the lines is what the memory hierarchy is worth.")
+            "the vertical offset between the lines is what the memory hierarchy is worth. "
+            "Points are medians; bars span the interquartile range of the trials.")
     save(fig, out_dir, "fig_nbody_time")
 
 
@@ -185,6 +206,7 @@ def plot_nbody_speedup(rows, out_dir: Path) -> None:
     if "naive" not in times:
         return
     baseline = dict(zip(times["naive"][0], times["naive"][1]))
+    spread = half_iqr([r for r in rows if r["solver"] == "nbody"])
 
     fig, ax = plt.subplots(figsize=FIGSIZE)
     first_x = None
@@ -194,9 +216,15 @@ def plot_nbody_speedup(rows, out_dir: Path) -> None:
         xs, ys = times[variant]
         valid_x = [x for x in xs if x in baseline]
         speedups = [baseline[x] / y for x, y in zip(xs, ys) if x in baseline]
+        # Relative spreads add in quadrature for a ratio of two independent times.
+        bars = [
+            baseline[x] / y * math.hypot(spread["naive"][x] / baseline[x], spread[variant][x] / y)
+            for x, y in zip(xs, ys)
+            if x in baseline
+        ]
         style = SERIES[variant]
-        ax.plot(valid_x, speedups, color=style["color"], marker=style["marker"],
-                markersize=5, linewidth=1.8, label=style["label"])
+        ax.errorbar(valid_x, speedups, yerr=bars, color=style["color"], marker=style["marker"],
+                    markersize=5, linewidth=1.8, capsize=2, label=style["label"])
         first_x = first_x or valid_x[0]
 
     ax.axhline(1.0, color=AXIS, linewidth=1.0, linestyle="--")
@@ -213,7 +241,8 @@ def plot_nbody_speedup(rows, out_dir: Path) -> None:
     strip_spines(ax)
     caption(fig,
             "A value of 2.0 means the step took half as long as the naive kernel at the "
-            "same particle count. The dashed line is the naive kernel itself.")
+            "same particle count. The dashed line is the naive kernel itself. Bars combine "
+            "the interquartile ranges of the two times.")
     save(fig, out_dir, "fig_nbody_speedup")
 
 
@@ -222,11 +251,18 @@ def plot_nbody_throughput(rows, out_dir: Path) -> None:
     data = nbody_series(rows, "gflops")
     if not data:
         return
+    times = nbody_series(rows, "ms_per_step")
+    spread = half_iqr([r for r in rows if r["solver"] == "nbody"])
     fig, ax = plt.subplots(figsize=FIGSIZE)
     for variant, (xs, ys) in data.items():
         style = SERIES[variant]
-        ax.plot(xs, [y / 1000.0 for y in ys], color=style["color"], marker=style["marker"],
-                markersize=5, linewidth=1.8, label=style["label"])
+        # Throughput is proportional to the inverse of the time, so it shares
+        # the time's relative spread.
+        ms = dict(zip(*times[variant]))
+        bars = [y / 1000.0 * spread[variant][x] / ms[x] for x, y in zip(xs, ys)]
+        ax.errorbar(xs, [y / 1000.0 for y in ys], yerr=bars, color=style["color"],
+                    marker=style["marker"], markersize=5, linewidth=1.8, capsize=2,
+                    label=style["label"])
     ax.set_xscale("log")
     ax.set_xlabel("number of particles $N$ (count)")
     ax.set_ylabel("sustained throughput (TFLOP/s, single precision)")
@@ -243,7 +279,7 @@ def plot_nbody_throughput(rows, out_dir: Path) -> None:
 def plot_sph_scaling(rows, out_dir: Path) -> None:
     """Fluid step cost against particle count."""
     points = sorted(
-        (int(r["num_particles"]), float(r["ms_per_step"]))
+        (int(r["num_particles"]), float(r["ms_per_step"]), float(r["ms_iqr"]) / 2.0)
         for r in rows
         if r["solver"] == "sph"
     )
@@ -254,7 +290,8 @@ def plot_sph_scaling(rows, out_dir: Path) -> None:
 
     fig, ax = plt.subplots(figsize=FIGSIZE)
     # One series, so the title names it and no legend box is needed.
-    ax.plot(xs, ys, color=SERIES["naive"]["color"], marker="o", markersize=5, linewidth=1.8)
+    ax.errorbar(xs, ys, yerr=[p[2] for p in points], color=SERIES["naive"]["color"], marker="o",
+                markersize=5, linewidth=1.8, capsize=2)
     ax.set_xlabel("number of particles $N$ (count)")
     ax.set_ylabel("time per step (milliseconds)")
     ax.set_title("Fluid step cost against particle count")
@@ -267,7 +304,8 @@ def plot_sph_scaling(rows, out_dir: Path) -> None:
     strip_spines(ax)
     caption(fig,
             "The whole sweep sits far below the interactive budget, so the dashed line "
-            "is a reference rather than a constraint.")
+            "is a reference rather than a constraint. Bars span the interquartile range "
+            "of the trials.")
     save(fig, out_dir, "fig_sph_scaling")
 
 
@@ -276,6 +314,7 @@ def plot_tile_sweep(path: Path, out_dir: Path) -> None:
     rows = read_csv(path)
     if not rows:
         return
+    require_dispersion(path, rows)
     tiles = sorted({int(r["tile_size"]) for r in rows})
     fig, ax = plt.subplots(figsize=FIGSIZE)
 
@@ -284,15 +323,19 @@ def plot_tile_sweep(path: Path, out_dir: Path) -> None:
     tallest = 0.0
     for offset, variant in ((-width / 2, "tiled"), (width / 2, "fused")):
         values = []
+        bars = []
         for tile in tiles:
-            match = [float(r["ms_per_step"]) for r in rows
-                     if int(r["tile_size"]) == tile and r["variant"] == variant]
-            values.append(match[0] if match else 0.0)
+            match = [r for r in rows if int(r["tile_size"]) == tile and r["variant"] == variant]
+            values.append(float(match[0]["ms_per_step"]) if match else 0.0)
+            bars.append(float(match[0]["ms_iqr"]) / 2.0 if match else 0.0)
         tallest = max(tallest, max(values))
+        if variant == "tiled":
+            fastest_tile = tiles[values.index(min(values))]
         style = SERIES[variant]
         # A 2 point surface gap between adjacent bars, drawn as a white edge.
-        ax.bar([p + offset for p in positions], values, width,
-               color=style["color"], label=style["label"], edgecolor="white", linewidth=2)
+        ax.bar([p + offset for p in positions], values, width, yerr=bars,
+               color=style["color"], label=style["label"], edgecolor="white", linewidth=2,
+               error_kw={"ecolor": INK_SECONDARY, "elinewidth": 1.0, "capsize": 2})
 
     # Bars are read by area, so the baseline stays at zero even though it
     # compresses the differences; the exact values are in the table beside this
@@ -302,13 +345,15 @@ def plot_tile_sweep(path: Path, out_dir: Path) -> None:
     ax.set_xticklabels([str(t) for t in tiles])
     ax.set_xlabel("shared memory tile width (particles staged per tile)")
     ax.set_ylabel("time per step (milliseconds)")
-    ax.set_title("Tile width sweep at 100,000 particles")
+    ax.set_title(f"Tile width sweep at {int(rows[0]['num_particles']):,} particles")
     add_legend(ax, "upper right")
     ax.grid(axis="x", visible=False)
     strip_spines(ax)
     caption(fig,
             "Lower is better. The leftmost pair is the width of 32 named in the "
-            "specification; the widest tile is the fastest on this card.")
+            f"specification; the fastest tiled median is at width {fastest_tile}. "
+            "Bars span the interquartile range of the trials. Compare widths within a "
+            "colour: tiled times the force kernel alone and fused the whole step.")
     save(fig, out_dir, "fig_tile_sweep")
 
 
@@ -391,9 +436,15 @@ def plot_plummer_density(path: Path, out_dir: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Draw the report figures.")
     root = Path(__file__).resolve().parent.parent
-    parser.add_argument("--results", type=Path, default=root / "experiments" / "results")
-    parser.add_argument("--out", type=Path, default=root / "report" / "figures")
+    default_results = root / "experiments" / "results"
+    parser.add_argument("--results", type=Path, default=default_results)
+    parser.add_argument("--out", type=Path,
+                        help="default report/figures, or figures inside a --results directory "
+                             "other than experiments/results")
     args = parser.parse_args()
+    if args.out is None:
+        scratch = args.results.resolve() != default_results.resolve()
+        args.out = args.results / "figures" if scratch else root / "report" / "figures"
 
     configure_style()
     print(f"reading results from {args.results}")
@@ -401,6 +452,7 @@ def main() -> int:
 
     benchmarks = read_csv(args.results / "benchmarks.csv")
     if benchmarks:
+        require_dispersion(args.results / "benchmarks.csv", benchmarks)
         plot_nbody_time(benchmarks, args.out)
         plot_nbody_speedup(benchmarks, args.out)
         plot_nbody_throughput(benchmarks, args.out)

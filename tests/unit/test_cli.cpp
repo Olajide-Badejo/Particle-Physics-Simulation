@@ -48,6 +48,12 @@ TEST(Cli, NoArgumentsGiveNoOverrides) {
     EXPECT_FALSE(options.diag_every);
 }
 
+TEST(Cli, VersionStopsParsing) {
+    const cps::CliOptions options = parse({"--version", "--no-such-flag"});
+    EXPECT_TRUE(options.show_version);
+    EXPECT_FALSE(options.show_help);
+}
+
 TEST(Cli, ParsesEveryFlag) {
     const cps::CliOptions options =
         parse({"--config", "c.json", "--solver", "sph", "--variant", "fused", "--steps", "0",

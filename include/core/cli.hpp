@@ -14,6 +14,7 @@ namespace cps {
 // without a GPU.
 struct CliOptions {
     bool show_help = false;
+    bool show_version = false;
     bool resume = false;
     // Resume even when the snapshot's physics differ from the configuration.
     // Implies resume.
@@ -39,7 +40,7 @@ struct CliOptions {
 
 // Throws std::runtime_error naming the flag for an unknown option, a missing
 // value, a value that is not a number, or a value out of range. Stops at
-// --help, as the original loop did.
+// --help or --version, as the original loop did.
 CliOptions parse_cli(int argc, const char* const* argv);
 
 // Copies every override that was given into config. Does not validate; call

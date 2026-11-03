@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that the committed results can be traced back to this repository.
 
-Two checks, both over the files in `experiments/results`:
+Three checks, all over the files in `experiments/results`:
 
 1. `validation_gates.csv` holds exactly the gates registered in
    `tests/validation/gates.txt`: every registered gate is present, and nothing
@@ -12,6 +12,11 @@ Two checks, both over the files in `experiments/results`:
    (`git cat-file -e <hash>^{commit}`). A hash that does not resolve cannot be
    checked out, so the number on that row cannot be reproduced from the tree
    that claims to have produced it.
+3. No benchmark row came from a tree with uncommitted code or from a smoke test:
+   any `dirty` value other than 0, any commit carrying `-dirty`, and any
+   `protocol` value other than `full` fail. The files `bench_all` writes must
+   have those columns, because a check that passes when the column is missing
+   checks nothing.
 
 `--gates-only` runs the first check alone, which needs no git history and so
 works on a shallow clone. Each failure names the file, the row and the value.
@@ -27,6 +32,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Every file bench_all writes.
+BENCHMARK_FILES = {
+    "benchmarks.csv",
+    "benchmark_trials.csv",
+    "benchmark_repeatability.csv",
+    "tile_sweep.csv",
+    "tile_sweep_trials.csv",
+}
 
 
 def read_gate_registry(path: Path) -> list[str]:
@@ -105,11 +119,25 @@ def check_commits(results: Path) -> list[str]:
             reader = csv.DictReader(handle)
             if reader.fieldnames is None or "commit" not in reader.fieldnames:
                 continue
+            if path.name in BENCHMARK_FILES:
+                for column in ("dirty", "protocol"):
+                    if column not in reader.fieldnames:
+                        failures.append(f"{relative(path)}: no '{column}' column in the header")
             for row_number, row in enumerate(reader, start=1):
                 value = (row.get("commit") or "").strip()
                 where = f"{relative(path)} row {row_number} (line {reader.line_num})"
+                dirty = row.get("dirty")
+                if dirty is not None and dirty.strip() != "0":
+                    failures.append(f"{where}: dirty is '{dirty.strip()}', so the row came from "
+                                    "a tree with uncommitted code")
+                protocol = row.get("protocol")
+                if protocol is not None and protocol.strip() != "full":
+                    failures.append(f"{where}: protocol is '{protocol.strip()}', and only a full "
+                                    "sweep produces results")
                 if not value:
                     failures.append(f"{where}: commit is empty")
+                elif value.endswith("-dirty"):
+                    failures.append(f"{where}: commit '{value}' is from a dirty tree")
                 elif not commit_resolves(value, cache):
                     failures.append(
                         f"{where}: commit '{value}' does not resolve to a commit in this repository"
