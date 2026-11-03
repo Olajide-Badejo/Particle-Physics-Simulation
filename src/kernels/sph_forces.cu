@@ -1,7 +1,7 @@
-#include "physics/spatial_hash.hpp"
-#include "physics/sph_kernels.hpp"
-#include "solvers/sph_passes.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/physics/spatial_hash.hpp"
+#include "cps/physics/sph_kernels.hpp"
+#include "cps/solvers/sph_passes.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 namespace {

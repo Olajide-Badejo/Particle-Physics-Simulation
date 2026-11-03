@@ -1,10 +1,10 @@
-#include "solvers/sph_solver.hpp"
+#include "cps/solvers/sph_solver.hpp"
 
 #include <algorithm>
 #include <stdexcept>
 
-#include "physics/spatial_hash.hpp"
-#include "solvers/sph_passes.hpp"
+#include "cps/physics/spatial_hash.hpp"
+#include "cps/solvers/sph_passes.hpp"
 
 namespace cps {
 

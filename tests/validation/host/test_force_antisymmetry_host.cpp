@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-#include "physics/gravity.hpp"
+#include "cps/physics/gravity.hpp"
 #include "test_support_host.hpp"
 
 namespace {

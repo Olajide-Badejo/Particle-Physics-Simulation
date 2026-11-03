@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/config.hpp"
+#include "cps/core/config.hpp"
 
 namespace cps_test {
 

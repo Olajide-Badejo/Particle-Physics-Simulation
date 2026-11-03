@@ -1,4 +1,4 @@
-#include "core/physics_fingerprint.hpp"
+#include "cps/core/physics_fingerprint.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -8,8 +8,8 @@
 #include <stdexcept>
 #include <system_error>
 
-#include "core/initial_conditions.hpp"
-#include "core/snapshot.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/core/snapshot.hpp"
 
 namespace cps {
 namespace {

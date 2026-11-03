@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "core/config.hpp"
+#include "cps/core/config.hpp"
 
 namespace cps::bench {
 

@@ -1,4 +1,4 @@
-#include "core/snapshot.hpp"
+#include "cps/core/snapshot.hpp"
 
 #include <algorithm>
 #include <array>

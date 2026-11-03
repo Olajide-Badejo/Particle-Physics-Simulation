@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "utils/cuda_helpers.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace {
 

@@ -20,7 +20,7 @@
 #include <system_error>
 #include <vector>
 
-#include "core/snapshot.hpp"
+#include "cps/core/snapshot.hpp"
 
 namespace cps_test {
 

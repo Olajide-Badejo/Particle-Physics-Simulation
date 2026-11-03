@@ -76,7 +76,7 @@ def require_benchmark_inputs(results: Path) -> None:
 
 
 def quantile(values: list[float], fraction: float) -> float:
-    """Linear interpolation on the sorted sample, as in include/core/bench_rows.hpp."""
+    """Linear interpolation on the sorted sample, as in include/cps/core/bench_rows.hpp."""
     ordered = sorted(values)
     position = fraction * (len(ordered) - 1)
     below = math.floor(position)

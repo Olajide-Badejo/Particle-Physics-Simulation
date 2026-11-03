@@ -3,8 +3,8 @@
 #include <cstdio>
 #include <string>
 
-#include "core/particle_system.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/core/particle_system.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 

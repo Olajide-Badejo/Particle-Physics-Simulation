@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "core/bench_rows.hpp"
+#include "cps/core/bench_rows.hpp"
 
 namespace {
 

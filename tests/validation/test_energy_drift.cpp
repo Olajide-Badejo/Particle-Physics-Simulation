@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
+#include "cps/core/simulation_engine.hpp"
 #include "test_support_gpu.hpp"
 
 namespace {

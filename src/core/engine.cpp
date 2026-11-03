@@ -1,4 +1,4 @@
-#include "core/simulation_engine.hpp"
+#include "cps/core/simulation_engine.hpp"
 
 #include <bit>
 #include <chrono>
@@ -9,11 +9,11 @@
 #include <stdexcept>
 #include <vector>
 
-#include "core/initial_conditions.hpp"
-#include "core/physics_fingerprint.hpp"
-#include "core/snapshot.hpp"
-#include "solvers/nbody_solver.hpp"
-#include "utils/progress.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/core/physics_fingerprint.hpp"
+#include "cps/core/snapshot.hpp"
+#include "cps/solvers/nbody_solver.hpp"
+#include "cps/utils/progress.hpp"
 
 namespace fs = std::filesystem;
 

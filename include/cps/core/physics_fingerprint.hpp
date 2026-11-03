@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-#include "core/config.hpp"
+#include "cps/core/config.hpp"
 
 namespace cps {
 

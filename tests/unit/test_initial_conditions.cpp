@@ -8,9 +8,9 @@
 #include <string>
 #include <vector>
 
-#include "core/initial_conditions.hpp"
-#include "physics/spatial_hash.hpp"
-#include "physics/sph_kernels.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/physics/spatial_hash.hpp"
+#include "cps/physics/sph_kernels.hpp"
 
 namespace {
 

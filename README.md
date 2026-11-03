@@ -465,17 +465,17 @@ Values no CSV records, typed here and labelled: the double precision truncation 
 ## Repository layout
 
 ```text
-include/physics/   force law, SPH kernels, spatial hash (host and device)
-include/core/      configuration, particle state, engine, snapshots, diagnostics
-src/kernels/       every CUDA kernel
-src/core/          engine, parsing, snapshots, initial conditions
-tests/             unit (host and device), integration, validation
-benchmarks/        the sweep driver
-scripts/           style gate, plotting, report assets, profiling, number and provenance checks
-configs/           the three shipped configurations
-experiments/       recorded results
-report/            main report sources and figures
-report_debug/      debug report sources
+include/cps/physics/ force law, SPH kernels, spatial hash (host and device)
+include/cps/core/    configuration, particle state, engine, snapshots, diagnostics
+src/kernels/         every CUDA kernel
+src/core/            engine, parsing, snapshots, initial conditions
+tests/               unit (host and device), integration, validation
+benchmarks/          the sweep driver
+scripts/             style gate, plotting, report assets, profiling, number and provenance checks
+configs/             the three shipped configurations
+experiments/         recorded results
+report/              main report sources and figures
+report_debug/        debug report sources
 ```
 
 ---

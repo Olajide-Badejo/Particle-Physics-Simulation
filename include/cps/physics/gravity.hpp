@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-#include "physics/hd_macros.hpp"
+#include "cps/physics/hd_macros.hpp"
 
 namespace cps {
 

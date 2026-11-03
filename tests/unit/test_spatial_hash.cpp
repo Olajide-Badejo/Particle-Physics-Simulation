@@ -8,7 +8,7 @@
 #include <set>
 #include <vector>
 
-#include "physics/spatial_hash.hpp"
+#include "cps/physics/spatial_hash.hpp"
 
 namespace {
 

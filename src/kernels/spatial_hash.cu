@@ -1,8 +1,8 @@
 #include <cub/device/device_radix_sort.cuh>
 
-#include "physics/spatial_hash.hpp"
-#include "solvers/sph_passes.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/physics/spatial_hash.hpp"
+#include "cps/solvers/sph_passes.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 namespace {

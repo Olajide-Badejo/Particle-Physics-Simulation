@@ -1,4 +1,4 @@
-#include "core/diagnostics.hpp"
+#include "cps/core/diagnostics.hpp"
 
 #include <charconv>
 #include <cmath>
@@ -10,7 +10,7 @@
 #include <system_error>
 #include <vector>
 
-#include "physics/gravity.hpp"
+#include "cps/physics/gravity.hpp"
 
 namespace cps {
 namespace {

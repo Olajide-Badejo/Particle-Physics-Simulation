@@ -1,5 +1,5 @@
-#include "solvers/nbody_solver.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/solvers/nbody_solver.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 namespace {

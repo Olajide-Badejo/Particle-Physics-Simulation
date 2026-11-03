@@ -3,12 +3,12 @@
 #include <exception>
 #include <string>
 
-#include "core/cli.hpp"
-#include "core/initial_conditions.hpp"
-#include "core/simulation_engine.hpp"
+#include "cps/core/cli.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/core/simulation_engine.hpp"
 #include "cps_version.hpp"
-#include "utils/cuda_helpers.hpp"
-#include "utils/progress.hpp"
+#include "cps/utils/cuda_helpers.hpp"
+#include "cps/utils/progress.hpp"
 
 int main(int argc, char** argv) {
     cps::CliOptions options;

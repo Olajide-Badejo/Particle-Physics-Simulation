@@ -1,4 +1,4 @@
-#include "core/initial_conditions.hpp"
+#include "cps/core/initial_conditions.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,9 +9,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "physics/hd_macros.hpp"
-#include "physics/spatial_hash.hpp"
-#include "physics/sph_kernels.hpp"
+#include "cps/physics/hd_macros.hpp"
+#include "cps/physics/spatial_hash.hpp"
+#include "cps/physics/sph_kernels.hpp"
 
 namespace cps {
 namespace {

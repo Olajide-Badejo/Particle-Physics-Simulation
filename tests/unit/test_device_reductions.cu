@@ -3,8 +3,8 @@
 #include <cmath>
 #include <vector>
 
-#include "core/diagnostics.hpp"
-#include "core/particle_system.hpp"
+#include "cps/core/diagnostics.hpp"
+#include "cps/core/particle_system.hpp"
 #include "test_support_gpu.hpp"
 
 namespace {

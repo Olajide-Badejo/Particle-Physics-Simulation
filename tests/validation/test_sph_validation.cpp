@@ -5,9 +5,9 @@
 #include <filesystem>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
-#include "physics/sph_kernels.hpp"
-#include "solvers/sph_solver.hpp"
+#include "cps/core/simulation_engine.hpp"
+#include "cps/physics/sph_kernels.hpp"
+#include "cps/solvers/sph_solver.hpp"
 #include "test_support_gpu.hpp"
 #include "validation/sph_fluid_config.hpp"
 

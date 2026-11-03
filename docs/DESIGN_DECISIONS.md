@@ -191,7 +191,7 @@ derived from the arithmetic.
 
 ## Build and tooling
 
-### An `include/physics` directory beyond the planned tree
+### An `include/cps/physics` directory beyond the planned tree
 
 The first layout listed `core`, `solvers` and `utils`. A fourth
 directory holds the host and device shared formulas. Added because the sharing

@@ -12,10 +12,10 @@
 #include <string>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
-#include "physics/spatial_hash.hpp"
-#include "solvers/sph_passes.hpp"
-#include "solvers/sph_solver.hpp"
+#include "cps/core/simulation_engine.hpp"
+#include "cps/physics/spatial_hash.hpp"
+#include "cps/solvers/sph_passes.hpp"
+#include "cps/solvers/sph_solver.hpp"
 #include "test_support_gpu.hpp"
 
 namespace fs = std::filesystem;

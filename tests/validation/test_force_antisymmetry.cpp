@@ -3,9 +3,9 @@
 #include <cmath>
 #include <vector>
 
-#include "core/particle_system.hpp"
-#include "physics/gravity.hpp"
-#include "solvers/nbody_solver.hpp"
+#include "cps/core/particle_system.hpp"
+#include "cps/physics/gravity.hpp"
+#include "cps/solvers/nbody_solver.hpp"
 #include "test_support_gpu.hpp"
 
 namespace {

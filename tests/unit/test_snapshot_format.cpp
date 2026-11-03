@@ -12,10 +12,10 @@
 #include <string>
 #include <vector>
 
-#include "core/config.hpp"
-#include "core/initial_conditions.hpp"
-#include "core/physics_fingerprint.hpp"
-#include "core/snapshot.hpp"
+#include "cps/core/config.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/core/physics_fingerprint.hpp"
+#include "cps/core/snapshot.hpp"
 
 namespace fs = std::filesystem;
 

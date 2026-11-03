@@ -152,7 +152,7 @@ the trajectory is unaffected.
 
 ## Snapshots
 
-The format is `CPS2`, laid out in `include/core/snapshot.hpp`: a 64 byte header, a
+The format is `CPS2`, laid out in `include/cps/core/snapshot.hpp`: a 64 byte header, a
 table with one 40 byte entry per array, and the payload. It records a 64 bit step, the
 simulated time, a physics fingerprint and a payload checksum. `CPS1` from `v1.0.0` is still
 read, with a warning, and never written.

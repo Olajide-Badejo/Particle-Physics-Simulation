@@ -2,8 +2,8 @@
 
 #include <cmath>
 
-#include "core/config.hpp"
-#include "core/snapshot.hpp"
+#include "cps/core/config.hpp"
+#include "cps/core/snapshot.hpp"
 
 namespace cps {
 

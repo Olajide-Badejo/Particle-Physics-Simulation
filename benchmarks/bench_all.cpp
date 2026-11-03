@@ -13,13 +13,13 @@
 #include <string>
 #include <vector>
 
-#include "core/bench_rows.hpp"
-#include "core/initial_conditions.hpp"
-#include "core/simulation_engine.hpp"
+#include "cps/core/bench_rows.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/core/simulation_engine.hpp"
 #include "cps_version.hpp"
-#include "solvers/nbody_solver.hpp"
-#include "utils/cuda_helpers.hpp"
-#include "utils/progress.hpp"
+#include "cps/solvers/nbody_solver.hpp"
+#include "cps/utils/cuda_helpers.hpp"
+#include "cps/utils/progress.hpp"
 
 namespace {
 

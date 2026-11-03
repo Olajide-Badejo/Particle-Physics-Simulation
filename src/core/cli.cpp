@@ -1,4 +1,4 @@
-#include "core/cli.hpp"
+#include "cps/core/cli.hpp"
 
 #include <cctype>
 #include <cerrno>

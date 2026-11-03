@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/cli.hpp"
+#include "cps/core/cli.hpp"
 
 namespace {
 

@@ -4,11 +4,11 @@
 #include <memory>
 #include <string>
 
-#include "core/config.hpp"
-#include "core/diagnostics.hpp"
-#include "core/particle_system.hpp"
-#include "core/snapshot.hpp"
-#include "solvers/sph_solver.hpp"
+#include "cps/core/config.hpp"
+#include "cps/core/diagnostics.hpp"
+#include "cps/core/particle_system.hpp"
+#include "cps/core/snapshot.hpp"
+#include "cps/solvers/sph_solver.hpp"
 
 namespace cps {
 

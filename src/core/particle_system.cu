@@ -1,4 +1,4 @@
-#include "core/particle_system.hpp"
+#include "cps/core/particle_system.hpp"
 
 #include <stdexcept>
 #include <utility>

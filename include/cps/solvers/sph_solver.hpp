@@ -2,10 +2,10 @@
 
 #include <cstdint>
 
-#include "core/config.hpp"
-#include "core/initial_conditions.hpp"
-#include "core/particle_system.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/core/config.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/core/particle_system.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 

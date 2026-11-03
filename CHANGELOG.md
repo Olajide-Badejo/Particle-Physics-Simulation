@@ -3,6 +3,14 @@
 All notable changes to this project are recorded here. The format follows Keep
 a Changelog, and the project uses semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** the public headers moved under `cps/`, from `include/core`, `include/physics`,
+  `include/solvers` and `include/utils` to `include/cps/core` and so on. Include them as
+  `#include "cps/core/config.hpp"`. The old paths have no forwarding headers.
+
 ## [1.1.0] 2026-11-03
 
 A hardening release. It adds no algorithm. It fixes correctness defects in input handling,

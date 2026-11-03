@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
-#include "solvers/sph_solver.hpp"
+#include "cps/core/simulation_engine.hpp"
+#include "cps/solvers/sph_solver.hpp"
 #include "test_support_gpu.hpp"
 
 namespace {

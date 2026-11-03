@@ -2,8 +2,8 @@
 
 #include <cstddef>
 
-#include "core/snapshot.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/core/snapshot.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 
