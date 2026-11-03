@@ -1,0 +1,7 @@
+# Every text file is stored and checked out with LF, whatever core.autocrlf says
+# on the machine. Windows git would otherwise write CRLF, WSL git would then see
+# those files as modified, and the build would stamp a false -dirty on results.
+* text=auto eol=lf
+*.bin binary
+*.pdf binary
+*.png binary
