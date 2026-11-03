@@ -24,6 +24,23 @@ exist precisely so that this cannot be quietly relaxed.
 | SPH interior density relative error | 0.0420 | < 0.05 | 1.2x |
 | SPH neighbour search against brute force | 3.20e-07 | < 1e-04 | 313x |
 
+## Thresholds stated before measuring (v1.1)
+
+These limits were committed before the v1.1 code that measures them existed, so
+they cannot have been fitted to its results.
+
+| quantity | limit | kind | source |
+|---|---|---|---|
+| Order of the double precision velocity Verlet energy error, orbit with eccentricity 0.5 | slope within 0.15 of 2 | gate | The method's order. The leading term of the modified Hamiltonian varies along an eccentric orbit. |
+| The same quantity on an unsoftened circular orbit | slope within 0.15 of 4 | gate | Rotational symmetry holds that leading term constant on a circular orbit, so the second order part of the energy error cancels. |
+| SPH interior mean density error with the calibrated mass | < 1 percent | consistency | Project decision. The calibration sets this value, so it shows the device density agrees with the host calibration and is not evidence of physical accuracy. |
+| SPH interior density RMS deviation | < 5 percent | gate | Project decision. Lattice jitter drives it and the calibration does not set it. |
+| SPH interior maximum density deviation | < 10 percent | sanity | Empirical bound, not derived. |
+
+A scratch model on the host informed the choice of orbit and predicts slopes of
+1.99 and 4.00 and an RMS deviation near 1.5 percent. Those are predictions, not
+measurements of this code.
+
 ## Two body energy drift
 
 **Theory.** Velocity Verlet is symplectic: it exactly conserves a modified
