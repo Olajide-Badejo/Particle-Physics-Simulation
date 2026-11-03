@@ -267,7 +267,30 @@ void SimulationEngine::step() {
     ++current_step_;
 }
 
+void SimulationEngine::check_device_errors() const {
+    if (sph_ && sph_->non_finite_position_seen()) {
+        throw std::runtime_error("non-finite positions detected by step " +
+                                 std::to_string(current_step_) +
+                                 ": the fluid has blown up, typically from too large a time step");
+    }
+}
+
+void SimulationEngine::check_state_finite(const HostParticleState& state) const {
+    for (std::size_t i = 0; i < state.size(); ++i) {
+        if (!(std::isfinite(state.x[i]) && std::isfinite(state.y[i]) &&
+              std::isfinite(state.z[i]) && std::isfinite(state.vx[i]) &&
+              std::isfinite(state.vy[i]) && std::isfinite(state.vz[i]))) {
+            throw std::runtime_error(
+                "non-finite state at step " + std::to_string(current_step_) + ": particle " +
+                std::to_string(i) +
+                " has a non-finite position or velocity. The state has blown up, typically from " +
+                "too large a time step");
+        }
+    }
+}
+
 Diagnostics SimulationEngine::diagnostics(bool include_potential) {
+    check_device_errors();
     if (config_.solver == SolverType::NBody && config_.variant == NBodyVariant::Fused) {
         // The fused kernel leaves a_n in the acceleration array, the force at
         // the positions it started from, but the synchronised velocity is
@@ -281,11 +304,24 @@ Diagnostics SimulationEngine::diagnostics(bool include_potential) {
     }
     const float half_dt = half_step_velocity_ ? 0.5f * config_.dt : 0.0f;
     const bool with_potential = include_potential && config_.solver == SolverType::NBody;
-    return reducer_->compute(*particles_, current_step_, simulated_time(), config_.softening,
-                             config_.gravitational_constant, with_potential, half_dt);
+    const Diagnostics row =
+        reducer_->compute(*particles_, current_step_, simulated_time(), config_.softening,
+                          config_.gravitational_constant, with_potential, half_dt);
+    if (!(std::isfinite(row.kinetic) && std::isfinite(row.potential) && std::isfinite(row.px) &&
+          std::isfinite(row.py) && std::isfinite(row.pz))) {
+        char buffer[192];
+        std::snprintf(buffer, sizeof(buffer),
+                      "kinetic energy %g, potential energy %g, momentum (%g, %g, %g)", row.kinetic,
+                      row.potential, row.px, row.py, row.pz);
+        throw std::runtime_error("non-finite diagnostics at step " +
+                                 std::to_string(current_step_) + ": " + buffer +
+                                 ". The state has blown up, typically from too large a time step");
+    }
+    return row;
 }
 
 void SimulationEngine::write_snapshot_now() const {
+    check_device_errors();
     Snapshot snapshot;
     snapshot.step = static_cast<uint64_t>(current_step_);
     snapshot.time = simulated_time();
@@ -295,6 +331,11 @@ void SimulationEngine::write_snapshot_now() const {
     snapshot.fingerprint_version = PHYSICS_FINGERPRINT_VERSION;
     snapshot.physics = physics_json(fields);
     particles_->download(snapshot.state);
+
+    // A resume trusts what it loads, so a blown-up state must never reach a
+    // checkpoint. Refusing here, before the writer has created anything, also
+    // leaves any older snapshot in place as the one to go back to.
+    check_state_finite(snapshot.state);
     write_snapshot(snapshot_path_for_step(config_.snapshot_dir, snapshot.step), snapshot);
 }
 
@@ -353,6 +394,15 @@ void SimulationEngine::run() {
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     bar.finish();
+    check_device_errors();
+
+    // The flag only sees positions at the start of a step, so it misses a NaN
+    // born in the last step, and N-body has no flag at all. Both clocks are
+    // accounted for here: the solver clock has stopped, and the wall clock,
+    // which covers everything run() does, is still running.
+    HostParticleState final_state;
+    particles_->download(final_state);
+    check_state_finite(final_state);
 
     if (writer_ && writer_->is_open() && config_.diagnostics_interval > 0 &&
         current_step_ % config_.diagnostics_interval != 0) {

@@ -46,4 +46,11 @@ struct SphDerivedParameters {
 
 SphDerivedParameters derive_sph_parameters(const Config& config);
 
+// Throws std::runtime_error unless |domain_min| / cell_size and
+// |domain_max| / cell_size are below SPH_DOMAIN_CELL_LIMIT on every axis. A non
+// finite ratio, such as one from a zero cell size, fails as well. Past the
+// limit two different cells could share a cell key, and the neighbour search
+// would mix up their particles without any error.
+void check_sph_domain_cell_range(const Vec3& domain_min, const Vec3& domain_max, float cell_size);
+
 }  // namespace cps

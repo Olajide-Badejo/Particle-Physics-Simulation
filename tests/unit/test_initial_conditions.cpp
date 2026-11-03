@@ -2,9 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <limits>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "core/initial_conditions.hpp"
+#include "physics/spatial_hash.hpp"
 
 namespace {
 
@@ -253,6 +258,99 @@ TEST(InitialConditions, DispatchOnTheConfiguredCase) {
     EXPECT_EQ(cps::make_initial_state(two_body_config()).size(), 2u);
     EXPECT_EQ(cps::make_initial_state(plummer_config(128)).size(), 128u);
     EXPECT_EQ(cps::make_initial_state(dam_break_config(512)).size(), 512u);
+}
+
+// The message of the error the check has to raise.
+std::string domain_error(const cps::Vec3& low, const cps::Vec3& high, float cell_size) {
+    try {
+        cps::check_sph_domain_cell_range(low, high, cell_size);
+    } catch (const std::runtime_error& error) {
+        return error.what();
+    }
+    ADD_FAILURE() << "expected the domain check to throw";
+    return "";
+}
+
+// Writes one value into one axis of a vector otherwise full of fill.
+cps::Vec3 with_axis(int axis, float value, float fill = 0.0f) {
+    cps::Vec3 v{fill, fill, fill};
+    (axis == 0 ? v.x : axis == 1 ? v.y : v.z) = value;
+    return v;
+}
+
+TEST(SphDomainCheck, AcceptsTheShippedDamBreak) {
+    const cps::Config config = cps::Config::from_json_file(
+        std::filesystem::path(CPS_PROJECT_ROOT) / "configs" / "dam_break_50k.json");
+    const float h = cps::derive_sph_parameters(config).smoothing_radius;
+    EXPECT_NO_THROW(
+        cps::check_sph_domain_cell_range(config.sph.domain_min, config.sph.domain_max, h));
+}
+
+TEST(SphDomainCheck, RejectsATooLargeDomainOnEachAxisAndNamesIt) {
+    const char* const names[] = {"axis x", "axis y", "axis z"};
+    for (int axis = 0; axis < 3; ++axis) {
+        SCOPED_TRACE(names[axis]);
+        const std::string high = domain_error({0.0f, 0.0f, 0.0f}, with_axis(axis, 2.0e5f), 0.1f);
+        EXPECT_NE(high.find(names[axis]), std::string::npos) << high;
+        EXPECT_NE(high.find("0.1"), std::string::npos) << high;
+        EXPECT_NE(high.find("200000"), std::string::npos) << high;
+        EXPECT_NE(high.find("raise the smoothing radius or shrink the domain"), std::string::npos)
+            << high;
+
+        const std::string low = domain_error(with_axis(axis, -2.0e5f), {1.0f, 1.0f, 1.0f}, 0.1f);
+        EXPECT_NE(low.find(names[axis]), std::string::npos) << low;
+    }
+}
+
+// 2^20 - 2 is exactly representable, as is the float just below it, and a cell
+// size of a half or of one divides exactly, so both sides of the limit can be
+// hit on the nose. The limit itself is out.
+TEST(SphDomainCheck, TheLimitIsExclusiveOnBothSidesOfZero) {
+    const float limit = static_cast<float>(cps::SPH_DOMAIN_CELL_LIMIT);
+    ASSERT_EQ(static_cast<double>(limit), 1048574.0);
+    const float below = std::nextafter(limit, 0.0f);
+
+    for (const float h : {1.0f, 0.5f}) {
+        SCOPED_TRACE(h);
+        const float at_limit = limit * h;
+        const float inside = below * h;
+        for (int axis = 0; axis < 3; ++axis) {
+            SCOPED_TRACE(axis);
+            EXPECT_NO_THROW(cps::check_sph_domain_cell_range({0.0f, 0.0f, 0.0f},
+                                                             with_axis(axis, inside), h));
+            EXPECT_THROW(cps::check_sph_domain_cell_range({0.0f, 0.0f, 0.0f},
+                                                          with_axis(axis, at_limit), h),
+                         std::runtime_error);
+            EXPECT_NO_THROW(cps::check_sph_domain_cell_range(with_axis(axis, -inside),
+                                                             {0.0f, 0.0f, 0.0f}, h));
+            EXPECT_THROW(cps::check_sph_domain_cell_range(with_axis(axis, -at_limit),
+                                                          {0.0f, 0.0f, 0.0f}, h),
+                         std::runtime_error);
+        }
+    }
+}
+
+// Every ratio the check can be shown fails it, whether it came out infinite or
+// NaN. A comparison written the other way round would wave a NaN through.
+TEST(SphDomainCheck, RejectsANonFiniteRatio) {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const cps::Vec3 origin{0.0f, 0.0f, 0.0f};
+    const cps::Vec3 unit{1.0f, 1.0f, 1.0f};
+
+    // x / 0 is infinite and 0 / 0 is NaN.
+    EXPECT_THROW(cps::check_sph_domain_cell_range(origin, unit, 0.0f), std::runtime_error);
+    EXPECT_THROW(cps::check_sph_domain_cell_range(origin, origin, 0.0f), std::runtime_error);
+    EXPECT_THROW(cps::check_sph_domain_cell_range(origin, unit, nan), std::runtime_error);
+    for (int axis = 0; axis < 3; ++axis) {
+        SCOPED_TRACE(axis);
+        EXPECT_THROW(cps::check_sph_domain_cell_range(origin, with_axis(axis, inf, 1.0f), 0.1f),
+                     std::runtime_error);
+        EXPECT_THROW(cps::check_sph_domain_cell_range(origin, with_axis(axis, nan, 1.0f), 0.1f),
+                     std::runtime_error);
+        EXPECT_THROW(cps::check_sph_domain_cell_range(with_axis(axis, -inf), unit, 0.1f),
+                     std::runtime_error);
+    }
 }
 
 }  // namespace

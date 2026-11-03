@@ -19,6 +19,7 @@ SphSolver::SphSolver(const Config& config, int count)
     if (!(cell_size_ > 0.0f)) {
         throw std::runtime_error("the derived smoothing radius is not positive");
     }
+    check_sph_domain_cell_range(config.sph.domain_min, config.sph.domain_max, cell_size_);
 
     // Twice the particle count keeps the average occupancy near one half, which
     // is where the collision rate stops mattering. A prime modulus is what
@@ -52,11 +53,14 @@ SphSolver::SphSolver(const Config& config, int count)
 
     collision_counter_.allocate(1);
     collision_counter_.zero();
+    non_finite_flag_.allocate(1);
+    non_finite_flag_.zero();
 }
 
 void SphSolver::hash_particles(ParticleSystem& particles) {
     sph_hash_particles(particles.x(), particles.y(), particles.z(), bucket_.get(), cell_key_.get(),
-                       index_.get(), count_, cell_size_, table_size_, block_size_);
+                       index_.get(), non_finite_flag_.get(), count_, cell_size_, table_size_,
+                       block_size_);
 }
 
 void SphSolver::sort_by_bucket() {
@@ -114,6 +118,13 @@ int SphSolver::count_bucket_collisions(ParticleSystem& particles) {
     CUDA_CHECK(cudaMemcpy(&host_value, collision_counter_.get(), sizeof(int),
                           cudaMemcpyDeviceToHost));
     return host_value;
+}
+
+bool SphSolver::non_finite_position_seen() const {
+    int host_value = 0;
+    CUDA_CHECK(cudaMemcpy(&host_value, non_finite_flag_.get(), sizeof(int),
+                          cudaMemcpyDeviceToHost));
+    return host_value != 0;
 }
 
 std::size_t SphSolver::device_bytes() const {

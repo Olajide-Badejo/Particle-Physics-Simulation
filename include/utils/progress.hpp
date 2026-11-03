@@ -18,6 +18,13 @@ class ProgressBar {
    public:
     ProgressBar(std::string label, long long total);
 
+    // Ends the bar's line if it is left unfinished, so that an error printed
+    // after an exception starts on a line of its own.
+    ~ProgressBar();
+
+    ProgressBar(const ProgressBar&) = delete;
+    ProgressBar& operator=(const ProgressBar&) = delete;
+
     // Safe to call every step; most calls return immediately.
     void update(long long current);
 
@@ -33,6 +40,7 @@ class ProgressBar {
     long long last_drawn_ = -1;
     bool tty_ = false;
     bool finished_ = false;
+    bool line_open_ = false;  // a terminal bar is drawn with no newline after it
     std::chrono::steady_clock::time_point start_;
     std::chrono::steady_clock::time_point last_draw_;
 };

@@ -55,6 +55,36 @@ CPS_HD CPS_INLINE int64_t cell_key(int ix, int iy, int iz) {
     return (bx << 42) | (by << 21) | bz;
 }
 
+// Reads the exponent bits rather than calling isfinite, so the answer cannot
+// depend on what a fast math build is allowed to assume about NaN.
+CPS_HD CPS_INLINE bool is_finite_component(float value) {
+    union {
+        float as_float;
+        uint32_t as_bits;
+    } pun;
+    pun.as_float = value;
+    return (pun.as_bits & 0x7F800000u) != 0x7F800000u;
+}
+
+CPS_HD CPS_INLINE bool position_is_finite(float x, float y, float z) {
+    return is_finite_component(x) && is_finite_component(y) && is_finite_component(z);
+}
+
+// The limit on |domain| / h per axis, enforced on the host when the fluid
+// solver is built. A position inside the domain then has a coordinate in
+// [-(2^20 - 2), 2^20 - 3], and the twenty seven cells around it stay inside
+// [-(2^20 - 1), 2^20 - 2], so every key field fits its 21 bits and no two
+// cells alias.
+inline constexpr int SPH_DOMAIN_CELL_LIMIT = CELL_KEY_BIAS - 2;
+
+// The cell a NaN or Inf position is filed under, since it has no real one. It
+// is the one coordinate the limit above leaves unreachable, so no finite
+// particle's neighbour search ever matches its key and a non finite particle
+// cannot contaminate the particles around it. Its bucket still comes from
+// spatial_hash, which keeps it inside the table and inside the digits the
+// radix sort walks.
+inline constexpr int NON_FINITE_CELL = CELL_KEY_BIAS - 1;
+
 // Smallest prime not less than n, used to size the hash table. A prime
 // modulus spreads the exclusive or of the three products far better than a
 // power of two mask, which would simply discard the high bits where most of

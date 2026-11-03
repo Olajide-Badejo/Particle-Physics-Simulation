@@ -82,7 +82,8 @@ int main(int argc, char** argv) {
         // Both figures divide by the steps this process ran, not by the step
         // index, which after a resume includes the steps before the snapshot.
         // Solver time covers only the step() calls; wall time also covers
-        // diagnostics, snapshot writes and the progress bar.
+        // diagnostics, snapshot writes, the progress bar and the final state
+        // check.
         const long long done = engine.steps_run();
         const double solver_ms = engine.solver_milliseconds();
         const double wall_ms = engine.wall_milliseconds();

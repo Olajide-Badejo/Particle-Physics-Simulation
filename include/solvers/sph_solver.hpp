@@ -15,7 +15,7 @@ namespace cps {
 // One step is six device passes:
 //
 //   1. hash      integer cell coordinate, hash bucket and exact cell key per
-//                particle
+//                particle; also where a non finite position is noticed
 //   2. sort      CUB radix sort of (bucket, index) pairs
 //   3. bounds    first and last entry of every occupied bucket
 //   4. gather    particle data permuted into sorted order, so the neighbour
@@ -33,6 +33,9 @@ namespace cps {
 // The permutation is kept. After a step the particle arrays are in cell sorted
 // order, which is the order the next step wants anyway, so the sort has an
 // effect that outlives the step that paid for it.
+//
+// The constructor refuses a domain too large for the cell size, which is what
+// keeps every finite position's cell key free of aliasing.
 class SphSolver {
    public:
     SphSolver(const Config& config, int count);
@@ -51,6 +54,14 @@ class SphSolver {
     // Number of particles whose bucket collided with another occupied cell,
     // reported once at start up as a health check on the hash.
     int count_bucket_collisions(ParticleSystem& particles);
+
+    // True once a hash pass has met a NaN or Inf position. It stays set for
+    // the life of the solver, because the wall clamp turns an infinite
+    // position back into a finite one and leaves nothing later to find. Reading
+    // it synchronises with the device, so it is not for use on every step. A
+    // position that first goes bad in a step's update is only seen by the hash
+    // pass of the following step.
+    bool non_finite_position_seen() const;
 
     std::size_t device_bytes() const;
 
@@ -86,6 +97,7 @@ class SphSolver {
 
     DeviceBuffer<char> sort_temp_;
     DeviceBuffer<int> collision_counter_;
+    DeviceBuffer<int> non_finite_flag_;
 };
 
 }  // namespace cps

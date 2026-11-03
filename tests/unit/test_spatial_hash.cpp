@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <random>
 #include <set>
@@ -138,6 +139,54 @@ TEST(SpatialHash, DistinctNeighbouringCellsGetDistinctKeys) {
         }
     }
     EXPECT_EQ(keys.size(), 27u);
+}
+
+TEST(SpatialHash, FiniteTestSeparatesNaNAndInfinityFromEveryFiniteValue) {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    for (const float bad : {nan, -nan, inf, -inf, std::numeric_limits<float>::signaling_NaN()}) {
+        SCOPED_TRACE(bad);
+        EXPECT_FALSE(cps::is_finite_component(bad));
+        EXPECT_FALSE(cps::position_is_finite(bad, 0.0f, 0.0f));
+        EXPECT_FALSE(cps::position_is_finite(0.0f, bad, 0.0f));
+        EXPECT_FALSE(cps::position_is_finite(0.0f, 0.0f, bad));
+    }
+    for (const float good : {0.0f, -0.0f, 1.5f, -1.5f, std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::lowest(),
+                             std::numeric_limits<float>::min(),
+                             std::numeric_limits<float>::denorm_min()}) {
+        SCOPED_TRACE(good);
+        EXPECT_TRUE(cps::is_finite_component(good));
+        EXPECT_TRUE(cps::position_is_finite(good, good, good));
+    }
+}
+
+// A finite particle inside a domain the host check accepted must never be able
+// to look in the sentinel cell: its coordinate reaches 2^20 - 3 at most, and
+// the search around it 2^20 - 2. The sentinel is one past that, and every
+// field of its key still fits in 21 bits.
+TEST(SpatialHash, TheSentinelCellIsOutOfReachOfAnyAllowedSearch) {
+    EXPECT_EQ(cps::NON_FINITE_CELL, cps::SPH_DOMAIN_CELL_LIMIT + 1);
+    const int s = cps::NON_FINITE_CELL;
+    EXPECT_EQ(cps::cell_key(s, s, s), std::numeric_limits<int64_t>::max());
+
+    const float limit = static_cast<float>(cps::SPH_DOMAIN_CELL_LIMIT);
+    const float highest_position = std::nextafter(limit, 0.0f);
+    const int highest_cell = cps::cell_coordinate(highest_position, 1.0f);
+    const int lowest_cell = cps::cell_coordinate(-highest_position, 1.0f);
+    EXPECT_EQ(highest_cell, cps::SPH_DOMAIN_CELL_LIMIT - 1);
+    EXPECT_EQ(lowest_cell, -cps::SPH_DOMAIN_CELL_LIMIT);
+    EXPECT_LT(highest_cell + 1, s);
+
+    // The extreme corners of the search keep their fields apart, so the
+    // highest allowed key on each axis stays below the sentinel's and the
+    // lowest stays positive.
+    const int top = highest_cell + 1;
+    const int bottom = lowest_cell - 1;
+    EXPECT_LT(cps::cell_key(top, top, top), cps::cell_key(s, s, s));
+    EXPECT_GT(cps::cell_key(bottom, bottom, bottom), 0);
+    EXPECT_NE(cps::cell_key(top, bottom, bottom), cps::cell_key(bottom, top, bottom));
+    EXPECT_NE(cps::cell_key(bottom, top, bottom), cps::cell_key(bottom, bottom, top));
 }
 
 }  // namespace

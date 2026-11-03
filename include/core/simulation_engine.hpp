@@ -15,9 +15,9 @@ namespace cps {
 // Owns the device state and drives the loop.
 //
 // The engine holds no particle data on the host. Configuration, diagnostics
-// accumulators and the snapshot staging buffer are the only host allocations
-// that scale with the particle count, and the staging buffer is only touched
-// when a snapshot is actually written.
+// accumulators and the staging buffer are the only host allocations that scale
+// with the particle count, and the staging buffer is only touched when a
+// snapshot is written and once at the end of run().
 class SimulationEngine {
    public:
     explicit SimulationEngine(Config config);
@@ -44,11 +44,30 @@ class SimulationEngine {
     // their configured cadences and drawing a progress bar. After initialize()
     // the diagnostics file starts afresh; after resume() it is continued (see
     // the resuming DiagnosticsWriter constructor).
+    //
+    // A blown-up state stops the run with std::runtime_error naming the step,
+    // through the checks in diagnostics() and write_snapshot_now(), and once
+    // the steps are done through check_device_errors() and a host scan of the
+    // downloaded state. They run only on those cadences, because a check on
+    // every step would add a device sync to the solver path. A run with
+    // diagnostics and snapshots both disabled therefore has no periodic check,
+    // but it is checked once at the end.
     void run();
 
+    // Throws std::runtime_error naming the current step if the row would hold a
+    // non-finite kinetic energy, potential energy or momentum, or if
+    // check_device_errors() would throw.
     Diagnostics diagnostics(bool include_potential = true);
 
+    // Throws std::runtime_error, leaving no new file and any older snapshot
+    // untouched, if check_device_errors() would throw or if any position or
+    // velocity is non-finite, naming the step and the first bad particle.
     void write_snapshot_now() const;
+
+    // Reads the fluid solver's non-finite position flag and throws
+    // std::runtime_error naming the current step if it is set. N-body has no
+    // such flag, so this does nothing there. Synchronises with the device.
+    void check_device_errors() const;
 
     ParticleSystem& particles() { return *particles_; }
     const ParticleSystem& particles() const { return *particles_; }
@@ -79,8 +98,8 @@ class SimulationEngine {
     // wall_milliseconds() is host wall clock time from the start of run() to
     // its return, not counting an initialize() or resume() done beforehand:
     // the steps, every diagnostic (the opening and closing rows included),
-    // snapshot writes and the progress bar. It is never less than the solver
-    // time.
+    // snapshot writes, the progress bar and the state check at the end. It is
+    // never less than the solver time.
     //
     // steps_run() counts the steps run() advanced in this process. After a
     // resume it excludes the steps before the snapshot, so dividing either
@@ -93,6 +112,9 @@ class SimulationEngine {
     void step_nbody_split();
     void step_nbody_fused();
     void ensure_velocity_convention(bool want_half_step);
+    // Throws std::runtime_error naming the current step and the first particle
+    // with a non-finite position or velocity.
+    void check_state_finite(const HostParticleState& state) const;
     void check_physics(const Snapshot& snapshot, const std::filesystem::path& path,
                        bool force) const;
     // A negative resume_step starts the file afresh; otherwise the file is

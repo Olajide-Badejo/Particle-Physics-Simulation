@@ -2,10 +2,13 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <random>
 #include <stdexcept>
+#include <string>
 
 #include "physics/hd_macros.hpp"
+#include "physics/spatial_hash.hpp"
 
 namespace cps {
 namespace {
@@ -200,6 +203,33 @@ SphDerivedParameters derive_sph_parameters(const Config& config) {
     const double h = derived.smoothing_radius;
     derived.expected_neighbour_count = (4.0 / 3.0) * PI_D * h * h * h * n / volume;
     return derived;
+}
+
+void check_sph_domain_cell_range(const Vec3& domain_min, const Vec3& domain_max, float cell_size) {
+    const struct {
+        const char* name;
+        float low;
+        float high;
+    } axes[] = {{"x", domain_min.x, domain_max.x},
+                {"y", domain_min.y, domain_max.y},
+                {"z", domain_min.z, domain_max.z}};
+
+    // Single precision division, which is what cell_coordinate does with a
+    // position on the wall. The comparison is written so a NaN ratio fails it.
+    const float limit = static_cast<float>(SPH_DOMAIN_CELL_LIMIT);
+    for (const auto& axis : axes) {
+        if (std::abs(axis.low / cell_size) < limit && std::abs(axis.high / cell_size) < limit) {
+            continue;
+        }
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer),
+                      "the domain [%g, %g] on axis %s is too large for cell size %g: ",
+                      static_cast<double>(axis.low), static_cast<double>(axis.high), axis.name,
+                      static_cast<double>(cell_size));
+        throw std::runtime_error(std::string(buffer) + "|domain| / cell size must stay below " +
+                                 std::to_string(SPH_DOMAIN_CELL_LIMIT) +
+                                 " on every axis; raise the smoothing radius or shrink the domain");
+    }
 }
 
 HostParticleState make_dam_break(const Config& config) {

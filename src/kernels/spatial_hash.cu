@@ -10,17 +10,29 @@ namespace {
 __global__ void hash_particles_kernel(const float* __restrict__ x, const float* __restrict__ y,
                                       const float* __restrict__ z, uint32_t* __restrict__ bucket,
                                       int64_t* __restrict__ cell_key, uint32_t* __restrict__ index,
-                                      int count, float cell_size, uint32_t table_size) {
+                                      int* __restrict__ non_finite_flag, int count, float cell_size,
+                                      uint32_t table_size) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) {
         return;
     }
-    const int ix = cell_coordinate(x[i], cell_size);
-    const int iy = cell_coordinate(y[i], cell_size);
-    const int iz = cell_coordinate(z[i], cell_size);
+    const float px = x[i];
+    const float py = y[i];
+    const float pz = z[i];
+    index[i] = static_cast<uint32_t>(i);
+    // The atomic sits in the failure branch, so a healthy step pays for the
+    // test and nothing else.
+    if (!position_is_finite(px, py, pz)) {
+        bucket[i] = spatial_hash(NON_FINITE_CELL, NON_FINITE_CELL, NON_FINITE_CELL, table_size);
+        cell_key[i] = cps::cell_key(NON_FINITE_CELL, NON_FINITE_CELL, NON_FINITE_CELL);
+        atomicOr(non_finite_flag, 1);
+        return;
+    }
+    const int ix = cell_coordinate(px, cell_size);
+    const int iy = cell_coordinate(py, cell_size);
+    const int iz = cell_coordinate(pz, cell_size);
     bucket[i] = spatial_hash(ix, iy, iz, table_size);
     cell_key[i] = cps::cell_key(ix, iy, iz);
-    index[i] = static_cast<uint32_t>(i);
 }
 
 __global__ void clear_cell_bounds_kernel(uint32_t* __restrict__ cell_start,
@@ -111,13 +123,14 @@ int significant_bits(uint32_t table_size) {
 }  // namespace
 
 void sph_hash_particles(const float* x, const float* y, const float* z, uint32_t* bucket,
-                        int64_t* cell_key, uint32_t* index, int count, float cell_size,
-                        uint32_t table_size, int block_size, cudaStream_t stream) {
+                        int64_t* cell_key, uint32_t* index, int* non_finite_flag, int count,
+                        float cell_size, uint32_t table_size, int block_size,
+                        cudaStream_t stream) {
     if (count <= 0) {
         return;
     }
     hash_particles_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
-        x, y, z, bucket, cell_key, index, count, cell_size, table_size);
+        x, y, z, bucket, cell_key, index, non_finite_flag, count, cell_size, table_size);
     CUDA_CHECK(cudaGetLastError());
 }
 

@@ -30,6 +30,13 @@ ProgressBar::ProgressBar(std::string label, long long total)
       start_(std::chrono::steady_clock::now()),
       last_draw_(std::chrono::steady_clock::now() - std::chrono::seconds(1)) {}
 
+ProgressBar::~ProgressBar() {
+    if (line_open_) {
+        std::fputc('\n', stderr);
+        std::fflush(stderr);
+    }
+}
+
 double ProgressBar::elapsed_seconds() const {
     const auto now = std::chrono::steady_clock::now();
     return std::chrono::duration<double>(now - start_).count();
@@ -77,6 +84,7 @@ void ProgressBar::draw(long long current, bool final_draw) {
         if (final_draw) {
             std::fprintf(stderr, "\n");
         }
+        line_open_ = !final_draw;
         std::fflush(stderr);
         return;
     }

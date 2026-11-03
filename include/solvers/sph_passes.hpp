@@ -13,9 +13,13 @@ namespace cps {
 
 inline constexpr uint32_t CELL_EMPTY = 0xFFFFFFFFu;
 
+// A NaN or Inf position is filed under NON_FINITE_CELL and sets the device int
+// non_finite_flag to one. The pass only ever sets the flag; clearing it is up
+// to the caller. Finite positions are not affected.
 void sph_hash_particles(const float* x, const float* y, const float* z, uint32_t* bucket,
-                        int64_t* cell_key, uint32_t* index, int count, float cell_size,
-                        uint32_t table_size, int block_size, cudaStream_t stream = nullptr);
+                        int64_t* cell_key, uint32_t* index, int* non_finite_flag, int count,
+                        float cell_size, uint32_t table_size, int block_size,
+                        cudaStream_t stream = nullptr);
 
 std::size_t sph_sort_temp_bytes(int count, uint32_t table_size);
 
