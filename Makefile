@@ -91,8 +91,12 @@ validate: build
 record-results: build
 	cd $(BUILD_DIR) && CPS_RECORD_GATES=1 $(CTEST) --output-on-failure
 
+# The sweep runs from a temporary copy of the binary, because where a binary loads
+# from moves its timings: byte identical copies differed by up to 0.7 percent between
+# a WSL mount of a Windows drive and tmpfs. The rows still go to experiments/results.
 bench: build
-	./$(BUILD_DIR)/bin/bench_all --tile-sweep
+	@tmp="$$(mktemp -d)"; cp $(BUILD_DIR)/bin/bench_all "$$tmp/"; \
+		"$$tmp/bench_all" --tile-sweep; rc=$$?; rm -rf "$$tmp"; exit $$rc
 
 # A smoke test of the driver, on whatever tree is checked out. Its rows go to the
 # temporary directory and are labelled as quick, so they can never pass for

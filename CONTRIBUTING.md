@@ -101,6 +101,11 @@ a kernel, rerun `make bench` and regenerate. `make profile` follows the same rul
 its scripts refuse a dirty tree or a binary older than the checkout, and take `--out` with
 `--allow-dirty` for a trial run somewhere else.
 
+**Compare binaries from one filesystem.** Byte identical copies of one binary differ by up to
+0.7 percent between a WSL mount of a Windows drive and tmpfs, so a comparison that loads one
+binary from each measures the mount. Copy both to `/tmp` and interleave them. `make bench`
+runs from a temporary copy for this reason.
+
 **A claim must clear the drift.** A performance difference is quoted only if it
 exceeds the session drift, the `RepeatabilitySpread` metric, or it is worded as not
 resolved. Compare variants with the paired ratios from the raw trials, with their IQR.
