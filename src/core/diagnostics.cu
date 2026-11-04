@@ -162,48 +162,53 @@ DiagnosticsReducer::DiagnosticsReducer(int count, int block_size)
     partial_blocks_ = capped;
     partials_.allocate(static_cast<std::size_t>(4 * partial_blocks_));
     partials1_.allocate(static_cast<std::size_t>(grid_for(count, DIAG_BLOCK)));
+    partials_host_.allocate(partials_.count());
+    partials1_host_.allocate(partials1_.count());
 }
 
 void DiagnosticsReducer::reduce_kinetic_and_momentum(const ParticleSystem& particles,
                                                      double& kinetic, double& px, double& py,
-                                                     double& pz, float half_dt) {
+                                                     double& pz, float half_dt,
+                                                     cudaStream_t stream) {
     const int grid = partial_blocks_;
-    kinetic_momentum_kernel<<<grid, DIAG_BLOCK>>>(
+    kinetic_momentum_kernel<<<grid, DIAG_BLOCK, 0, stream>>>(
         particles.vx(), particles.vy(), particles.vz(), particles.ax(), particles.ay(),
         particles.az(), particles.mass(), count_, half_dt, partials_.get());
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 
-    std::vector<double> host(static_cast<std::size_t>(4 * grid));
-    CUDA_CHECK(cudaMemcpy(host.data(), partials_.get(), host.size() * sizeof(double),
-                          cudaMemcpyDeviceToHost));
+    copy_to_host_async(partials_host_.get(), partials_.get(), partials_.count(), stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    const double* host = partials_host_.get();
 
     kinetic = 0.0;
     px = 0.0;
     py = 0.0;
     pz = 0.0;
     for (int b = 0; b < grid; ++b) {
-        kinetic += host[static_cast<std::size_t>(4 * b + 0)];
-        px += host[static_cast<std::size_t>(4 * b + 1)];
-        py += host[static_cast<std::size_t>(4 * b + 2)];
-        pz += host[static_cast<std::size_t>(4 * b + 3)];
+        kinetic += host[4 * b + 0];
+        px += host[4 * b + 1];
+        py += host[4 * b + 2];
+        pz += host[4 * b + 3];
     }
 }
 
 double DiagnosticsReducer::reduce_potential(const ParticleSystem& particles, float softening,
-                                            float gravitational_constant) {
+                                            float gravitational_constant, cudaStream_t stream) {
     const int grid = grid_for(count_, DIAG_BLOCK);
-    potential_kernel<<<grid, DIAG_BLOCK>>>(particles.x(), particles.y(), particles.z(),
-                                           particles.mass(), count_, softening * softening,
-                                           partials1_.get());
+    potential_kernel<<<grid, DIAG_BLOCK, 0, stream>>>(particles.x(), particles.y(), particles.z(),
+                                                      particles.mass(), count_,
+                                                      softening * softening, partials1_.get());
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 
-    std::vector<double> host(static_cast<std::size_t>(grid));
-    CUDA_CHECK(cudaMemcpy(host.data(), partials1_.get(), host.size() * sizeof(double),
-                          cudaMemcpyDeviceToHost));
+    copy_to_host_async(partials1_host_.get(), partials1_.get(), partials1_.count(), stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    const double* host = partials1_host_.get();
 
     double sum = 0.0;
     for (int b = 0; b < grid; ++b) {
-        sum += host[static_cast<std::size_t>(b)];
+        sum += host[b];
     }
     return 0.5 * static_cast<double>(gravitational_constant) * sum;
 }
@@ -211,13 +216,14 @@ double DiagnosticsReducer::reduce_potential(const ParticleSystem& particles, flo
 Diagnostics DiagnosticsReducer::compute(const ParticleSystem& particles, long long step,
                                         double time, float softening,
                                         float gravitational_constant, bool include_potential,
-                                        float half_dt) {
+                                        float half_dt, cudaStream_t stream) {
     Diagnostics row;
     row.step = step;
     row.time = time;
-    reduce_kinetic_and_momentum(particles, row.kinetic, row.px, row.py, row.pz, half_dt);
-    row.potential =
-        include_potential ? reduce_potential(particles, softening, gravitational_constant) : 0.0;
+    reduce_kinetic_and_momentum(particles, row.kinetic, row.px, row.py, row.pz, half_dt, stream);
+    row.potential = include_potential
+                        ? reduce_potential(particles, softening, gravitational_constant, stream)
+                        : 0.0;
     row.total = row.kinetic + row.potential;
     row.momentum_magnitude = std::sqrt(row.px * row.px + row.py * row.py + row.pz * row.pz);
     return row;

@@ -41,16 +41,18 @@ class SphSolver {
    public:
     SphSolver(const Config& config, int count);
 
-    void step(ParticleSystem& particles, float dt);
+    // Enqueues the six passes on the stream and returns without waiting for them.
+    void step(ParticleSystem& particles, float dt, cudaStream_t stream);
 
     // Runs passes one to five only. The tests use it to inspect the neighbour
     // structure and the density field without advancing time.
-    void build_neighbours_and_density(ParticleSystem& particles);
+    void build_neighbours_and_density(ParticleSystem& particles, cudaStream_t stream);
 
     // Device arrays in cell sorted order, not particle order: density()[k] and
     // pressure()[k] belong to the particle at index sorted_index()[k] of the
     // particle arrays the last pass read. Reading them against those arrays by
-    // the same k pairs each value with a different particle.
+    // the same k pairs each value with a different particle. Reading them from
+    // the host means draining the stream the passes ran on first.
     const float* density() const { return density_.get(); }
     const float* pressure() const { return pressure_.get(); }
     const uint32_t* sorted_index() const { return index_sorted_.get(); }
@@ -58,24 +60,24 @@ class SphSolver {
     const SphDerivedParameters& derived() const { return derived_; }
 
     // Number of particles whose bucket collided with another occupied cell,
-    // reported once at start up as a health check on the hash.
-    int count_bucket_collisions(ParticleSystem& particles);
+    // reported once at start up as a health check on the hash. Drains the stream.
+    int count_bucket_collisions(ParticleSystem& particles, cudaStream_t stream);
 
     // True once a hash pass has met a NaN or Inf position. It stays set for
     // the life of the solver, because the wall clamp turns an infinite
     // position back into a finite one and leaves nothing later to find. Reading
-    // it synchronises with the device, so it is not for use on every step. A
-    // position that first goes bad in a step's update is only seen by the hash
-    // pass of the following step.
-    bool non_finite_position_seen() const;
+    // it drains the stream, which has to be the one the passes ran on, so it is
+    // not for use on every step. A position that first goes bad in a step's
+    // update is only seen by the hash pass of the following step.
+    bool non_finite_position_seen(cudaStream_t stream) const;
 
     std::size_t device_bytes() const;
 
    private:
-    void hash_particles(ParticleSystem& particles);
-    void sort_by_bucket();
-    void compute_cell_bounds();
-    void gather_sorted(ParticleSystem& particles);
+    void hash_particles(ParticleSystem& particles, cudaStream_t stream);
+    void sort_by_bucket(cudaStream_t stream);
+    void compute_cell_bounds(cudaStream_t stream);
+    void gather_sorted(ParticleSystem& particles, cudaStream_t stream);
 
     Config config_;
     SphDerivedParameters derived_{};
@@ -104,6 +106,10 @@ class SphSolver {
     DeviceBuffer<char> sort_temp_;
     DeviceBuffer<int> collision_counter_;
     DeviceBuffer<int> non_finite_flag_;
+
+    // Where the two single int reads above land. Reading the flag is logically
+    // const, and it does not change anything the solver computes.
+    mutable HostBuffer<int> scalar_staging_;
 };
 
 }  // namespace cps

@@ -33,6 +33,11 @@ struct Diagnostics {
 // The reduction is also deterministic: block partials are written to a buffer
 // and summed in a fixed order by a single block, rather than being accumulated
 // with atomics whose ordering varies between launches.
+//
+// Each reduction launches on the stream it is given, so it sees everything
+// already enqueued there, copies its partials back on the same stream, and
+// drains the stream before summing them on the host. The stream has no default:
+// see nbody_solver.hpp. That is also why half_dt, which comes before it, has none.
 class DiagnosticsReducer {
    public:
     explicit DiagnosticsReducer(int count, int block_size = 256);
@@ -50,16 +55,16 @@ class DiagnosticsReducer {
     // acceleration array has to hold a_{n+1} for that to be the synchronised
     // velocity, so the engine refreshes it first on the fused path.
     void reduce_kinetic_and_momentum(const ParticleSystem& particles, double& kinetic, double& px,
-                                     double& py, double& pz, float half_dt = 0.0f);
+                                     double& py, double& pz, float half_dt, cudaStream_t stream);
 
     // Softened gravitational potential energy, order N squared. Each unordered
     // pair is visited twice by the all pairs sum, so the result is halved.
     double reduce_potential(const ParticleSystem& particles, float softening,
-                            float gravitational_constant);
+                            float gravitational_constant, cudaStream_t stream);
 
     Diagnostics compute(const ParticleSystem& particles, long long step, double time,
                         float softening, float gravitational_constant, bool include_potential,
-                        float half_dt = 0.0f);
+                        float half_dt, cudaStream_t stream);
 
    private:
     int count_ = 0;
@@ -67,6 +72,8 @@ class DiagnosticsReducer {
     int partial_blocks_ = 0;
     DeviceBuffer<double> partials_;   // four doubles per block
     DeviceBuffer<double> partials1_;  // one double per block
+    HostBuffer<double> partials_host_;
+    HostBuffer<double> partials1_host_;
     DeviceBuffer<double> result_;
 };
 

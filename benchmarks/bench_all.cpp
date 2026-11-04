@@ -226,12 +226,13 @@ void warm_up_and_calibrate(Contender& contender, const Protocol& protocol) {
     for (int i = 0; i < protocol.warmup_steps; ++i) {
         contender.step();
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    contender.engine->synchronize();
 
+    const cudaStream_t stream = contender.engine->stream();
     cps::CudaTimer probe;
-    probe.start();
+    probe.start(stream);
     contender.step();
-    contender.single_step_ms = static_cast<double>(probe.stop());
+    contender.single_step_ms = static_cast<double>(probe.stop(stream));
     contender.timed_steps = steps_per_trial(contender.single_step_ms, protocol);
 }
 
@@ -244,18 +245,19 @@ void measure_group(std::vector<Contender>& group, const Protocol& protocol) {
     for (int round = 0; round < protocol.trials; ++round) {
         for (std::size_t position = 0; position < size; ++position) {
             Contender& contender = group[(position + static_cast<std::size_t>(round)) % size];
+            const cudaStream_t stream = contender.engine->stream();
             cps::CudaTimer timer;
-            timer.start();
+            timer.start(stream);
             for (int step = 0; step < contender.timed_steps; ++step) {
                 contender.step();
             }
-            const double elapsed = static_cast<double>(timer.stop());
+            const double elapsed = static_cast<double>(timer.stop(stream));
             contender.trial_ms.push_back(elapsed / static_cast<double>(contender.timed_steps));
         }
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
     // A timing of a blown-up fluid would still look like a timing.
     for (Contender& contender : group) {
+        contender.engine->synchronize();
         contender.engine->check_device_errors();
     }
 }
@@ -512,7 +514,8 @@ std::vector<PlannedGroup> plan_ladder(bool quick) {
 // answer belongs in the debug report with numbers behind it.
 //
 // The engine uses the default tile width, so the sweep drives the kernels
-// directly rather than through engine.step(). It keeps the engine for its state.
+// directly rather than through engine.step(). It keeps the engine for its state
+// and its stream.
 // Both variants time a whole step, the sequence engine.step() runs, so a width
 // can be compared across variants as well as within one.
 std::vector<Contender> make_tile_sweep_group(int count) {
@@ -522,28 +525,29 @@ std::vector<Contender> make_tile_sweep_group(int count) {
             Contender contender = make_contender(nbody_config(variant, count));
             contender.tile_size = tile;
             cps::ParticleSystem* particles = &contender.engine->particles();
+            const cudaStream_t stream = contender.engine->stream();
             const cps::Config config = contender.config;
-            contender.step = [particles, config, variant, count, tile]() {
+            contender.step = [particles, stream, config, variant, count, tile]() {
                 if (variant == cps::NBodyVariant::Tiled) {
                     cps::integrate_verlet_position(
                         particles->x(), particles->y(), particles->z(), particles->vx(),
                         particles->vy(), particles->vz(), particles->ax(), particles->ay(),
-                        particles->az(), count, config.dt, config.block_size);
+                        particles->az(), count, config.dt, config.block_size, stream);
                     cps::compute_forces_tiled(particles->x(), particles->y(), particles->z(),
                                               particles->mass(), particles->ax(), particles->ay(),
                                               particles->az(), count, config.softening,
                                               config.gravitational_constant, config.block_size,
-                                              tile);
+                                              tile, stream);
                     cps::integrate_verlet_velocity(particles->vx(), particles->vy(), particles->vz(),
                                                    particles->ax(), particles->ay(), particles->az(),
-                                                   count, config.dt, config.block_size);
+                                                   count, config.dt, config.block_size, stream);
                 } else {
                     cps::nbody_fused_step(
                         particles->x(), particles->y(), particles->z(), particles->x_next(),
                         particles->y_next(), particles->z_next(), particles->vx(), particles->vy(),
                         particles->vz(), particles->ax(), particles->ay(), particles->az(),
                         particles->mass(), count, config.softening, config.gravitational_constant,
-                        config.dt, config.block_size, tile);
+                        config.dt, config.block_size, tile, stream);
                     particles->swap_position_buffers();
                 }
             };

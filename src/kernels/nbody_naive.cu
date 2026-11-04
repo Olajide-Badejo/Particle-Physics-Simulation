@@ -56,6 +56,7 @@ void compute_forces_naive(const float* x, const float* y, const float* z, const 
     compute_forces_naive_kernel<<<grid, block_size, 0, stream>>>(
         x, y, z, mass, ax, ay, az, count, softening * softening, gravitational_constant);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps

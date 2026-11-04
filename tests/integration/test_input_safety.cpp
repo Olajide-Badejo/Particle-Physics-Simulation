@@ -67,9 +67,9 @@ cps::Config nbody_config(cps::NBodyVariant variant, int count, long long steps) 
 void edit_state(cps::SimulationEngine& engine,
                 const std::function<void(cps::HostParticleState&)>& edit) {
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     edit(state);
-    engine.particles().upload(state);
+    engine.particles().upload(state, engine.stream());
 }
 
 // The message of the std::runtime_error the call has to raise.
@@ -164,7 +164,7 @@ TEST(InputSafetyHash, NonFinitePositionsGetTheSentinelAndFinitePositionsDoNotCha
     CUDA_CHECK(cudaMemcpy(dz.get(), z.data(), dz.bytes(), cudaMemcpyHostToDevice));
 
     cps::sph_hash_particles(dx.get(), dy.get(), dz.get(), bucket.get(), key.get(), index.get(),
-                            flag.get(), count, cell, table, 128);
+                            flag.get(), count, cell, table, 128, nullptr);
 
     std::vector<uint32_t> host_bucket(count), host_index(count);
     std::vector<int64_t> host_key(count);
@@ -262,7 +262,7 @@ TEST(InputSafetySph, ANaNParticleDoesNotContaminateItsNeighbours) {
     engine.step();
     CUDA_CHECK(cudaDeviceSynchronize());
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     EXPECT_EQ(count_non_finite_particles(state), 1);
 }
 
@@ -277,7 +277,7 @@ TEST(InputSafetySph, TheFlagRemembersAnInfinityTheWallsHaveAlreadyHealed) {
     engine.step();
     CUDA_CHECK(cudaDeviceSynchronize());
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     EXPECT_EQ(count_non_finite_particles(state), 0);
     EXPECT_TRUE(has_text(error_from([&] { engine.check_device_errors(); }), "by step 1:"));
     EXPECT_TRUE(has_text(error_from([&] { engine.diagnostics(); }), "by step 1:"));
@@ -303,21 +303,22 @@ TEST(InputSafetySph, TheSolverFlagReadsClearUntilABadPositionIsHashed) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = sph_config(2000, 0);
     cps::HostParticleState state = cps::make_initial_state(config);
+    const cps::Stream stream;
     cps::ParticleSystem particles(config.num_particles);
-    particles.upload(state);
+    particles.upload(state, stream.get());
 
     cps::SphSolver solver(config, config.num_particles);
-    EXPECT_FALSE(solver.non_finite_position_seen());
+    EXPECT_FALSE(solver.non_finite_position_seen(stream.get()));
     for (int i = 0; i < 200; ++i) {
-        solver.step(particles, config.dt);
+        solver.step(particles, config.dt, stream.get());
     }
-    EXPECT_FALSE(solver.non_finite_position_seen());
+    EXPECT_FALSE(solver.non_finite_position_seen(stream.get()));
 
-    particles.download(state);
+    particles.download(state, stream.get());
     state.z[3] = NOT_A_NUMBER;
-    particles.upload(state);
-    solver.step(particles, config.dt);
-    EXPECT_TRUE(solver.non_finite_position_seen());
+    particles.upload(state, stream.get());
+    solver.step(particles, config.dt, stream.get());
+    EXPECT_TRUE(solver.non_finite_position_seen(stream.get()));
 }
 
 TEST(InputSafetySph, TheSolverRefusesADomainTooLargeForItsCellSize) {

@@ -49,7 +49,7 @@ cps::Config plummer_config(cps::NBodyVariant variant, int count, long long steps
 // drift by the total would divide by noise.
 double momentum_scale(cps::SimulationEngine& engine) {
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     double scale = 0.0;
     for (std::size_t i = 0; i < state.size(); ++i) {
         const double m = state.mass[i];

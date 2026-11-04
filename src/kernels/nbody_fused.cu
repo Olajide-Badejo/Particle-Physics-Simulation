@@ -146,6 +146,7 @@ void nbody_fused_step(const float* x_in, const float* y_in, const float* z_in, f
 #undef CPS_LAUNCH_FUSED
 
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps

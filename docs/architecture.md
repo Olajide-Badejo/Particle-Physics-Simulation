@@ -113,6 +113,36 @@ scan without the comparison would count those particles twice. Distance
 filtering does not help, because those particles genuinely are within the
 smoothing radius.
 
+## Streams and synchronisation
+
+The engine owns one non-blocking stream, and every launch, copy, timer event and
+CUB call on the solver path runs on it: the N-body variants, the integrators, the
+velocity offset, the six fluid passes and the diagnostics. A launcher takes its
+stream with no default, so leaving it out does not compile. A non-blocking stream
+is ordered against nothing else, including the legacy default stream, so a read
+that relies on the old implicit ordering is a bug here rather than a coincidence.
+This is also the shape a captured graph needs.
+
+`step()` does not synchronise. The host waits only where it needs an answer:
+
+| Point | Waits by |
+|---|---|
+| `initialize()`, `resume()` | draining the stream before returning, so a caller can touch the arrays |
+| A stretch of timed steps ends | the solver clock's closing event |
+| A diagnostic | copying the block partials on the stream, then draining it |
+| Non-finite flag, snapshot, end-of-run scan | the same, through pinned staging |
+| `synchronize()` | draining the stream, for code that reads the arrays itself |
+| The destructor | draining the stream before any buffer is freed |
+
+Partial sums are still added up on the host in block order, after the stream
+ordered copy, so the reduction stays deterministic. Device memory is zeroed through
+the default stream at construction, and `DeviceBuffer::zero` waits for that, because
+nothing on the engine's stream would be ordered against it.
+
+`-DCPS_DEBUG_SYNC=ON` drains the stream after every launch and copy. If a failure
+goes away in that build, something was reading ahead of the stream. Results must
+match the normal build; timings from it mean nothing.
+
 ## Data layout
 
 Structure of arrays: thirteen float arrays rather than one array of structures.

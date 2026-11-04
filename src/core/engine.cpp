@@ -41,10 +41,14 @@ bool solver_wants_half_step(const Config& config) {
     return config.variant == NBodyVariant::Fused;
 }
 
+Config validated(Config config) {
+    config.validate();
+    return config;
+}
+
 }  // namespace
 
-SimulationEngine::SimulationEngine(Config config) : config_(std::move(config)) {
-    config_.validate();
+SimulationEngine::SimulationEngine(Config config) : config_(validated(std::move(config))) {
     particles_ = std::make_unique<ParticleSystem>(config_.num_particles);
     reducer_ = std::make_unique<DiagnosticsReducer>(config_.num_particles);
     if (config_.solver == SolverType::Sph) {
@@ -52,7 +56,10 @@ SimulationEngine::SimulationEngine(Config config) : config_(std::move(config)) {
     }
 }
 
-SimulationEngine::~SimulationEngine() = default;
+// The members are about to free device memory the stream may still be using. A
+// destructor has nowhere to send a failure, so the status is dropped here; a run
+// that reaches its end has already been through a checked synchronisation.
+SimulationEngine::~SimulationEngine() { static_cast<void>(cudaStreamSynchronize(stream_.get())); }
 
 // The file is opened only once the engine knows whether this is a fresh run or
 // a resume, and for a resume only after every check has passed, so a refused
@@ -75,7 +82,7 @@ void SimulationEngine::open_diagnostics(long long resume_step) {
 
 void SimulationEngine::initialize() {
     const HostParticleState state = make_initial_state(config_);
-    particles_->upload(state);
+    particles_->upload(state, stream_.get());
     current_step_ = 0;
     time_origin_step_ = 0;
     time_origin_ = 0.0;
@@ -88,8 +95,7 @@ void SimulationEngine::initialize() {
         compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
                              particles_->ax(), particles_->ay(), particles_->az(),
                              particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size);
-        CUDA_CHECK(cudaDeviceSynchronize());
+                             config_.block_size, DEFAULT_TILE_SIZE, stream_.get());
     }
 
     // For the fluid case the acceleration array is still zero here, so this
@@ -97,6 +103,7 @@ void SimulationEngine::initialize() {
     // half step offset is not applied, and the initial velocity is used as
     // v_{-1/2} as it stands.
     ensure_velocity_convention(solver_wants_half_step(config_));
+    stream_.synchronize();
     open_diagnostics(-1);
     initialized_ = true;
 }
@@ -110,8 +117,7 @@ void SimulationEngine::ensure_velocity_convention(bool want_half_step) {
     const float dt = want_half_step ? -config_.dt : config_.dt;
     offset_velocity_half_step(particles_->vx(), particles_->vy(), particles_->vz(),
                               particles_->ax(), particles_->ay(), particles_->az(),
-                              particles_->size(), dt, config_.block_size);
-    CUDA_CHECK(cudaDeviceSynchronize());
+                              particles_->size(), dt, config_.block_size, stream_.get());
     half_step_velocity_ = want_half_step;
 }
 
@@ -179,7 +185,7 @@ long long SimulationEngine::resume(bool force) {
     }
     check_physics(snapshot, path, force);
 
-    particles_->upload(snapshot.state);
+    particles_->upload(snapshot.state, stream_.get());
     current_step_ = static_cast<long long>(snapshot.step);
     half_step_velocity_ = (snapshot.flags & SNAPSHOT_FLAG_HALF_STEP_VELOCITY) != 0u;
 
@@ -206,8 +212,7 @@ long long SimulationEngine::resume(bool force) {
         compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
                              particles_->ax(), particles_->ay(), particles_->az(),
                              particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size);
-        CUDA_CHECK(cudaDeviceSynchronize());
+                             config_.block_size, DEFAULT_TILE_SIZE, stream_.get());
     }
 
     // After a fluid resume the acceleration array is zero, because the fluid
@@ -215,6 +220,7 @@ long long SimulationEngine::resume(bool force) {
     // after the resume reads the velocity with a zero acceleration. The state
     // itself is unaffected and the trajectory stays bit identical.
     ensure_velocity_convention(solver_wants_half_step(config_));
+    stream_.synchronize();
     open_diagnostics(current_step_);
     initialized_ = true;
     std::fprintf(stderr, "resumed from %s at step %lld\n", path.string().c_str(), current_step_);
@@ -225,23 +231,23 @@ void SimulationEngine::step_nbody_split() {
     integrate_verlet_position(particles_->x(), particles_->y(), particles_->z(), particles_->vx(),
                               particles_->vy(), particles_->vz(), particles_->ax(),
                               particles_->ay(), particles_->az(), particles_->size(), config_.dt,
-                              config_.block_size);
+                              config_.block_size, stream_.get());
 
     if (config_.variant == NBodyVariant::Naive) {
         compute_forces_naive(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
                              particles_->ax(), particles_->ay(), particles_->az(),
                              particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size);
+                             config_.block_size, stream_.get());
     } else {
         compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
                              particles_->ax(), particles_->ay(), particles_->az(),
                              particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size);
+                             config_.block_size, DEFAULT_TILE_SIZE, stream_.get());
     }
 
     integrate_verlet_velocity(particles_->vx(), particles_->vy(), particles_->vz(),
                               particles_->ax(), particles_->ay(), particles_->az(),
-                              particles_->size(), config_.dt, config_.block_size);
+                              particles_->size(), config_.dt, config_.block_size, stream_.get());
 }
 
 void SimulationEngine::step_nbody_fused() {
@@ -249,7 +255,8 @@ void SimulationEngine::step_nbody_fused() {
                      particles_->y_next(), particles_->z_next(), particles_->vx(),
                      particles_->vy(), particles_->vz(), particles_->ax(), particles_->ay(),
                      particles_->az(), particles_->mass(), particles_->size(), config_.softening,
-                     config_.gravitational_constant, config_.dt, config_.block_size);
+                     config_.gravitational_constant, config_.dt, config_.block_size,
+                     DEFAULT_TILE_SIZE, stream_.get());
     particles_->swap_position_buffers();
 }
 
@@ -258,7 +265,7 @@ void SimulationEngine::step() {
         throw std::runtime_error("the engine must be initialised or resumed before stepping");
     }
     if (config_.solver == SolverType::Sph) {
-        sph_->step(*particles_, config_.dt);
+        sph_->step(*particles_, config_.dt, stream_.get());
     } else if (config_.variant == NBodyVariant::Fused) {
         step_nbody_fused();
     } else {
@@ -268,7 +275,7 @@ void SimulationEngine::step() {
 }
 
 void SimulationEngine::check_device_errors() const {
-    if (sph_ && sph_->non_finite_position_seen()) {
+    if (sph_ && sph_->non_finite_position_seen(stream_.get())) {
         throw std::runtime_error("non-finite positions detected by step " +
                                  std::to_string(current_step_) +
                                  ": the fluid has blown up, typically from too large a time step");
@@ -300,13 +307,13 @@ Diagnostics SimulationEngine::diagnostics(bool include_potential) {
         compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
                              particles_->ax(), particles_->ay(), particles_->az(),
                              particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size);
+                             config_.block_size, DEFAULT_TILE_SIZE, stream_.get());
     }
     const float half_dt = half_step_velocity_ ? 0.5f * config_.dt : 0.0f;
     const bool with_potential = include_potential && config_.solver == SolverType::NBody;
     const Diagnostics row =
         reducer_->compute(*particles_, current_step_, simulated_time(), config_.softening,
-                          config_.gravitational_constant, with_potential, half_dt);
+                          config_.gravitational_constant, with_potential, half_dt, stream_.get());
     if (!(std::isfinite(row.kinetic) && std::isfinite(row.potential) && std::isfinite(row.px) &&
           std::isfinite(row.py) && std::isfinite(row.pz))) {
         char buffer[192];
@@ -330,7 +337,7 @@ void SimulationEngine::write_snapshot_now() const {
     snapshot.fingerprint = physics_fingerprint(fields);
     snapshot.fingerprint_version = PHYSICS_FINGERPRINT_VERSION;
     snapshot.physics = physics_json(fields);
-    particles_->download(snapshot.state);
+    particles_->download(snapshot.state, stream_.get());
 
     // A resume trusts what it loads, so a blown-up state must never reach a
     // checkpoint. Refusing here, before the writer has created anything, also
@@ -362,7 +369,7 @@ void SimulationEngine::run() {
 
     for (long long remaining = config_.steps - current_step_; remaining > 0; --remaining) {
         if (!timing) {
-            timer.start();
+            timer.start(stream_.get());
             timing = true;
         }
         step();
@@ -374,7 +381,7 @@ void SimulationEngine::run() {
         const bool snapshot_due =
             config_.snapshot_interval > 0 && current_step_ % config_.snapshot_interval == 0;
         if (diagnostic_due || snapshot_due) {
-            solver_ms_ += timer.stop();
+            solver_ms_ += timer.stop(stream_.get());
             timing = false;
         }
         if (diagnostic_due) {
@@ -390,9 +397,9 @@ void SimulationEngine::run() {
     }
 
     if (timing) {
-        solver_ms_ += timer.stop();
+        solver_ms_ += timer.stop(stream_.get());
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    stream_.synchronize();
     bar.finish();
     check_device_errors();
 
@@ -401,7 +408,7 @@ void SimulationEngine::run() {
     // accounted for here: the solver clock has stopped, and the wall clock,
     // which covers everything run() does, is still running.
     HostParticleState final_state;
-    particles_->download(final_state);
+    particles_->download(final_state, stream_.get());
     check_state_finite(final_state);
 
     if (writer_ && writer_->is_open() && config_.diagnostics_interval > 0 &&

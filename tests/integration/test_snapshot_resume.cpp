@@ -69,7 +69,7 @@ class ResumeTest : public ::testing::Test {
         }
         CUDA_CHECK(cudaDeviceSynchronize());
         cps::HostParticleState state;
-        engine.particles().download(state);
+        engine.particles().download(state, engine.stream());
         return state;
     }
 
@@ -98,7 +98,7 @@ class ResumeTest : public ::testing::Test {
         }
         CUDA_CHECK(cudaDeviceSynchronize());
         cps::HostParticleState state;
-        engine.particles().download(state);
+        engine.particles().download(state, engine.stream());
         return state;
     }
 
@@ -222,7 +222,7 @@ TEST_F(ResumeTest, ResumingTwiceStillLandsOnTheSameState) {
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     expect_bit_identical(straight, state, "twice resumed");
 }
 
@@ -244,7 +244,7 @@ TEST_F(ResumeTest, TakingDiagnosticsDoesNotPerturbTheTrajectory) {
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     cps::HostParticleState observed;
-    engine.particles().download(observed);
+    engine.particles().download(observed, engine.stream());
     expect_bit_identical(quiet, observed, "observed");
 }
 
@@ -416,7 +416,7 @@ TEST_F(ResumeTest, ResumesTheCps1FixtureWithAWarning) {
     CUDA_CHECK(cudaDeviceSynchronize());
     EXPECT_EQ(engine.current_step(), 47);
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     ASSERT_EQ(state.size(), 4u);
     for (std::size_t i = 0; i < state.size(); ++i) {
         EXPECT_TRUE(std::isfinite(state.x[i]) && std::isfinite(state.vx[i])) << "index " << i;

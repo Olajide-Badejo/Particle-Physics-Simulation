@@ -132,6 +132,7 @@ void sph_hash_particles(const float* x, const float* y, const float* z, uint32_t
     hash_particles_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
         x, y, z, bucket, cell_key, index, non_finite_flag, count, cell_size, table_size);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 std::size_t sph_sort_temp_bytes(int count, uint32_t table_size) {
@@ -157,6 +158,7 @@ void sph_sort_by_bucket(void* temp, std::size_t temp_bytes, const uint32_t* buck
     std::size_t bytes = temp_bytes;
     CUDA_CHECK(cub::DeviceRadixSort::SortPairs(temp, bytes, bucket_in, bucket_out, index_in,
                                                index_out, count, 0, end_bit, stream));
+    CPS_SYNC_POINT(stream);
 }
 
 void sph_clear_cell_bounds(uint32_t* cell_start, uint32_t* cell_end, uint32_t table_size,
@@ -165,6 +167,7 @@ void sph_clear_cell_bounds(uint32_t* cell_start, uint32_t* cell_end, uint32_t ta
     clear_cell_bounds_kernel<<<grid_for(cells, block_size), block_size, 0, stream>>>(
         cell_start, cell_end, table_size);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 void sph_compute_cell_bounds(const uint32_t* bucket_sorted, uint32_t* cell_start,
@@ -175,6 +178,7 @@ void sph_compute_cell_bounds(const uint32_t* bucket_sorted, uint32_t* cell_start
     cell_bounds_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
         bucket_sorted, cell_start, cell_end, count);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 void sph_gather_sorted(const float* x, const float* y, const float* z, const float* vx,
@@ -189,6 +193,7 @@ void sph_gather_sorted(const float* x, const float* y, const float* z, const flo
         x, y, z, vx, vy, vz, mass, cell_key, index_sorted, sx, sy, sz, svx, svy, svz, smass,
         cell_key_sorted, count);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 void sph_count_bucket_collisions(const uint32_t* bucket_sorted, const int64_t* cell_key_sorted,
@@ -200,6 +205,7 @@ void sph_count_bucket_collisions(const uint32_t* bucket_sorted, const int64_t* c
     count_collisions_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
         bucket_sorted, cell_key_sorted, counter, count);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps

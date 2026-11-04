@@ -69,20 +69,31 @@ class ParticleSystem {
     // Exchanges the two position buffers after a fused launch.
     void swap_position_buffers();
 
-    void upload(const HostParticleState& state);
-    void download(HostParticleState& state) const;
+    // Host transfers go through one pinned staging buffer and are ordered on the
+    // stream, so they see the work already enqueued on it, which a transfer on
+    // any other stream would not. Both return with the stream drained: upload
+    // because the staging buffer is reused, download because the host cannot
+    // read the result sooner. Neither is for the solver path.
+    void upload(const HostParticleState& state, cudaStream_t stream);
+    void download(HostParticleState& state, cudaStream_t stream) const;
 
     // Total device bytes held by the particle state, reported at start up so a
     // run's memory use is on the record.
     std::size_t device_bytes() const;
 
    private:
+    // Where one array sits in the staging buffer, which is allocated at the
+    // first transfer and kept, so a run writing snapshots does not pin and unpin
+    // memory for each one.
+    float* staging(std::size_t array) const;
+
     int count_ = 0;
     DeviceBuffer<float> x_, y_, z_;
     DeviceBuffer<float> x_next_, y_next_, z_next_;
     DeviceBuffer<float> vx_, vy_, vz_;
     DeviceBuffer<float> ax_, ay_, az_;
     DeviceBuffer<float> mass_;
+    mutable HostBuffer<float> staging_;
 };
 
 }  // namespace cps

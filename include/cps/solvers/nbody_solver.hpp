@@ -25,17 +25,21 @@ namespace cps {
 // The default is the width the tile sweep measured fastest, by a margin well
 // above the session drift; the other instantiations exist so the sweep can keep
 // checking that against real numbers rather than arguing about it.
+//
+// Every launcher takes its stream with no default, so a caller cannot end up on
+// the legacy default stream by leaving it out. nullptr names that stream on
+// purpose, which is for tests that drive a launcher on its own.
 inline constexpr int DEFAULT_TILE_SIZE = 256;
 
 void compute_forces_naive(const float* x, const float* y, const float* z, const float* mass,
                           float* ax, float* ay, float* az, int count, float softening,
                           float gravitational_constant, int block_size,
-                          cudaStream_t stream = nullptr);
+                          cudaStream_t stream);
 
 void compute_forces_tiled(const float* x, const float* y, const float* z, const float* mass,
                           float* ax, float* ay, float* az, int count, float softening,
                           float gravitational_constant, int block_size,
-                          int tile_size = DEFAULT_TILE_SIZE, cudaStream_t stream = nullptr);
+                          int tile_size, cudaStream_t stream);
 
 // One complete leapfrog step in a single launch.
 //
@@ -49,7 +53,7 @@ void nbody_fused_step(const float* x_in, const float* y_in, const float* z_in, f
                       float* y_out, float* z_out, float* vx, float* vy, float* vz, float* ax,
                       float* ay, float* az, const float* mass, int count, float softening,
                       float gravitational_constant, float dt, int block_size,
-                      int tile_size = DEFAULT_TILE_SIZE, cudaStream_t stream = nullptr);
+                      int tile_size, cudaStream_t stream);
 
 // Velocity Verlet, split across two launches for the unfused variants.
 //
@@ -62,11 +66,11 @@ void nbody_fused_step(const float* x_in, const float* y_in, const float* z_in, f
 // evaluated once per step, which matters because the force is the entire cost.
 void integrate_verlet_position(float* x, float* y, float* z, float* vx, float* vy, float* vz,
                                const float* ax, const float* ay, const float* az, int count,
-                               float dt, int block_size, cudaStream_t stream = nullptr);
+                               float dt, int block_size, cudaStream_t stream);
 
 void integrate_verlet_velocity(float* vx, float* vy, float* vz, const float* ax, const float* ay,
                                const float* az, int count, float dt, int block_size,
-                               cudaStream_t stream = nullptr);
+                               cudaStream_t stream);
 
 // Converts a synchronised velocity into the half step velocity the fused
 // leapfrog carries, and back again. Applying the first before the fused loop
@@ -74,6 +78,6 @@ void integrate_verlet_velocity(float* vx, float* vy, float* vz, const float* ax,
 // than being offset by half a step.
 void offset_velocity_half_step(float* vx, float* vy, float* vz, const float* ax, const float* ay,
                                const float* az, int count, float dt, int block_size,
-                               cudaStream_t stream = nullptr);
+                               cudaStream_t stream);
 
 }  // namespace cps

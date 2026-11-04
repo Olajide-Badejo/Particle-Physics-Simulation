@@ -118,6 +118,7 @@ void compute_forces_tiled(const float* x, const float* y, const float* z, const 
                                      ", expected 32, 64, 128 or 256");
     }
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps

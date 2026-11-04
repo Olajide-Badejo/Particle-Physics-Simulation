@@ -18,6 +18,32 @@ namespace cps {
 // accumulators and the staging buffer are the only host allocations that scale
 // with the particle count, and the staging buffer is only touched when a
 // snapshot is written and once at the end of run().
+//
+// Everything the engine does on the device goes through one stream of its own,
+// which is non-blocking, so the host and the device run apart until something
+// waits. What is safe when, for code holding the engine:
+//
+//   - initialize() and resume() return with the stream drained, so the arrays
+//     behind particles() can be read or written directly straight after them.
+//
+//   - step() only enqueues work. After it, those arrays are the device's: reading
+//     or writing them from the host, on the default stream or on any stream but
+//     this one, races with the steps still running.
+//
+//   - synchronize() takes them back. It blocks until every step so far has
+//     finished, and they are then safe until the next step(). cudaDeviceSynchronize
+//     has the same effect, because it waits on every stream.
+//
+//   - particles().upload() and download() are safe at any time if they are given
+//     stream(), which orders them after the steps and returns once they are done.
+//
+//   - diagnostics(), write_snapshot_now() and check_device_errors() wait for the
+//     steps themselves and are safe at any time. So is run(), which returns with
+//     the stream drained.
+//
+//   - The destructor waits for the stream before freeing anything. Device buffers
+//     outside the engine that stream() work touches have to be kept alive until
+//     a synchronize().
 class SimulationEngine {
    public:
     explicit SimulationEngine(Config config);
@@ -27,6 +53,7 @@ class SimulationEngine {
     SimulationEngine& operator=(const SimulationEngine&) = delete;
 
     // Builds the initial condition and computes the opening force evaluation.
+    // Returns with the stream drained.
     void initialize();
 
     // Loads the newest snapshot in the configured directory and continues from
@@ -34,11 +61,21 @@ class SimulationEngine {
     // physics fingerprint differs from this configuration's, naming every
     // field that differs, unless force is set, in which case it warns on
     // stderr and continues. A CPS1 snapshot records no physics, so it loads
-    // with a warning that it cannot be verified.
+    // with a warning that it cannot be verified. Returns with the stream drained.
     long long resume(bool force = false);
 
-    // Advances one step with the configured solver and variant.
+    // Advances one step with the configured solver and variant. This enqueues
+    // the step and returns without waiting for the device, so a launch failure
+    // may only surface at the next synchronisation.
     void step();
+
+    // Blocks until everything enqueued on the stream has finished. See the top
+    // of this class for what that makes safe.
+    void synchronize() const { stream_.synchronize(); }
+
+    // The stream all of this engine's device work runs on, for code that has to
+    // order its own work with it: downloads, a timer, a direct kernel launch.
+    cudaStream_t stream() const { return stream_.get(); }
 
     // Runs to the configured step count, writing snapshots and diagnostics on
     // their configured cadences and drawing a progress bar. After initialize()
@@ -66,7 +103,7 @@ class SimulationEngine {
 
     // Reads the fluid solver's non-finite position flag and throws
     // std::runtime_error naming the current step if it is set. N-body has no
-    // such flag, so this does nothing there. Synchronises with the device.
+    // such flag, so this does nothing there. Drains the stream if there is one.
     void check_device_errors() const;
 
     ParticleSystem& particles() { return *particles_; }
@@ -122,6 +159,11 @@ class SimulationEngine {
     void open_diagnostics(long long resume_step);
 
     Config config_;
+
+    // Ahead of everything that holds device memory, so it outlives all of it. It
+    // comes after config_ so a configuration is refused before the device is
+    // touched at all.
+    Stream stream_;
     std::unique_ptr<ParticleSystem> particles_;
     std::unique_ptr<SphSolver> sph_;
     std::unique_ptr<DiagnosticsReducer> reducer_;

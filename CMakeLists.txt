@@ -68,6 +68,9 @@ option(CPS_USE_FAST_MATH "Compile the benchmark library with --use_fast_math" OF
 option(CPS_BUILD_TESTS "Build the unit, integration and validation tests" ON)
 option(CPS_BUILD_BENCHMARKS "Build the benchmark sweep driver" ON)
 option(CPS_WERROR "Treat compiler warnings as errors" ON)
+# Drains the engine's stream after every launch, so an ordering bug can be
+# bisected. Results must not change with it on; timings are meaningless.
+option(CPS_DEBUG_SYNC "Synchronise the stream after every launch and copy" OFF)
 # Everyday builds compile the device code for one architecture, which is fast.
 # A fat build adds every architecture a release should run on, but only to
 # physics_core: physics_core_strict and the test binaries run on the development
@@ -268,6 +271,8 @@ function(cps_add_device_library target fast_math architectures)
   else()
     target_compile_definitions(${target} PUBLIC CPS_FAST_MATH=0)
   endif()
+  # PUBLIC, because the helper is a macro in a header every consumer includes.
+  target_compile_definitions(${target} PUBLIC CPS_DEBUG_SYNC=$<BOOL:${CPS_DEBUG_SYNC}>)
 endfunction()
 
 if(CPS_FAT_BINARY)

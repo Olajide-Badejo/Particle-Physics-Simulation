@@ -61,10 +61,10 @@ TEST(KernelParity, NaiveMatchesTheDoublePrecisionReference) {
     const cps::HostParticleState state = random_cloud(count, 31337u);
 
     cps::ParticleSystem particles(count);
-    particles.upload(state);
+    particles.upload(state, nullptr);
     cps::compute_forces_naive(particles.x(), particles.y(), particles.z(), particles.mass(),
                               particles.ax(), particles.ay(), particles.az(), count, SOFTENING,
-                              GRAVITY, 256);
+                              GRAVITY, 256, nullptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     std::vector<double> ax, ay, az;
@@ -82,10 +82,10 @@ TEST(KernelParity, TiledMatchesTheDoublePrecisionReference) {
     const cps::HostParticleState state = random_cloud(count, 4242u);
 
     cps::ParticleSystem particles(count);
-    particles.upload(state);
+    particles.upload(state, nullptr);
     cps::compute_forces_tiled(particles.x(), particles.y(), particles.z(), particles.mass(),
                               particles.ax(), particles.ay(), particles.az(), count, SOFTENING,
-                              GRAVITY, 256);
+                              GRAVITY, 256, cps::DEFAULT_TILE_SIZE, nullptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     std::vector<double> ax, ay, az;
@@ -102,17 +102,17 @@ TEST(KernelParity, NaiveAndTiledAgreeWithEachOther) {
     const cps::HostParticleState state = random_cloud(count, 909u);
 
     cps::ParticleSystem particles(count);
-    particles.upload(state);
+    particles.upload(state, nullptr);
 
     cps::compute_forces_naive(particles.x(), particles.y(), particles.z(), particles.mass(),
                               particles.ax(), particles.ay(), particles.az(), count, SOFTENING,
-                              GRAVITY, 128);
+                              GRAVITY, 128, nullptr);
     CUDA_CHECK(cudaDeviceSynchronize());
     const DeviceForces naive = download_forces(particles);
 
     cps::compute_forces_tiled(particles.x(), particles.y(), particles.z(), particles.mass(),
                               particles.ax(), particles.ay(), particles.az(), count, SOFTENING,
-                              GRAVITY, 128);
+                              GRAVITY, 128, cps::DEFAULT_TILE_SIZE, nullptr);
     CUDA_CHECK(cudaDeviceSynchronize());
     const DeviceForces tiled = download_forces(particles);
 
@@ -135,7 +135,7 @@ TEST(KernelParity, EveryTileWidthGivesTheSameAnswer) {
     const cps::HostParticleState state = random_cloud(count, 5150u);
 
     cps::ParticleSystem particles(count);
-    particles.upload(state);
+    particles.upload(state, nullptr);
 
     std::vector<double> ax, ay, az;
     reference_accelerations(state, SOFTENING, GRAVITY, ax, ay, az);
@@ -143,7 +143,7 @@ TEST(KernelParity, EveryTileWidthGivesTheSameAnswer) {
     for (int tile : {32, 64, 128, 256}) {
         cps::compute_forces_tiled(particles.x(), particles.y(), particles.z(), particles.mass(),
                                   particles.ax(), particles.ay(), particles.az(), count, SOFTENING,
-                                  GRAVITY, 256, tile);
+                                  GRAVITY, 256, tile, nullptr);
         CUDA_CHECK(cudaDeviceSynchronize());
         EXPECT_LT(worst_relative_error(download_forces(particles), ax, ay, az), 1.0e-4)
             << "tile width " << tile;
@@ -153,10 +153,10 @@ TEST(KernelParity, EveryTileWidthGivesTheSameAnswer) {
 TEST(KernelParity, TiledRejectsAnUnsupportedTileWidth) {
     SKIP_WITHOUT_GPU();
     cps::ParticleSystem particles(64);
-    particles.upload(random_cloud(64, 1u));
+    particles.upload(random_cloud(64, 1u), nullptr);
     EXPECT_THROW(cps::compute_forces_tiled(particles.x(), particles.y(), particles.z(),
                                            particles.mass(), particles.ax(), particles.ay(),
-                                           particles.az(), 64, SOFTENING, GRAVITY, 64, 48),
+                                           particles.az(), 64, SOFTENING, GRAVITY, 64, 48, nullptr),
                  std::runtime_error);
 }
 
@@ -169,10 +169,10 @@ TEST(KernelParity, InternalForcesSumToZero) {
     const cps::HostParticleState state = random_cloud(count, 777u);
 
     cps::ParticleSystem particles(count);
-    particles.upload(state);
+    particles.upload(state, nullptr);
     cps::compute_forces_tiled(particles.x(), particles.y(), particles.z(), particles.mass(),
                               particles.ax(), particles.ay(), particles.az(), count, SOFTENING,
-                              GRAVITY, 256);
+                              GRAVITY, 256, cps::DEFAULT_TILE_SIZE, nullptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     const DeviceForces forces = download_forces(particles);
@@ -203,39 +203,42 @@ TEST(KernelParity, FusedTracksTheSplitIntegrator) {
     const cps::HostParticleState state = random_cloud(count, 2024u);
 
     cps::ParticleSystem split(count);
-    split.upload(state);
+    split.upload(state, nullptr);
     cps::compute_forces_tiled(split.x(), split.y(), split.z(), split.mass(), split.ax(), split.ay(),
-                              split.az(), count, SOFTENING, GRAVITY, 128);
+                              split.az(), count, SOFTENING, GRAVITY, 128, cps::DEFAULT_TILE_SIZE,
+                              nullptr);
 
     cps::ParticleSystem fused(count);
-    fused.upload(state);
+    fused.upload(state, nullptr);
     cps::compute_forces_tiled(fused.x(), fused.y(), fused.z(), fused.mass(), fused.ax(), fused.ay(),
-                              fused.az(), count, SOFTENING, GRAVITY, 128);
+                              fused.az(), count, SOFTENING, GRAVITY, 128, cps::DEFAULT_TILE_SIZE,
+                              nullptr);
     cps::offset_velocity_half_step(fused.vx(), fused.vy(), fused.vz(), fused.ax(), fused.ay(),
-                                   fused.az(), count, -dt, 128);
+                                   fused.az(), count, -dt, 128, nullptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     for (int s = 0; s < steps; ++s) {
         cps::integrate_verlet_position(split.x(), split.y(), split.z(), split.vx(), split.vy(),
                                        split.vz(), split.ax(), split.ay(), split.az(), count, dt,
-                                       128);
+                                       128, nullptr);
         cps::compute_forces_tiled(split.x(), split.y(), split.z(), split.mass(), split.ax(),
-                                  split.ay(), split.az(), count, SOFTENING, GRAVITY, 128);
+                                  split.ay(), split.az(), count, SOFTENING, GRAVITY, 128,
+                                  cps::DEFAULT_TILE_SIZE, nullptr);
         cps::integrate_verlet_velocity(split.vx(), split.vy(), split.vz(), split.ax(), split.ay(),
-                                       split.az(), count, dt, 128);
+                                       split.az(), count, dt, 128, nullptr);
 
         cps::nbody_fused_step(fused.x(), fused.y(), fused.z(), fused.x_next(), fused.y_next(),
                               fused.z_next(), fused.vx(), fused.vy(), fused.vz(), fused.ax(),
                               fused.ay(), fused.az(), fused.mass(), count, SOFTENING, GRAVITY, dt,
-                              128);
+                              128, cps::DEFAULT_TILE_SIZE, nullptr);
         fused.swap_position_buffers();
     }
     CUDA_CHECK(cudaDeviceSynchronize());
 
     cps::HostParticleState split_out;
     cps::HostParticleState fused_out;
-    split.download(split_out);
-    fused.download(fused_out);
+    split.download(split_out, nullptr);
+    fused.download(fused_out, nullptr);
 
     double worst = 0.0;
     for (int i = 0; i < count; ++i) {

@@ -18,6 +18,18 @@ a Changelog, and the project uses semantic versioning.
 - `make setup` and `make setup-host-only` delegate to the `dev` and `host-only` presets.
 - Continuous integration uses the presets, and the reports job installs from `requirements.txt`
   on Python 3.12 rather than the distribution's packages.
+- **Breaking:** all of the engine's device work now runs on one non-blocking stream it owns,
+  instead of the legacy default stream. `step()` no longer waits for anything. Code that reads
+  the device arrays after stepping must call the new `SimulationEngine::synchronize()` first, and
+  `SimulationEngine::stream()` is what to order other work with. `simulation_engine.hpp` says what
+  is safe when.
+- **Breaking:** the launchers in `nbody_solver.hpp` and `sph_passes.hpp`, the `DiagnosticsReducer`
+  methods, `SphSolver` and `CudaTimer` take their stream with no default, so a caller has to name
+  one. `tile_size` and `half_dt` lose their defaults where they sat before it.
+- **Breaking:** `ParticleSystem::upload` and `download` take a stream and go through pinned
+  staging, in place of their synchronous copies. Both return with that stream drained.
+- `DeviceBuffer::zero` now waits for the bytes to be written, because a non-blocking stream is not
+  ordered against the `cudaMemset` it issues on the default stream.
 
 ### Added
 
@@ -30,6 +42,10 @@ a Changelog, and the project uses semantic versioning.
   `requirements.txt` with pinned versions for the plotting and report scripts.
 - An installed nlohmann/json or GoogleTest at the pinned version or newer is used instead of
   fetching one. Fetching at the same pinned tags stays the fallback.
+- `cps::Stream` and `cps::HostBuffer`, RAII and move-only, with `copy_to_device_async` and
+  `copy_to_host_async`, in `cuda_helpers.hpp`.
+- `-DCPS_DEBUG_SYNC=ON` drains the stream after every launch and copy, so an ordering bug can be
+  bisected. Off by default, when it compiles to nothing.
 
 ## [1.1.0] 2026-11-03
 

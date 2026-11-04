@@ -234,6 +234,7 @@ void sph_compute_density(const float* sx, const float* sy, const float* sz, cons
         sx, sy, sz, smass, cell_key_sorted, cell_start, cell_end, density, pressure, count,
         smoothing_radius, cell_size, table_size, rest_density, gas_constant);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 void sph_forces_and_integrate(const float* sx, const float* sy, const float* sz, const float* svx,
@@ -256,6 +257,7 @@ void sph_forces_and_integrate(const float* sx, const float* sy, const float* sz,
         viscosity, gx, gy, gz, dt, domain_min_x, domain_min_y, domain_min_z, domain_max_x,
         domain_max_y, domain_max_z, boundary_damping);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps
