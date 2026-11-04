@@ -29,7 +29,7 @@ enum class VelocityConvention { Synchronised, HalfStep };
 //
 //   initialize()  upload, initialize, shift to the convention, drain
 //   resume()      upload, on_resume, shift to the convention, drain
-//   step()        step
+//   step()        step, or launches of what capturing step gave
 //   diagnostics() check_device_errors, prepare_diagnostics, then the reduction,
 //                 with a potential energy pass if has_potential_energy
 //   snapshot      check_device_errors, then the download
@@ -37,6 +37,11 @@ enum class VelocityConvention { Synchronised, HalfStep };
 // The shift reads the acceleration array, so what initialize and on_resume leave
 // there is what a change of convention uses. Everything takes the stream the
 // device work has to go on and only enqueues on it, unless it says otherwise.
+//
+// A solver can offer its step for capture: see graph_capturable. The engine then
+// calls step once straight after initialize or resume, with the stream in capture,
+// and from there launches that graph in place of calling step. Everything outside
+// the step stays on the stream as it was.
 //
 // The hooks that decide the physics have no default, so a new solver cannot leave
 // out a resume fixup by accident: that would only show up as a resumed run
@@ -80,6 +85,18 @@ class Solver {
     // this solver watches for. A solver with no such flag does nothing here and
     // does not touch the stream.
     virtual void check_device_errors(long long /*step*/, cudaStream_t /*stream*/) const {}
+
+    // Whether step can be captured into a graph. If it is true:
+    //
+    //   - step enqueues the same work every time, with every pointer and scalar
+    //     settled before initialize or on_resume returned. A capture holds those
+    //     values, so a step that reads something which changes between steps would
+    //     go on using the old value.
+    //   - step never waits on the stream, which a capture refuses.
+    //   - step changes nothing on the host, because a launch does not run it.
+    //
+    // A solver that does not say so simply runs on the stream.
+    virtual bool graph_capturable() const { return false; }
 
     // Lines for the configuration block printed at start up, each ending in a
     // newline, for what this solver has worked out for itself. May be empty.

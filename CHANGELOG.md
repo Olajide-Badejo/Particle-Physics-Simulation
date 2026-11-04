@@ -13,6 +13,16 @@ a Changelog, and the project uses semantic versioning.
 
 ### Added
 
+- CUDA graphs, on by default: `run.use_graphs` and `--graphs on|off` launch the naive, tiled and fluid
+  steps as a graph captured after `initialize()` or `resume()`, with the same kernels in the same order,
+  so a run gives the same bits either way. CUB's sort is captured with the rest. The fused variant is
+  not captured: it launches a single kernel, so there is nothing to remove, and it runs on the stream
+  under either setting. The setting is run control and is not in the physics fingerprint.
+  `docs/architecture.md` has the details. `Solver` gains `graph_capturable`, false by default, so a
+  solver that does not use it runs on the stream as before.
+- `bench_all --graphs on,off` measures every point of the ladder both ways in the same rounds. The
+  benchmark CSVs gain a `graphs` column holding the setting asked for, so a sweep in an older file
+  starts afresh.
 - NVTX ranges around the step, each SPH pass, diagnostics, snapshots and frames, in the device
   libraries only. `CUDA::nvtx3` is linked privately, so an installed consumer never sees it.
 - `scripts/profile_sph_split.sh`, which writes `sph_pipeline_split.csv` from the kernel records in
@@ -28,6 +38,11 @@ a Changelog, and the project uses semantic versioning.
 
 ### Changed
 
+- The presets print `run.use_graphs`, regenerated through the migration fixtures.
+- `scripts/profile_kernels.sh` and `scripts/profile_sph_split.sh` run with `--graphs off`, because
+  they report per kernel and per launch.
+- `ResumeTest.*` runs every test with graphs on and off, so a single test is now named
+  `ResumeTest.<name>/graphs_on` or `/graphs_off`.
 - `scripts/profile_kernels.sh` profiles at three particle counts and adds the stall reasons, issue
   and pipe figures over active cycles, hit rates and launch figures. `profile_runs.csv` records the
   commit, dirty flag, particle count, tile width and block size of each export, and

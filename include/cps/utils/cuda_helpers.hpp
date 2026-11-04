@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace cps {
 
@@ -33,8 +34,20 @@ class CudaError : public std::runtime_error {
 // build, something was reading ahead of the stream. Off, which is the default,
 // this expands to no code at all. A macro rather than a function so that a
 // launch failure caught here names the launcher's own line.
+//
+// A stream being captured runs nothing and may not be waited on, so a launcher
+// under capture passes straight through. The drain happens where the captured graph
+// is launched instead, which makes a graph run drain once per step and not once per
+// pass; to bisect inside a step, run the same build with graphs off.
 #if defined(CPS_DEBUG_SYNC) && CPS_DEBUG_SYNC
-#define CPS_SYNC_POINT(stream) CUDA_CHECK(cudaStreamSynchronize(stream))
+#define CPS_SYNC_POINT(stream)                                                                 \
+    do {                                                                                       \
+        cudaStreamCaptureStatus cps_capture_ = cudaStreamCaptureStatusNone;                    \
+        CUDA_CHECK(cudaStreamIsCapturing(stream, &cps_capture_));                              \
+        if (cps_capture_ == cudaStreamCaptureStatusNone) {                                     \
+            CUDA_CHECK(cudaStreamSynchronize(stream));                                         \
+        }                                                                                      \
+    } while (false)
 #else
 #define CPS_SYNC_POINT(stream) static_cast<void>(stream)
 #endif
@@ -152,6 +165,86 @@ class CudaTimer {
    private:
     cudaEvent_t start_{};
     cudaEvent_t stop_{};
+};
+
+// An instantiated graph: work captured once from a stream and launched as one unit
+// any number of times. Each launch is ordered on its stream like any other work, so
+// the timer events, copies and launches around it behave as they do around a kernel.
+//
+// A capture holds exactly what its launches were given, pointers and scalars both,
+// and is never re-read: buffers have to outlive it, and a value that changes between
+// launches needs a graph of its own.
+//
+// Destroying a graph does not wait for its launches. Whoever owns it drains the stream
+// first, as for a device buffer.
+class CapturedGraph {
+   public:
+    CapturedGraph() = default;
+
+    ~CapturedGraph() { release(); }
+
+    CapturedGraph(const CapturedGraph&) = delete;
+    CapturedGraph& operator=(const CapturedGraph&) = delete;
+
+    CapturedGraph(CapturedGraph&& other) noexcept
+        : executable_(std::exchange(other.executable_, nullptr)) {}
+
+    CapturedGraph& operator=(CapturedGraph&& other) noexcept {
+        if (this != &other) {
+            release();
+            executable_ = std::exchange(other.executable_, nullptr);
+        }
+        return *this;
+    }
+
+    // Runs enqueue with the stream in capture, so what it launches on the stream is
+    // recorded and nothing runs. A call that cannot be captured, such as a wait on
+    // the stream, is a failure here and not a graph that does something else. The
+    // stream must not be the legacy default one.
+    template <typename Enqueue>
+    static CapturedGraph capture(cudaStream_t stream, Enqueue&& enqueue) {
+        CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+        try {
+            std::forward<Enqueue>(enqueue)();
+        } catch (...) {
+            // The failure in hand says more than whatever ending the capture reports,
+            // and the stream must not stay in capture.
+            cudaGraph_t abandoned = nullptr;
+            if (cudaStreamEndCapture(stream, &abandoned) == cudaSuccess && abandoned != nullptr) {
+                cudaGraphDestroy(abandoned);
+            }
+            // A capture that went wrong stays in the last error, where the next launch
+            // on this thread would take it for its own.
+            static_cast<void>(cudaGetLastError());
+            throw;
+        }
+        cudaGraph_t graph = nullptr;
+        CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+        if (graph == nullptr) {
+            throw CudaError("the capture recorded no work, so there is nothing to launch");
+        }
+        // The executable is all a launch needs, and it keeps what it was built from.
+        CapturedGraph captured;
+        const cudaError_t status = cudaGraphInstantiate(&captured.executable_, graph, 0);
+        cudaGraphDestroy(graph);
+        CUDA_CHECK(status);
+        return captured;
+    }
+
+    void launch(cudaStream_t stream) const {
+        CUDA_CHECK(cudaGraphLaunch(executable_, stream));
+        CPS_SYNC_POINT(stream);
+    }
+
+   private:
+    void release() noexcept {
+        if (executable_ != nullptr) {
+            cudaGraphExecDestroy(executable_);
+            executable_ = nullptr;
+        }
+    }
+
+    cudaGraphExec_t executable_ = nullptr;
 };
 
 // Owning device buffer. Small enough to be obvious, which matters more here

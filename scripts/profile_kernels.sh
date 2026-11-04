@@ -7,7 +7,8 @@
 # the two numbers are compared in the debug report. Nsight Compute replays each
 # kernel several times to collect counters, so this is slow and is kept out of
 # the normal build. It also serialises the launches, so nothing here sees what
-# happens between kernels or how one launch differs from the next.
+# happens between kernels or how one launch differs from the next. It runs with
+# graphs off, so what it counts is the launches of the stream path.
 #
 # Every variant is profiled at each particle count, at the default tile width and
 # on the third launch of its kernel:
@@ -157,6 +158,7 @@ for N in $PARTICLES; do
                      --csv \
                      "$BIN" run plummer_10k --variant "$VARIANT" --particles "$N" \
                             --steps 6 --snapshot-every 0 --diag-every 0 --diagnostics "" \
+                            --graphs off \
                      > raw.csv 2> raw.log; then
       echo "error: nsight compute failed on $VARIANT at $N particles:" >&2
       tail -n 20 raw.csv raw.log >&2

@@ -69,6 +69,7 @@ const char* const RUN_OPTIONS =
     "  --dt <value>          override the time step\n"
     "  --allow-unstable-dt   warn instead of refusing a fluid time step above its\n"
     "                        stability limits\n"
+    "  --graphs <on|off>     launch the step as a captured CUDA graph, or not\n"
     "  --seed <n>            override the random seed\n"
     "  --snapshot-dir <path> override the snapshot directory\n"
     "  --snapshot-every <n>  override the snapshot cadence, 0 disables\n"
@@ -189,6 +190,12 @@ CliOptions parse_flags(int first, int argc, const char* const* argv) {
             options.dt = parse_positive_float(require_value(argc, argv, i, "--dt"), "--dt");
         } else if (arg == "--allow-unstable-dt") {
             options.allow_unstable_dt = true;
+        } else if (arg == "--graphs") {
+            const std::string text = require_value(argc, argv, i, "--graphs");
+            if (text != "on" && text != "off") {
+                throw std::runtime_error("option --graphs expects on or off, got '" + text + "'");
+            }
+            options.use_graphs = text == "on";
         } else if (arg == "--seed") {
             options.seed = static_cast<uint32_t>(
                 parse_integer(require_value(argc, argv, i, "--seed"), "--seed", 0, UINT32_MAX));
@@ -335,6 +342,9 @@ void apply_cli_overrides(const CliOptions& options, Config& config) {
     }
     if (options.allow_unstable_dt) {
         config.allow_unstable_dt = true;
+    }
+    if (options.use_graphs) {
+        config.use_graphs = *options.use_graphs;
     }
     if (options.seed) {
         config.seed = *options.seed;

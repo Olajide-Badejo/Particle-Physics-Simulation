@@ -400,6 +400,7 @@ Config read_schema_2(const json& root) {
     run.read("dt", config.dt);
     run.read("block_size", config.block_size);
     run.read("allow_unstable_dt", config.allow_unstable_dt);
+    run.read("use_graphs", config.use_graphs);
 
     ObjectReader initial(section("initial_condition"), "initial_condition.");
     if (initial.find("type") != nullptr) {
@@ -727,6 +728,7 @@ std::string Config::to_json_string(int indent) const {
              {"dt", float_text(dt)},
              {"block_size", std::to_string(block_size)},
              {"allow_unstable_dt", bool_text(allow_unstable_dt)},
+             {"use_graphs", bool_text(use_graphs)},
          }},
         {"initial_condition",
          {

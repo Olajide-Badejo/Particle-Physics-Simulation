@@ -90,8 +90,8 @@ void hash_u64(uint64_t& hash, uint64_t value) { hash = fnv1a_64(&value, sizeof(v
 // that moves with the particle count or the mass calibration is caught.
 //
 // Excluded on purpose: run control (steps, snapshot_*, diagnostics_*, name,
-// allow_unstable_dt, and block_size and nbody.tile_size, which only change the
-// launch shape), and fields that only shape the initial state (seed,
+// allow_unstable_dt, use_graphs, and block_size and nbody.tile_size, which only change
+// the launch shape), and fields that only shape the initial state (seed,
 // initial_condition, sph.jitter, sph.fluid_min and sph.fluid_max, plummer_radius,
 // total_mass, two_body_separation). A resumed run never regenerates its initial
 // state, so those cannot affect it.

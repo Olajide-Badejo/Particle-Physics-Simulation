@@ -82,6 +82,10 @@ void integrate_verlet_velocity(float* vx, float* vy, float* vz, const float* ax,
 //
 // Positions are double buffered for the fused variant, so x() names a different
 // array after each of its steps. The solver holds no pointers across a step.
+//
+// The split variants can be captured into a graph, which removes the time between
+// their kernels. The fused variant launches a single kernel, so it has no such time
+// to remove, and it stays on the stream.
 class NBodySolver final : public Solver {
    public:
     explicit NBodySolver(const Config& config);
@@ -92,6 +96,8 @@ class NBodySolver final : public Solver {
     VelocityConvention velocity_convention() const override;
     void prepare_diagnostics(ParticleSystem& particles, cudaStream_t stream) override;
     bool has_potential_energy() const override { return true; }
+
+    bool graph_capturable() const override { return config_.variant != NBodyVariant::Fused; }
 
     NBodyVariant variant() const { return config_.variant; }
     int tile_size() const { return config_.nbody.tile_size; }

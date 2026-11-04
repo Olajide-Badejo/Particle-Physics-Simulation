@@ -16,6 +16,10 @@
 # run of the same length with no tracer gives the step cost the trace can be judged
 # against, since tracing adds to the launches.
 #
+# Both runs have graphs off. The split is per kernel and per launch, and a captured
+# step is one launch, so this measures the stream path and says nothing about the
+# time between kernels in a graph.
+#
 # The summary fails, rather than writing a partial table, if any pass is absent or
 # if the trace holds a kernel it cannot attribute. See summarise_sph_split.py.
 #
@@ -52,7 +56,7 @@ WARMUP=200
 MEASURED=1000
 STEPS=$((WARMUP + MEASURED + 1))
 RUN=("$BIN" run dam_break_50k --particles "$PARTICLES" --steps "$STEPS"
-     --snapshot-every 0 --diag-every 0 --diagnostics "" --vtk-every 0)
+     --snapshot-every 0 --diag-every 0 --diagnostics "" --vtk-every 0 --graphs off)
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

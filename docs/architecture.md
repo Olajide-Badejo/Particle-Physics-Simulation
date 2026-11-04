@@ -78,6 +78,7 @@ a case there.
 | `has_potential_energy` | at a diagnostic | yes | no |
 | `check_device_errors` | before a diagnostic or a snapshot, and at the end of a run | nothing | reads the non-finite position flag, which drains the stream |
 | `startup_description` | once, for the configuration block | nothing | the derived resolution and the time step limits |
+| `graph_capturable` | after `initialize` or `resume` settle | yes for naive and tiled, no for fused | yes |
 
 The first six have no default, because a solver that silently inherited an empty
 `on_resume` would only show up as a resumed run drifting from a straight one.
@@ -187,7 +188,53 @@ nothing on the engine's stream would be ordered against it.
 
 `-DCPS_DEBUG_SYNC=ON` drains the stream after every launch and copy. If a failure
 goes away in that build, something was reading ahead of the stream. Results must
-match the normal build; timings from it mean nothing.
+match the normal build; timings from it mean nothing. A captured step counts as one
+launch, so a graph run drains once per step; run with `--graphs off` to drain between
+the passes of a step as well.
+
+## Captured graphs
+
+With `run.use_graphs` on, which is the default, the naive, tiled and fluid steps are
+captured once into a CUDA graph and launched as a unit. `--graphs off` runs them on the
+stream. The same kernels run in the same order with the same arguments, so a graph run
+and a stream run are bit identical, and that is a test
+(`tests/integration/test_graphs.cpp`). Only the launch changes, so a graph can remove
+only the time between kernels. A solver opts in with `graph_capturable`; one that does
+not runs on the stream whatever the setting says.
+
+**Why fused is not captured.** It launches a single kernel, so there is no time between
+kernels to remove, and measuring it showed no gain at any size. Capturing it would also
+need a graph for each way round its position buffers can be, because a captured node
+keeps the pointers it was given and the kernel swaps them every step. With graphs on, a
+fused run goes on the stream, and `cps run` says so where it reports capture.
+
+**Why it is on.** The rule, written before measuring, was on only if graphs beat the
+stream path by more than the spread somewhere and lost beyond the spread nowhere. In
+interleaved runs they gained at every fluid size and at small N for the split N-body
+variants, which launch several kernels a step. They changed nothing measurable for
+large N, where those gaps are too small a share of the step.
+
+**When.** At the end of `initialize()` and `resume()`, with the stream drained and the
+pointers and velocity convention settled. Capturing runs nothing on the device. Its
+cost is host time before the first step, so neither the solver nor the wall figure has
+it; `cps run` prints it, and `SimulationEngine::graph_capture_milliseconds()` returns it.
+
+**What a capture bakes in.** Every pointer and scalar `step` passes: `dt`, the particle
+count, the fluid's derived parameters and all the device arrays. None of them changes
+during the life of an engine, because a change of `dt` means a new configuration and so
+a new engine and a new capture. CUB's radix sort captures along with everything else,
+its temporary storage being allocated up front, so the fluid step is one graph with no
+part left on the stream.
+
+**What stays outside.** Diagnostics, snapshots, frames, the device error flag and the
+non-finite scans all run on the stream between launches, against the state they always
+saw. The hash pass inside the graph sets the same device flag, which is read outside.
+
+**Tools.** An NVTX range is host code, so the ranges around the fluid's passes fire once
+during capture, inside a `graph capture` range, and never at a launch. The `step` range
+still fires per step. `scripts/profile_kernels.sh` and `scripts/profile_sph_split.sh`
+run with `--graphs off`, because they report per kernel and per launch. Their figures
+describe the stream path.
 
 ## Data layout
 

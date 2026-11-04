@@ -53,6 +53,10 @@ class SphSolver final : public Solver {
     // Enqueues the six passes on the stream and returns without waiting for them.
     void step(ParticleSystem& particles, cudaStream_t stream) override;
 
+    // Every pass reads and writes the same arrays each step, the sort's temporary
+    // storage among them, so one capture covers all of them.
+    bool graph_capturable() const override { return true; }
+
     // The kick-drift leapfrog carries a half step velocity. Its initial offset runs
     // while the acceleration is still zero, so it records the convention without
     // changing a velocity, and the initial velocity is taken as v_{-1/2} as it

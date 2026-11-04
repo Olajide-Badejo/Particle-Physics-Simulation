@@ -122,6 +122,7 @@ int main(int argc, char** argv) {
 
         std::printf("  device state  : %.2f MiB\n",
                     static_cast<double>(engine.particles().device_bytes()) / (1024.0 * 1024.0));
+        std::printf("  step graphs   : %s\n", engine.using_graphs() ? "on" : "off");
         std::printf("\n");
         std::fflush(stdout);
 
@@ -146,6 +147,13 @@ int main(int argc, char** argv) {
             std::printf("  wall ms/step  : %.4f (%.3f s in run(), %.1f steps/s)\n",
                         wall_ms / per_step, wall_ms / 1.0e3,
                         wall_ms > 0.0 ? per_step / (wall_ms / 1.0e3) : 0.0);
+            // Capture happens before run() starts, so neither figure above has it.
+            if (engine.using_graphs()) {
+                std::printf("  graph capture : %.3f ms, once, before the steps\n",
+                            engine.graph_capture_milliseconds());
+            } else if (config.use_graphs) {
+                std::printf("  graph capture : none, this solver runs on the stream\n");
+            }
         }
 
         if (engine.solver().has_potential_energy()) {

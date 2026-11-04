@@ -513,6 +513,7 @@ is migrated when read, with one warning line, and `--print-config` prints its sc
 | `output.snapshot_interval` | 1000 | steps per snapshot |
 | `output.vtk_interval`, `output.vtk_dir` | 0, `vtk` | steps per VTK frame, where 0 means none, and the directory for the frames and `series.pvd`. See `--vtk-every` and `--vtk-dir` |
 | `run.allow_unstable_dt` | false | see `--allow-unstable-dt` |
+| `run.use_graphs` | true | launch the naive, tiled and fluid steps as a captured CUDA graph, or override it with `--graphs on\|off`. The same kernels run in the same order, so it moves the timing and not the physics, and a resume may change it. The fused variant launches a single kernel, so there is nothing to remove, and it stays on the stream |
 | `nbody.tile_size` | 256 | tile width of the tiled force kernel: 32, 64, 128 or 256. It moves the timing and not the physics, so a resume may change it |
 | `sph.viscosity` | 0.2 | dynamic viscosity in Pa s. At the default rest density that is 2e-4 m^2/s kinematic, about 200 times water |
 | `sph.boundary_damping` | 0.4 | fraction of the normal velocity kept at a wall, so each impact keeps 16 percent of the normal kinetic energy |

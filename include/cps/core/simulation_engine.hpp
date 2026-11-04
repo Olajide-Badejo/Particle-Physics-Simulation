@@ -11,6 +11,7 @@
 #include "cps/core/snapshot.hpp"
 #include "cps/io/vtk.hpp"
 #include "cps/solvers/solver.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 
@@ -47,6 +48,10 @@ namespace cps {
 //   - The destructor waits for the stream before freeing anything. Device buffers
 //     outside the engine that stream() work touches have to be kept alive until
 //     a synchronize().
+//
+// With run.use_graphs on and a solver that can be captured, step() launches a graph
+// captured at the end of initialize() or resume() and everything above still holds.
+// The arithmetic and its order are the same, so a run gives the same bits either way.
 class SimulationEngine {
    public:
     // Builds the solver the configuration asks for.
@@ -163,10 +168,20 @@ class SimulationEngine {
     double wall_milliseconds() const { return wall_ms_; }
     long long steps_run() const { return steps_run_; }
 
+    // Whether step() is launching captured graphs: run.use_graphs is on, the solver
+    // can be captured and a capture has happened.
+    bool using_graphs() const { return step_graph_.has_value(); }
+
+    // Host time spent capturing, over every call in this process. Capture is part of
+    // initialize() and resume(), so like them it is not in either time above.
+    double graph_capture_milliseconds() const { return graph_capture_ms_; }
+
    private:
     // Shifts the velocity array into the solver's convention if it is not there
     // already. Reads the acceleration array.
     void ensure_velocity_convention();
+    // Captures the solver's step into a graph, if graphs are in use.
+    void capture_step_graph();
     // Throws std::runtime_error naming the current step and the first particle
     // with a non-finite position or velocity.
     void check_state_finite(const HostParticleState& state) const;
@@ -190,6 +205,9 @@ class SimulationEngine {
     Stream stream_;
     std::unique_ptr<ParticleSystem> particles_;
     std::unique_ptr<Solver> solver_;
+    // Empty on the stream path. After the particles and the solver, so it goes before
+    // the buffers its capture names.
+    std::optional<CapturedGraph> step_graph_;
     std::unique_ptr<DiagnosticsReducer> reducer_;
     std::unique_ptr<DiagnosticsWriter> writer_;
     std::optional<VtkSeries> vtk_series_;
@@ -198,6 +216,7 @@ class SimulationEngine {
     double time_origin_ = 0.0;        // t0 in simulated_time()
     double solver_ms_ = 0.0;
     double wall_ms_ = 0.0;
+    double graph_capture_ms_ = 0.0;
     long long steps_run_ = 0;
 
     // True when the velocity array holds the leapfrog half step velocity

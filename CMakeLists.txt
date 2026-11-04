@@ -437,6 +437,7 @@ if(CPS_BUILD_TESTS)
     tests/integration/test_solver_interface.cpp
     tests/integration/test_snapshot_resume.cpp
     tests/integration/test_diagnostics.cpp
+    tests/integration/test_graphs.cpp
     tests/integration/test_input_safety.cpp
     tests/integration/test_particle_ids.cpp
     tests/integration/test_vtk_output.cpp)

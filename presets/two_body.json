@@ -6,7 +6,8 @@
     "steps": 10000,
     "dt": 0.001,
     "block_size": 32,
-    "allow_unstable_dt": false
+    "allow_unstable_dt": false,
+    "use_graphs": true
   },
   "initial_condition": {
     "type": "two_body",

@@ -95,6 +95,24 @@ TEST(Cli, AllowUnstableDtSetsTheConfigFieldAndAbsenceLeavesItAlone) {
     EXPECT_TRUE(config.allow_unstable_dt);
 }
 
+TEST(Cli, GraphsOverridesTheFileEitherWayAndAbsenceLeavesItAlone) {
+    EXPECT_FALSE(parse({"--config", "c.json"}).use_graphs);
+    EXPECT_TRUE(*parse({"--graphs", "on"}).use_graphs);
+    EXPECT_FALSE(*parse({"--graphs", "off"}).use_graphs);
+
+    cps::Config config;
+    config.use_graphs = true;
+    cps::apply_cli_overrides(parse({"--config", "c.json"}), config);
+    EXPECT_TRUE(config.use_graphs);
+    cps::apply_cli_overrides(parse({"--graphs", "off"}), config);
+    EXPECT_FALSE(config.use_graphs);
+    cps::apply_cli_overrides(parse({"--graphs", "on"}), config);
+    EXPECT_TRUE(config.use_graphs);
+
+    EXPECT_THROW(parse({"--graphs", "yes"}), std::runtime_error);
+    EXPECT_THROW(parse({"--graphs"}), std::runtime_error);
+}
+
 // Forcing a resume past a physics mismatch only makes sense when resuming, so
 // the flag implies --resume rather than needing both.
 TEST(Cli, ForceResumeParsesAndImpliesResume) {

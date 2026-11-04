@@ -464,6 +464,16 @@ TEST(Config, AllowUnstableDtMustBeABoolean) {
     EXPECT_FALSE(cps::Config::from_json_string("{}").allow_unstable_dt);
     EXPECT_TRUE(cps::Config::from_json_string(R"({"allow_unstable_dt": true})").allow_unstable_dt);
     EXPECT_THROW(cps::Config::from_json_string(R"({"allow_unstable_dt": 1})"), std::runtime_error);
+    EXPECT_TRUE(cps::Config::from_json_string("{}").use_graphs);
+    EXPECT_THROW(cps::Config::from_json_string(R"({"schema": 2, "run": {"use_graphs": 1}})"),
+                 std::runtime_error);
+    // A schema 2 key does not start to work in a file that does not ask for schema 2.
+    EXPECT_THROW(cps::Config::from_json_string(R"({"use_graphs": true})"), std::runtime_error);
+    for (const bool value : {false, true}) {
+        cps::Config config;
+        config.use_graphs = value;
+        EXPECT_EQ(cps::Config::from_json_string(config.to_json_string()).use_graphs, value);
+    }
     EXPECT_THROW(cps::Config::from_json_string(R"({"allow_unstable_dt": "yes"})"),
                  std::runtime_error);
 }
@@ -494,6 +504,7 @@ void expect_same_vec3(const cps::Vec3& a, const cps::Vec3& b, const char* field)
 // fingerprint of a run, so nothing may be lost or rounded on the way through.
 void expect_same_config(const cps::Config& a, const cps::Config& b) {
     EXPECT_EQ(a.allow_unstable_dt, b.allow_unstable_dt);
+    EXPECT_EQ(a.use_graphs, b.use_graphs);
     EXPECT_EQ(a.name, b.name);
     EXPECT_EQ(a.solver, b.solver);
     EXPECT_EQ(a.variant, b.variant);
@@ -667,7 +678,7 @@ TEST(Config, PrintsEverySectionInOrderWithNothingOmitted) {
     EXPECT_EQ(keys, (std::vector<std::string>{"schema", "name", "solver", "run",
                                               "initial_condition", "nbody", "sph", "output"}));
     EXPECT_EQ(root.at("schema"), 2);
-    EXPECT_EQ(root.at("run").size(), 4u);
+    EXPECT_EQ(root.at("run").size(), 5u);
     EXPECT_EQ(root.at("initial_condition").size(), 6u);
     EXPECT_EQ(root.at("nbody").size(), 4u);
     EXPECT_EQ(root.at("sph").size(), 12u);

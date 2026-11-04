@@ -77,6 +77,10 @@ struct Config {
     // Run control, not physics: turns the fluid solver's refusal of a time step
     // above its stability limits into a warning.
     bool allow_unstable_dt = false;
+    // Run control, not physics: launches the step as a captured CUDA graph where the
+    // solver can be captured, and on the stream otherwise. The same kernels run in
+    // the same order, so the trajectory is the same bits either way.
+    bool use_graphs = true;
     float softening = 0.01f;
     float gravitational_constant = 1.0f;
     uint32_t seed = 20260802u;

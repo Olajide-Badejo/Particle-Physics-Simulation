@@ -43,6 +43,8 @@ struct CliOptions {
     std::string convert_input;
     std::string convert_output;
 
+    // Whether the step runs as a captured graph. Empty leaves the file's value.
+    std::optional<bool> use_graphs;
     std::optional<SolverType> solver;
     std::optional<NBodyVariant> variant;
     std::optional<long long> steps;

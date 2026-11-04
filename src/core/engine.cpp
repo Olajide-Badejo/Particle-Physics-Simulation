@@ -90,9 +90,26 @@ void SimulationEngine::initialize() {
     solver_->initialize(*particles_, stream_.get());
     ensure_velocity_convention();
     stream_.synchronize();
+    capture_step_graph();
     open_diagnostics(-1);
     open_vtk_series(-1);
     initialized_ = true;
+}
+
+// Runs with the stream drained and the pointers and velocity convention settled.
+// Nothing reaches the device here: the step is only recorded.
+void SimulationEngine::capture_step_graph() {
+    step_graph_.reset();
+    if (!config_.use_graphs || !solver_->graph_capturable()) {
+        return;
+    }
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point start = Clock::now();
+    const NvtxRange range("graph capture");
+    step_graph_ = CapturedGraph::capture(
+        stream_.get(), [&] { solver_->step(*particles_, stream_.get()); });
+    graph_capture_ms_ +=
+        std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
 void SimulationEngine::ensure_velocity_convention() {
@@ -195,6 +212,7 @@ long long SimulationEngine::resume(bool force) {
     solver_->on_resume(*particles_, stream_.get());
     ensure_velocity_convention();
     stream_.synchronize();
+    capture_step_graph();
     open_diagnostics(current_step_);
     open_vtk_series(current_step_);
     initialized_ = true;
@@ -207,7 +225,11 @@ void SimulationEngine::step() {
         throw std::runtime_error("the engine must be initialised or resumed before stepping");
     }
     const NvtxRange range("step");
-    solver_->step(*particles_, stream_.get());
+    if (step_graph_) {
+        step_graph_->launch(stream_.get());
+    } else {
+        solver_->step(*particles_, stream_.get());
+    }
     ++current_step_;
 }
 
