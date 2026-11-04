@@ -1,4 +1,3 @@
-==PROF== Connected to process 708199 (/mnt/c/Users/jidro/Documents/Elijah/ML_DL_ETC/Projects/Updated Github Projects/GPU_Physics_Simulation/build/bin/cuda_physics_sim)
 device 0: NVIDIA GeForce RTX 5070 (compute capability 12.0)
   multiprocessors      : 48
   core clock           : 2625 MHz
