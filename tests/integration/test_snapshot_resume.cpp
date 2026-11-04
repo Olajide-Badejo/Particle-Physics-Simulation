@@ -117,6 +117,7 @@ class ResumeTest : public ::testing::Test {
             ASSERT_EQ(bits(a.vy[i]), bits(b.vy[i])) << label << " velocity y at index " << i;
             ASSERT_EQ(bits(a.vz[i]), bits(b.vz[i])) << label << " velocity z at index " << i;
             ASSERT_EQ(bits(a.mass[i]), bits(b.mass[i])) << label << " mass at index " << i;
+            ASSERT_EQ(a.id[i], b.id[i]) << label << " id at index " << i;
         }
     }
 

@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <numeric>
 #include <regex>
 #include <set>
 #include <stdexcept>
@@ -31,9 +32,10 @@ namespace {
 
 constexpr uint64_t FNV1A_64_PRIME = 0x100000001b3ull;
 
-// The particle arrays in the order the writer emits them.
+// The float arrays in the order the writer emits them. Id follows them.
 constexpr std::array<const char*, SNAPSHOT_ARRAY_COUNT> PARTICLE_ARRAY_NAMES = {
     "x", "y", "z", "vx", "vy", "vz", "mass"};
+constexpr const char* ID_ARRAY_NAME = "id";
 constexpr const char* PHYSICS_ARRAY_NAME = "physics";
 
 uint64_t round_up_to_eight(uint64_t value) { return (value + 7u) & ~uint64_t{7u}; }
@@ -95,6 +97,27 @@ std::string entry_name(const SnapshotArrayEntry& entry, std::size_t index, const
                                  std::to_string(index) + " has a malformed name");
     }
     return std::string(begin, nul);
+}
+
+// Ids are the one thing a resume trusts that the checksum cannot vouch for: a
+// writer that got them wrong still checksums correctly.
+void check_id_permutation(const std::vector<uint32_t>& id, const std::string& where) {
+    std::vector<bool> seen(id.size(), false);
+    for (std::size_t i = 0; i < id.size(); ++i) {
+        const uint32_t value = id[i];
+        if (value >= id.size()) {
+            throw std::runtime_error(where + ": array 'id' holds " + std::to_string(value) +
+                                     " at index " + std::to_string(i) +
+                                     ", which is not below the particle count " +
+                                     std::to_string(id.size()));
+        }
+        if (seen[value]) {
+            throw std::runtime_error(where + ": array 'id' holds " + std::to_string(value) +
+                                     " more than once, the second time at index " +
+                                     std::to_string(i));
+        }
+        seen[value] = true;
+    }
 }
 
 Snapshot read_version_1(std::FILE* file, uint64_t file_size, const fs::path& path) {
@@ -171,6 +194,7 @@ Snapshot read_version_2(std::FILE* file, uint64_t file_size, const fs::path& pat
     // Find the arrays this build needs, checking every entry on the way,
     // including the ones it is about to skip.
     std::array<const SnapshotArrayEntry*, SNAPSHOT_ARRAY_COUNT> particle_entries{};
+    const SnapshotArrayEntry* id_entry = nullptr;
     const SnapshotArrayEntry* physics_entry = nullptr;
     std::set<std::string> seen;
     for (std::size_t i = 0; i < table.size(); ++i) {
@@ -209,6 +233,17 @@ Snapshot read_version_2(std::FILE* file, uint64_t file_size, const fs::path& pat
                 }
                 particle_entries[a] = &entry;
             }
+        }
+        if (name == ID_ARRAY_NAME) {
+            if (entry.dtype != static_cast<uint32_t>(SnapshotDtype::U32) ||
+                entry.element_count != header.count) {
+                throw std::runtime_error(where + ": array 'id' must be u32 with " +
+                                         std::to_string(header.count) +
+                                         " elements, but has dtype code " +
+                                         std::to_string(entry.dtype) + " and " +
+                                         std::to_string(entry.element_count) + " elements");
+            }
+            id_entry = &entry;
         }
         if (name == PHYSICS_ARRAY_NAME) {
             if (entry.dtype != static_cast<uint32_t>(SnapshotDtype::U8)) {
@@ -253,6 +288,14 @@ Snapshot read_version_2(std::FILE* file, uint64_t file_size, const fs::path& pat
             std::memcpy(block.data(), payload.data() + (particle_entries[a]->offset - table_end),
                         block.size() * sizeof(float));
         }
+    }
+    // With no id array the file order stands, which is what resize just set up.
+    if (id_entry != nullptr) {
+        if (!snapshot.state.id.empty()) {
+            std::memcpy(snapshot.state.id.data(), payload.data() + (id_entry->offset - table_end),
+                        snapshot.state.id.size() * sizeof(uint32_t));
+        }
+        check_id_permutation(snapshot.state.id, where);
     }
     const unsigned char* physics = payload.data() + (physics_entry->offset - table_end);
     snapshot.physics.assign(reinterpret_cast<const char*>(physics),
@@ -300,6 +343,8 @@ void HostParticleState::resize(std::size_t n) {
     vy.assign(n, 0.0f);
     vz.assign(n, 0.0f);
     mass.assign(n, 0.0f);
+    id.resize(n);
+    std::iota(id.begin(), id.end(), uint32_t{0});
 }
 
 void write_snapshot(const fs::path& path, const Snapshot& snapshot) {
@@ -308,6 +353,11 @@ void write_snapshot(const fs::path& path, const Snapshot& snapshot) {
         if (particle_array(snapshot.state, a)->size() != count) {
             throw std::runtime_error("snapshot arrays have inconsistent lengths");
         }
+    }
+    if (snapshot.state.id.size() != count) {
+        throw std::runtime_error("snapshot arrays have inconsistent lengths: " +
+                                 std::to_string(count) + " particles but " +
+                                 std::to_string(snapshot.state.id.size()) + " ids");
     }
     if ((snapshot.flags & ~SNAPSHOT_KNOWN_FLAGS) != 0u) {
         throw std::runtime_error("cannot write unknown snapshot flag bits " +
@@ -336,6 +386,7 @@ void write_snapshot(const fs::path& path, const Snapshot& snapshot) {
         add_block(PARTICLE_ARRAY_NAMES[a], SnapshotDtype::F32, count,
                   particle_array(snapshot.state, a)->data());
     }
+    add_block(ID_ARRAY_NAME, SnapshotDtype::U32, count, snapshot.state.id.data());
     add_block(PHYSICS_ARRAY_NAME, SnapshotDtype::U8, snapshot.physics.size(),
               snapshot.physics.data());
 

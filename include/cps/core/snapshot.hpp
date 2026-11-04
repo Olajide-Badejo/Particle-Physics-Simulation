@@ -34,12 +34,20 @@ namespace cps {
 //       24     8  element_count
 //       32     8  offset               from the start of the file
 //
-// The writer emits x, y, z, vx, vy, vz and mass (f32, count elements each) and
-// physics (u8: the canonical physics JSON from physics_json()), each starting
-// on an eight byte boundary with zero padding in between. The table is what
-// keeps this the last format bump: a later version adds arrays such as id,
-// type or density as new entries, and this reader skips names it does not
-// know, so older builds keep loading newer files.
+// The writer emits x, y, z, vx, vy, vz and mass (f32, count elements each), id
+// (u32, count elements) and physics (u8: the canonical physics JSON from
+// physics_json()), each starting on an eight byte boundary with zero padding in
+// between. The table is what keeps this the last format bump: a later version
+// adds arrays such as type or density as new entries, and this reader skips names
+// it does not know, so older builds keep loading newer files.
+//
+// id names each particle, whatever slot the fluid solver's sort has put it in. It
+// must be a permutation of 0 to count - 1, and read_snapshot refuses anything
+// else. A CPS2 file with no id, or a CPS1 file, loads with ids 0 to count - 1 in
+// file order. For an N-body snapshot those are the true ids, because N-body never
+// permutes. For a fluid snapshot written before ids existed the labels are
+// arbitrary, since the sort had already mixed the particles up, but they are
+// consistent from that step on.
 //
 // The flags word carries the one piece of information a reader cannot infer
 // from the numbers, namely whether the stored velocities are synchronised with
@@ -61,7 +69,7 @@ inline constexpr uint32_t SNAPSHOT_MAGIC_V1 = 0x31535043u;  // "CPS1" in little 
 inline constexpr uint32_t SNAPSHOT_VERSION = 2;
 inline constexpr uint32_t SNAPSHOT_FLAG_HALF_STEP_VELOCITY = 1u << 0;
 inline constexpr uint32_t SNAPSHOT_KNOWN_FLAGS = SNAPSHOT_FLAG_HALF_STEP_VELOCITY;
-inline constexpr int SNAPSHOT_ARRAY_COUNT = 7;  // the particle arrays, not counting physics
+inline constexpr int SNAPSHOT_ARRAY_COUNT = 7;  // the float arrays, all that CPS1 has
 inline constexpr std::size_t SNAPSHOT_ARRAY_NAME_BYTES = 16;
 
 // Explicit values: they are on disk, so they are never renumbered.
@@ -142,7 +150,9 @@ struct HostParticleState {
     std::vector<float> vy;
     std::vector<float> vz;
     std::vector<float> mass;
+    std::vector<uint32_t> id;
 
+    // Sizes every array and zeroes the floats. Ids come out as 0 to n - 1.
     void resize(std::size_t n);
     std::size_t size() const { return x.size(); }
 };

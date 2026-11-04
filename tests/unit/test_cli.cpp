@@ -104,6 +104,34 @@ TEST(Cli, ForceResumeParsesAndImpliesResume) {
     EXPECT_FALSE(plain.force_resume);
 }
 
+TEST(Cli, VtkFlagsReachTheConfiguration) {
+    const cps::CliOptions options = parse({"--vtk-every", "25", "--vtk-dir", "frames"});
+    EXPECT_EQ(options.vtk_every, 25);
+    EXPECT_EQ(options.vtk_dir, "frames");
+    cps::Config config;
+    cps::apply_cli_overrides(options, config);
+    EXPECT_EQ(config.vtk_interval, 25);
+    EXPECT_EQ(config.vtk_dir, "frames");
+
+    // Absent flags leave the file's values alone, and 0 turns frames off.
+    cps::Config from_file;
+    from_file.vtk_interval = 7;
+    from_file.vtk_dir = "kept";
+    cps::apply_cli_overrides(parse({"--config", "c.json"}), from_file);
+    EXPECT_EQ(from_file.vtk_interval, 7);
+    EXPECT_EQ(from_file.vtk_dir, "kept");
+    cps::apply_cli_overrides(parse({"--vtk-every", "0"}), from_file);
+    EXPECT_EQ(from_file.vtk_interval, 0);
+}
+
+TEST(Cli, VtkFlagErrorsNameTheFlag) {
+    EXPECT_NE(error_of({"--vtk-every", "-1"}).find("--vtk-every"), std::string::npos);
+    EXPECT_NE(error_of({"--vtk-every", "often"}).find("--vtk-every"), std::string::npos);
+    EXPECT_NE(error_of({"--vtk-every"}).find("--vtk-every"), std::string::npos);
+    EXPECT_NE(error_of({"--vtk-dir"}).find("--vtk-dir"), std::string::npos);
+    EXPECT_NE(error_of({"--vtk-dir", ""}).find("--vtk-dir"), std::string::npos);
+}
+
 TEST(Cli, UsageListsForceResume) {
     EXPECT_NE(cps::cli_usage().find("--force-resume"), std::string::npos);
 }

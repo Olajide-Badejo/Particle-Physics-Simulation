@@ -437,6 +437,55 @@ A CLI parse error exits 2, and zero or negative `--dt`, `--particles` and `--ste
 refused. Misspelled or out of range configuration keys abort, zero softening is refused for
 N-body, and non finite state stops a run. Run `--help` for the rest.
 
+### From clone to a ParaView dam break
+
+With `--vtk-every`, a run writes VTK frames and a series file that ParaView opens as they are:
+
+```bash
+git clone https://github.com/Olajide-Badejo/Particle-Physics-Simulation.git
+cd Particle-Physics-Simulation
+cmake --preset dev
+cmake --build --preset dev --target cuda_physics_sim
+./build/bin/cuda_physics_sim --config presets/dam_break_50k.json --vtk-every 50 --vtk-dir vtk/dam_break --snapshot-every 0 --diagnostics ""
+```
+
+Or in Docker, with the image from the section above:
+
+```bash
+mkdir -p vtk
+docker run --rm --gpus all --user "$(id -u):$(id -g)" -v "$PWD/vtk:/src/vtk" cps:dev cuda_physics_sim --config presets/dam_break_50k.json --vtk-every 50 --vtk-dir vtk/dam_break --snapshot-every 0 --diagnostics ""
+```
+
+Then open `vtk/dam_break/series.pvd` in ParaView and press Apply. The points show with no filter,
+and the time slider follows the simulated time. Color by `velocity` to see the front.
+
+What a frame holds, with the layout in `include/cps/io/vtk.hpp`:
+
+- **Points**, and at each point `velocity`, `mass` and `id`, all as the state holds them.
+- **`id`** names the particle. The fluid solver sorts its particles every step, so point number
+  `k` is a different particle from one frame to the next. Follow `id` instead, which runs from 0 to
+  N-1 in the initial order.
+- **`TimeValue`, `Step` and `VelocityConvention`** in the field data.
+- **The velocity is not adjusted.** The fused N-body kernel and the fluid solver carry a velocity
+  half a step behind the positions, so a frame from either holds that half step velocity, and its
+  `VelocityConvention` reads `half_step`. The naive and tiled kernels read `synchronised`.
+
+Density and pressure are not in a frame.
+
+Frames fall on multiples of the cadence and on step 0, so a last step off the cadence gets none.
+Frames and the series file are each written to a temporary file and renamed, so a killed run leaves
+a valid series. A `--resume` keeps the frames up to the snapshot's step, drops any past it, and
+carries on, the same as the diagnostics file. A fresh run replaces the series in its directory.
+
+`python/cps_io` reads all of this with NumPy alone, for use from a script:
+
+```bash
+python3 -I python/cps_io/check_vtp.py vtk/dam_break/series.pvd
+```
+
+It checks the XML, the array sizes against the appended block, and that every frame holds the same
+ids. To import it, put `python/` on the path: `from cps_io import read_snapshot, read_vtp, read_pvd`.
+
 ### Configuration
 
 A configuration file starts with `"schema": 2` and groups its keys into the sections `run`,
@@ -453,6 +502,7 @@ is migrated when read, with one warning line, and `--print-config` prints its sc
 | `nbody.softening` | 0.01 | Plummer softening length. In a 10,000 particle sphere of scale radius 1 this is about 7.5 times below the mean separation, so that run is mildly collisional; softening keeps it stable and does not make it collisionless |
 | `output.diagnostics_interval` | 100 | steps per diagnostics row. Each row costs an all pairs potential pass, so 1 is expensive. `v1.0.0` defaulted to 1 |
 | `output.snapshot_interval` | 1000 | steps per snapshot |
+| `output.vtk_interval`, `output.vtk_dir` | 0, `vtk` | steps per VTK frame, where 0 means none, and the directory for the frames and `series.pvd`. See `--vtk-every` and `--vtk-dir` |
 | `run.allow_unstable_dt` | false | see `--allow-unstable-dt` |
 | `nbody.tile_size` | 256 | tile width of the tiled force kernel: 32, 64, 128 or 256. It moves the timing and not the physics, so a resume may change it |
 | `sph.viscosity` | 0.2 | dynamic viscosity in Pa s. At the default rest density that is 2e-4 m^2/s kinematic, about 200 times water |
@@ -519,9 +569,12 @@ Values no CSV records, typed here and labelled: the double precision truncation 
 include/cps/physics/ force law, SPH kernels, spatial hash (host and device)
 include/cps/core/    configuration, particle state, engine, snapshots, diagnostics
 include/cps/solvers/ the N-body and fluid solver interfaces
+include/cps/io/      the VTK frame and series writer
 include/cps/utils/   CUDA helpers and the progress bar
 src/kernels/         every CUDA kernel
 src/core/            engine, parsing, snapshots, initial conditions
+src/io/              the VTK frame and series writer
+python/cps_io/       NumPy readers for snapshots and frames, and the frame checker
 tests/               unit (host and device), integration, validation, install consumer
 benchmarks/          the sweep driver
 scripts/             style gate, plotting, report assets, profiling, number and provenance checks

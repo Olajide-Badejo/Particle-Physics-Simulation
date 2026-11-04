@@ -130,6 +130,7 @@ class SphSolver final : public Solver {
     DeviceBuffer<float> sx_, sy_, sz_;
     DeviceBuffer<float> svx_, svy_, svz_;
     DeviceBuffer<float> smass_;
+    DeviceBuffer<uint32_t> sid_;
 
     DeviceBuffer<float> density_;
     DeviceBuffer<float> pressure_;

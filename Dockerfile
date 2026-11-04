@@ -26,6 +26,7 @@ COPY docs/ docs/
 COPY experiments/ experiments/
 COPY include/ include/
 COPY presets/ presets/
+COPY python/ python/
 COPY report/ report/
 COPY report_debug/ report_debug/
 COPY scripts/ scripts/

@@ -40,6 +40,8 @@
     "snapshot_interval": 500,
     "snapshot_dir": "snapshots/dam_break_50k",
     "diagnostics_interval": 100,
-    "diagnostics_path": "experiments/results/dam_break_50k_diagnostics.csv"
+    "diagnostics_path": "experiments/results/dam_break_50k_diagnostics.csv",
+    "vtk_interval": 0,
+    "vtk_dir": "vtk"
   }
 }

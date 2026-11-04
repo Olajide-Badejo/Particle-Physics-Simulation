@@ -204,6 +204,7 @@ add_library(physics_host STATIC
   src/core/physics_fingerprint.cpp
   src/core/snapshot.cpp
   src/core/initial_conditions.cpp
+  src/io/vtk.cpp
   src/utils/progress.cpp)
 target_include_directories(physics_host PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -335,7 +336,8 @@ if(CPS_BUILD_TESTS)
     tests/unit/test_snapshot_format.cpp
     tests/unit/test_sph_kernels.cpp
     tests/unit/test_spatial_hash.cpp
-    tests/unit/test_initial_conditions.cpp)
+    tests/unit/test_initial_conditions.cpp
+    tests/unit/test_vtk.cpp)
   target_link_libraries(unit_tests_host
     PRIVATE physics_host GTest::gtest_main cps_warnings cps_test_support)
   add_test(NAME unit_host COMMAND unit_tests_host)
@@ -363,6 +365,13 @@ if(CPS_BUILD_TESTS)
       COMMAND ${Python3_EXECUTABLE}
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts/test_check_doc_numbers.py)
     set_tests_properties(doc_numbers_tool PROPERTIES LABELS "host")
+
+    # The Python readers need NumPy. Without it the script exits 77, so the entry
+    # reads as not run instead of failing on a machine with only a bare interpreter.
+    add_test(NAME cps_io_tool
+      COMMAND ${Python3_EXECUTABLE} -I
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts/test_cps_io.py)
+    set_tests_properties(cps_io_tool PROPERTIES LABELS "host" SKIP_RETURN_CODE 77)
   endif()
 
   # Everything below needs the CUDA runtime, so it is skipped entirely in host
@@ -391,7 +400,9 @@ if(CPS_BUILD_TESTS)
     tests/integration/test_solver_interface.cpp
     tests/integration/test_snapshot_resume.cpp
     tests/integration/test_diagnostics.cpp
-    tests/integration/test_input_safety.cpp)
+    tests/integration/test_input_safety.cpp
+    tests/integration/test_particle_ids.cpp
+    tests/integration/test_vtk_output.cpp)
   target_link_libraries(integration_tests
     PRIVATE physics_core_strict cps_gpu_test_main cps_warnings cps_test_support)
   add_test(NAME integration COMMAND integration_tests)

@@ -36,6 +36,8 @@ struct CliOptions {
     std::optional<long long> snapshot_every;
     std::optional<std::string> diagnostics_path;
     std::optional<long long> diag_every;
+    std::optional<std::string> vtk_dir;
+    std::optional<long long> vtk_every;
 };
 
 // Throws std::runtime_error naming the flag for an unknown option, a missing

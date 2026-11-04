@@ -40,6 +40,8 @@
     "snapshot_interval": 0,
     "snapshot_dir": "snapshots/two_body",
     "diagnostics_interval": 10,
-    "diagnostics_path": "experiments/results/two_body_diagnostics.csv"
+    "diagnostics_path": "experiments/results/two_body_diagnostics.csv",
+    "vtk_interval": 0,
+    "vtk_dir": "vtk"
   }
 }

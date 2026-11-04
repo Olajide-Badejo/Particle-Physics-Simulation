@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 #include "cps/core/snapshot.hpp"
 #include "cps/utils/cuda_helpers.hpp"
@@ -66,6 +67,12 @@ class ParticleSystem {
     float* mass() { return mass_.get(); }
     const float* mass() const { return mass_.get(); }
 
+    // A label for each particle, 0 to N - 1 in the initial state's order. The
+    // fluid solver permutes it with the rest of the particle, so it says which
+    // particle is in which slot. No force, sort key or integrator reads it.
+    uint32_t* id() { return id_.get(); }
+    const uint32_t* id() const { return id_.get(); }
+
     // Exchanges the two position buffers after a fused launch.
     void swap_position_buffers();
 
@@ -84,8 +91,9 @@ class ParticleSystem {
    private:
     // Where one array sits in the staging buffer, which is allocated at the
     // first transfer and kept, so a run writing snapshots does not pin and unpin
-    // memory for each one.
-    float* staging(std::size_t array) const;
+    // memory for each one. Every slot holds count four byte elements.
+    template <typename T>
+    T* staging(std::size_t array) const;
 
     int count_ = 0;
     DeviceBuffer<float> x_, y_, z_;
@@ -93,7 +101,8 @@ class ParticleSystem {
     DeviceBuffer<float> vx_, vy_, vz_;
     DeviceBuffer<float> ax_, ay_, az_;
     DeviceBuffer<float> mass_;
-    mutable HostBuffer<float> staging_;
+    DeviceBuffer<uint32_t> id_;
+    mutable HostBuffer<unsigned char> staging_;
 };
 
 }  // namespace cps

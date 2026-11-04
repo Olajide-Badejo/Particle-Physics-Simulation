@@ -280,8 +280,9 @@ TEST(ParticleSystem, ReportsItsDeviceFootprint) {
     const int count = 1000;
     cps::ParticleSystem particles(count);
     // Thirteen float arrays: three positions, three staged positions, three
-    // velocities, three accelerations and the mass.
-    EXPECT_EQ(particles.device_bytes(), static_cast<std::size_t>(count) * 13u * sizeof(float));
+    // velocities, three accelerations and the mass. Then the id.
+    EXPECT_EQ(particles.device_bytes(), static_cast<std::size_t>(count) *
+                                            (13u * sizeof(float) + sizeof(uint32_t)));
 }
 
 }  // namespace

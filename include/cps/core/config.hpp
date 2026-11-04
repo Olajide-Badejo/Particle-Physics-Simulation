@@ -96,6 +96,10 @@ struct Config {
     // copies, so the default samples sparsely rather than every step.
     long long diagnostics_interval = 100;
     std::string diagnostics_path = "experiments/results/diagnostics.csv";
+    // Steps per VTK frame, or 0 for none. Frames are for looking at, so they are
+    // off unless asked for.
+    long long vtk_interval = 0;
+    std::string vtk_dir = "vtk";
 
     NBodyConfig nbody{};
     SphConfig sph{};

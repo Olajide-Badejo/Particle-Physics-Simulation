@@ -66,6 +66,18 @@ void SimulationEngine::open_diagnostics(long long resume_step) {
     }
 }
 
+void SimulationEngine::open_vtk_series(long long resume_step) {
+    vtk_series_.reset();
+    if (config_.vtk_interval <= 0) {
+        return;
+    }
+    if (resume_step < 0) {
+        vtk_series_ = VtkSeries::fresh(config_.vtk_dir);
+    } else {
+        vtk_series_ = VtkSeries::resumed(config_.vtk_dir, static_cast<uint64_t>(resume_step));
+    }
+}
+
 void SimulationEngine::initialize() {
     const HostParticleState state = make_initial_state(config_);
     particles_->upload(state, stream_.get());
@@ -78,6 +90,7 @@ void SimulationEngine::initialize() {
     ensure_velocity_convention();
     stream_.synchronize();
     open_diagnostics(-1);
+    open_vtk_series(-1);
     initialized_ = true;
 }
 
@@ -182,6 +195,7 @@ long long SimulationEngine::resume(bool force) {
     ensure_velocity_convention();
     stream_.synchronize();
     open_diagnostics(current_step_);
+    open_vtk_series(current_step_);
     initialized_ = true;
     std::fprintf(stderr, "resumed from %s at step %lld\n", path.string().c_str(), current_step_);
     return current_step_;
@@ -253,6 +267,15 @@ void SimulationEngine::write_snapshot_now() const {
     write_snapshot(snapshot_path_for_step(config_.snapshot_dir, snapshot.step), snapshot);
 }
 
+void SimulationEngine::write_vtk_frame_now() {
+    check_device_errors();
+    HostParticleState state;
+    particles_->download(state, stream_.get());
+    check_state_finite(state);
+    vtk_series_->add_frame(state, VtkFrameInfo{static_cast<uint64_t>(current_step_),
+                                               simulated_time(), half_step_velocity_});
+}
+
 void SimulationEngine::run() {
     using Clock = std::chrono::steady_clock;
     if (!initialized_) {
@@ -263,13 +286,21 @@ void SimulationEngine::run() {
     if (writer_ && writer_->is_open()) {
         writer_->write(diagnostics());
     }
+    // Step 0 of a fresh run. A resumed run comes through here too: the frame at the
+    // snapshot's step is normally already in the series, but a run killed between
+    // writing the snapshot and the frame, or first given a cadence on this resume,
+    // does not have it.
+    if (vtk_series_ && current_step_ % config_.vtk_interval == 0 &&
+        !vtk_series_->has_frame(static_cast<uint64_t>(current_step_))) {
+        write_vtk_frame_now();
+    }
 
     ProgressBar bar(config_.name.empty() ? std::string("simulation") : config_.name, config_.steps);
     bar.update(current_step_);
 
     // The solver clock runs on device events around each unbroken stretch of
-    // step() calls and stops just before a diagnostic or a snapshot. Both of
-    // those copy from the device and so synchronise anyway; stopping the
+    // step() calls and stops just before a diagnostic, a snapshot or a frame. All
+    // of those copy from the device and so synchronise anyway; stopping the
     // clock there adds no synchronisation that would not have happened.
     CudaTimer timer;
     bool timing = false;
@@ -287,7 +318,8 @@ void SimulationEngine::run() {
                                     current_step_ % config_.diagnostics_interval == 0;
         const bool snapshot_due =
             config_.snapshot_interval > 0 && current_step_ % config_.snapshot_interval == 0;
-        if (diagnostic_due || snapshot_due) {
+        const bool frame_due = vtk_series_ && current_step_ % config_.vtk_interval == 0;
+        if (diagnostic_due || snapshot_due || frame_due) {
             solver_ms_ += timer.stop(stream_.get());
             timing = false;
         }
@@ -299,6 +331,9 @@ void SimulationEngine::run() {
                 writer_->flush();
             }
             write_snapshot_now();
+        }
+        if (frame_due) {
+            write_vtk_frame_now();
         }
         bar.update(current_step_);
     }

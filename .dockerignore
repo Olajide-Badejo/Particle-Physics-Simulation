@@ -22,6 +22,7 @@
 
 # Run artifacts. Only the committed results go in, the same list as .gitignore.
 snapshots
+vtk
 experiments/results/*
 !experiments/results/.gitkeep
 !experiments/results/benchmarks.csv

@@ -7,6 +7,10 @@ a Changelog, and the project uses semantic versioning.
 
 ### Changed
 
+- **Breaking:** `sph_gather_sorted` and `sph_forces_and_integrate` take the id arrays, and a
+  `HostParticleState` given to `ParticleSystem::upload` or `write_snapshot` must have one id per
+  particle. `HostParticleState::resize` numbers them for you.
+- The presets print the two new `output` keys, regenerated through `--print-config`.
 - **Breaking:** the public headers moved under `cps/`, from `include/core`, `include/physics`,
   `include/solvers` and `include/utils` to `include/cps/core` and so on. Include them as
   `#include "cps/core/config.hpp"`. The old paths have no forwarding headers.
@@ -59,6 +63,16 @@ a Changelog, and the project uses semantic versioning.
 
 ### Added
 
+- Particle ids. `ParticleSystem` and `HostParticleState` carry a `uint32` `id`, 0 to N-1 in the
+  initial order, which the fluid solver permutes with the rest of the particle. No force, sort key
+  or integrator reads it, and no trajectory changes.
+- CPS2 snapshots store an `id` array through the array table, with no format bump. A file with no
+  `id`, or a CPS1 file, loads with ids in file order; a bad `id` array is refused by name. Older
+  builds skip the array.
+- VTK output: XML PolyData frames (`.vtp`) and a `.pvd` series, from `include/cps/io/vtk.hpp`, with
+  `output.vtk_interval`, `output.vtk_dir`, `--vtk-every` and `--vtk-dir`. Off by default. Frames and
+  the series are replaced atomically, and a resume continues the series.
+- `python/cps_io`: NumPy readers for snapshots, frames and series, and `check_vtp.py` to check them.
 - The `Solver` interface, with `NBodySolver` and `SphSolver` implementing it and `make_solver(config)`
   choosing between them. `SimulationEngine` has a constructor that takes a `Solver`.
 - The configuration key `nbody.tile_size`: 32, 64, 128 or 256, default 256. It is not part of the

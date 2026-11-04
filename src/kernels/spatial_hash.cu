@@ -73,10 +73,11 @@ __global__ void cell_bounds_kernel(const uint32_t* __restrict__ bucket_sorted,
 __global__ void gather_sorted_kernel(
     const float* __restrict__ x, const float* __restrict__ y, const float* __restrict__ z,
     const float* __restrict__ vx, const float* __restrict__ vy, const float* __restrict__ vz,
-    const float* __restrict__ mass, const int64_t* __restrict__ cell_key,
-    const uint32_t* __restrict__ index_sorted, float* __restrict__ sx, float* __restrict__ sy,
-    float* __restrict__ sz, float* __restrict__ svx, float* __restrict__ svy,
-    float* __restrict__ svz, float* __restrict__ smass, int64_t* __restrict__ cell_key_sorted,
+    const float* __restrict__ mass, const uint32_t* __restrict__ id,
+    const int64_t* __restrict__ cell_key, const uint32_t* __restrict__ index_sorted,
+    float* __restrict__ sx, float* __restrict__ sy, float* __restrict__ sz,
+    float* __restrict__ svx, float* __restrict__ svy, float* __restrict__ svz,
+    float* __restrict__ smass, uint32_t* __restrict__ sid, int64_t* __restrict__ cell_key_sorted,
     int count) {
     const int k = blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= count) {
@@ -90,6 +91,7 @@ __global__ void gather_sorted_kernel(
     svy[k] = vy[source];
     svz[k] = vz[source];
     smass[k] = mass[source];
+    sid[k] = id[source];
     cell_key_sorted[k] = cell_key[source];
 }
 
@@ -182,16 +184,16 @@ void sph_compute_cell_bounds(const uint32_t* bucket_sorted, uint32_t* cell_start
 }
 
 void sph_gather_sorted(const float* x, const float* y, const float* z, const float* vx,
-                       const float* vy, const float* vz, const float* mass, const int64_t* cell_key,
-                       const uint32_t* index_sorted, float* sx, float* sy, float* sz, float* svx,
-                       float* svy, float* svz, float* smass, int64_t* cell_key_sorted, int count,
-                       int block_size, cudaStream_t stream) {
+                       const float* vy, const float* vz, const float* mass, const uint32_t* id,
+                       const int64_t* cell_key, const uint32_t* index_sorted, float* sx, float* sy,
+                       float* sz, float* svx, float* svy, float* svz, float* smass, uint32_t* sid,
+                       int64_t* cell_key_sorted, int count, int block_size, cudaStream_t stream) {
     if (count <= 0) {
         return;
     }
     gather_sorted_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
-        x, y, z, vx, vy, vz, mass, cell_key, index_sorted, sx, sy, sz, svx, svy, svz, smass,
-        cell_key_sorted, count);
+        x, y, z, vx, vy, vz, mass, id, cell_key, index_sorted, sx, sy, sz, svx, svy, svz, smass,
+        sid, cell_key_sorted, count);
     CUDA_CHECK(cudaGetLastError());
     CPS_SYNC_POINT(stream);
 }

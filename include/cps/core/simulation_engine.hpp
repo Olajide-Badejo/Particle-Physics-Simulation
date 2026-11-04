@@ -2,12 +2,14 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "cps/core/config.hpp"
 #include "cps/core/diagnostics.hpp"
 #include "cps/core/particle_system.hpp"
 #include "cps/core/snapshot.hpp"
+#include "cps/io/vtk.hpp"
 #include "cps/solvers/solver.hpp"
 
 namespace cps {
@@ -18,7 +20,7 @@ namespace cps {
 // The engine holds no particle data on the host. Configuration, diagnostics
 // accumulators and the staging buffer are the only host allocations that scale
 // with the particle count, and the staging buffer is only touched when a
-// snapshot is written and once at the end of run().
+// snapshot or a VTK frame is written and once at the end of run().
 //
 // Everything the engine does on the device goes through one stream of its own,
 // which is non-blocking, so the host and the device run apart until something
@@ -86,18 +88,23 @@ class SimulationEngine {
     // order its own work with it: downloads, a timer, a direct kernel launch.
     cudaStream_t stream() const { return stream_.get(); }
 
-    // Runs to the configured step count, writing snapshots and diagnostics on
-    // their configured cadences and drawing a progress bar. After initialize()
-    // the diagnostics file starts afresh; after resume() it is continued (see
-    // the resuming DiagnosticsWriter constructor).
+    // Runs to the configured step count, writing snapshots, diagnostics and VTK
+    // frames on their configured cadences and drawing a progress bar. After
+    // initialize() the diagnostics file and the VTK series start afresh; after
+    // resume() they are continued (see the resuming DiagnosticsWriter constructor
+    // and VtkSeries::resumed).
+    //
+    // Frames fall on multiples of the VTK cadence, step 0 included, and nowhere
+    // else, so a resumed run ends up with the frames of a run that never stopped. A
+    // run whose last step is off the cadence gets no extra frame.
     //
     // A blown-up state stops the run with std::runtime_error naming the step,
-    // through the checks in diagnostics() and write_snapshot_now(), and once
-    // the steps are done through check_device_errors() and a host scan of the
-    // downloaded state. They run only on those cadences, because a check on
-    // every step would add a device sync to the solver path. A run with
-    // diagnostics and snapshots both disabled therefore has no periodic check,
-    // but it is checked once at the end.
+    // through the checks in diagnostics(), write_snapshot_now() and the frame
+    // writer, and once the steps are done through check_device_errors() and a host
+    // scan of the downloaded state. They run only on those cadences, because a
+    // check on every step would add a device sync to the solver path. A run with
+    // all three disabled therefore has no periodic check, but it is checked once
+    // at the end.
     void run();
 
     // Throws std::runtime_error naming the current step if the row would hold a
@@ -138,15 +145,15 @@ class SimulationEngine {
     // Timing of run(), accumulated over every call in this process.
     //
     // solver_milliseconds() is device time from CUDA events spanning only the
-    // step() calls. Each unbroken stretch of steps between diagnostics and
-    // snapshots is timed as one segment, so the figure excludes diagnostics,
-    // snapshot writes and the progress bar. Host time spent launching steps
+    // step() calls. Each unbroken stretch of steps between diagnostics, snapshots
+    // and frames is timed as one segment, so the figure excludes all three and
+    // the progress bar. Host time spent launching steps
     // inside a segment counts only where it leaves the device idle.
     //
     // wall_milliseconds() is host wall clock time from the start of run() to
     // its return, not counting an initialize() or resume() done beforehand:
     // the steps, every diagnostic (the opening and closing rows included),
-    // snapshot writes, the progress bar and the state check at the end. It is
+    // snapshot and frame writes, the progress bar and the state check at the end. It is
     // never less than the solver time.
     //
     // steps_run() counts the steps run() advanced in this process. After a
@@ -168,6 +175,12 @@ class SimulationEngine {
     // A negative resume_step starts the file afresh; otherwise the file is
     // continued from that step.
     void open_diagnostics(long long resume_step);
+    // The same choice for the VTK series. Does nothing when frames are off, so a
+    // run with them off leaves an existing series alone.
+    void open_vtk_series(long long resume_step);
+    // Refuses a blown-up state the way write_snapshot_now() does, leaving the series
+    // as it was.
+    void write_vtk_frame_now();
 
     Config config_;
 
@@ -179,6 +192,7 @@ class SimulationEngine {
     std::unique_ptr<Solver> solver_;
     std::unique_ptr<DiagnosticsReducer> reducer_;
     std::unique_ptr<DiagnosticsWriter> writer_;
+    std::optional<VtkSeries> vtk_series_;
     long long current_step_ = 0;
     long long time_origin_step_ = 0;  // s0 in simulated_time()
     double time_origin_ = 0.0;        // t0 in simulated_time()

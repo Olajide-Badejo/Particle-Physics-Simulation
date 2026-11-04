@@ -440,6 +440,8 @@ Config read_schema_2(const json& root) {
     output.read("snapshot_dir", config.snapshot_dir);
     output.read("diagnostics_interval", config.diagnostics_interval);
     output.read("diagnostics_path", config.diagnostics_path);
+    output.read("vtk_interval", config.vtk_interval);
+    output.read("vtk_dir", config.vtk_dir);
 
     std::vector<std::string> paths;
     for (const ObjectReader* reader : {&run, &initial, &gravity, &fluid, &output}) {
@@ -657,6 +659,13 @@ void Config::validate() const {
         throw std::runtime_error("diagnostics_interval must not be negative, got " +
                                  std::to_string(diagnostics_interval));
     }
+    if (vtk_interval < 0) {
+        throw std::runtime_error("vtk_interval must not be negative, got " +
+                                 std::to_string(vtk_interval));
+    }
+    if (vtk_interval > 0 && vtk_dir.empty()) {
+        throw std::runtime_error("vtk_dir must not be empty when vtk_interval is set");
+    }
     if (solver == SolverType::NBody && initial_condition == InitialCondition::DamBreak) {
         throw std::runtime_error("the dam_break initial condition belongs to the sph solver");
     }
@@ -756,6 +765,8 @@ std::string Config::to_json_string(int indent) const {
              {"snapshot_dir", string_text(snapshot_dir)},
              {"diagnostics_interval", std::to_string(diagnostics_interval)},
              {"diagnostics_path", string_text(diagnostics_path)},
+             {"vtk_interval", std::to_string(vtk_interval)},
+             {"vtk_dir", string_text(vtk_dir)},
          }},
     };
 

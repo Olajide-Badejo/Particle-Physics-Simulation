@@ -8,6 +8,7 @@ CMakeUserPresets.json
 # on a machine with no GPU. That is what the continuous integration report job
 # depends on. Everything here is a few kilobytes of text.
 snapshots/
+/vtk/
 experiments/results/*
 !experiments/results/.gitkeep
 !experiments/results/benchmarks.csv

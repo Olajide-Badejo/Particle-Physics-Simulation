@@ -87,6 +87,8 @@ std::string cli_usage() {
            "  --snapshot-every <n>  override the snapshot cadence, 0 disables\n"
            "  --diagnostics <path>  override the diagnostics file, empty disables\n"
            "  --diag-every <n>      override the diagnostics cadence, 0 disables\n"
+           "  --vtk-every <n>       write a VTK frame every n steps, 0 disables\n"
+           "  --vtk-dir <path>      override the directory the VTK frames and series go to\n"
            "  --resume              continue from the newest snapshot in the snapshot directory\n"
            "  --force-resume        resume even if the snapshot's physics differ from the\n"
            "                        configuration (implies --resume)\n"
@@ -137,6 +139,14 @@ CliOptions parse_cli(int argc, const char* const* argv) {
         } else if (arg == "--diag-every") {
             options.diag_every = parse_integer(require_value(argc, argv, i, "--diag-every"),
                                                "--diag-every", 0, kLongMax);
+        } else if (arg == "--vtk-every") {
+            options.vtk_every = parse_integer(require_value(argc, argv, i, "--vtk-every"),
+                                              "--vtk-every", 0, kLongMax);
+        } else if (arg == "--vtk-dir") {
+            options.vtk_dir = require_value(argc, argv, i, "--vtk-dir");
+            if (options.vtk_dir->empty()) {
+                throw std::runtime_error("--vtk-dir needs a directory, got an empty path");
+            }
         } else if (arg == "--resume") {
             options.resume = true;
         } else if (arg == "--force-resume") {
@@ -188,6 +198,12 @@ void apply_cli_overrides(const CliOptions& options, Config& config) {
     }
     if (options.diag_every) {
         config.diagnostics_interval = *options.diag_every;
+    }
+    if (options.vtk_every) {
+        config.vtk_interval = *options.vtk_every;
+    }
+    if (options.vtk_dir) {
+        config.vtk_dir = *options.vtk_dir;
     }
 }
 

@@ -36,10 +36,10 @@ void sph_compute_cell_bounds(const uint32_t* bucket_sorted, uint32_t* cell_start
                              cudaStream_t stream);
 
 void sph_gather_sorted(const float* x, const float* y, const float* z, const float* vx,
-                       const float* vy, const float* vz, const float* mass, const int64_t* cell_key,
-                       const uint32_t* index_sorted, float* sx, float* sy, float* sz, float* svx,
-                       float* svy, float* svz, float* smass, int64_t* cell_key_sorted, int count,
-                       int block_size, cudaStream_t stream);
+                       const float* vy, const float* vz, const float* mass, const uint32_t* id,
+                       const int64_t* cell_key, const uint32_t* index_sorted, float* sx, float* sy,
+                       float* sz, float* svx, float* svy, float* svz, float* smass, uint32_t* sid,
+                       int64_t* cell_key_sorted, int count, int block_size, cudaStream_t stream);
 
 void sph_compute_density(const float* sx, const float* sy, const float* sz, const float* smass,
                          const int64_t* cell_key_sorted, const uint32_t* cell_start,
@@ -55,9 +55,9 @@ void sph_forces_and_integrate(const float* sx, const float* sy, const float* sz,
                               const float* svy, const float* svz, const float* smass,
                               const float* density, const float* pressure,
                               const int64_t* cell_key_sorted, const uint32_t* cell_start,
-                              const uint32_t* cell_end, float* x, float* y, float* z, float* vx,
-                              float* vy, float* vz, float* ax, float* ay, float* az, float* mass,
-                              int count, float smoothing_radius, float cell_size,
+                              const uint32_t* cell_end, const uint32_t* sid, float* x, float* y,
+                              float* z, float* vx, float* vy, float* vz, float* ax, float* ay,
+                              float* az, float* mass, uint32_t* id, int count, float smoothing_radius, float cell_size,
                               uint32_t table_size, float viscosity, float gx, float gy, float gz,
                               float dt, float domain_min_x, float domain_min_y, float domain_min_z,
                               float domain_max_x, float domain_max_y, float domain_max_z,

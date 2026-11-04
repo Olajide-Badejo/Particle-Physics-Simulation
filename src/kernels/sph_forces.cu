@@ -86,9 +86,10 @@ __global__ void forces_and_integrate_kernel(
     const float* __restrict__ smass, const float* __restrict__ density,
     const float* __restrict__ pressure, const int64_t* __restrict__ cell_key_sorted,
     const uint32_t* __restrict__ cell_start, const uint32_t* __restrict__ cell_end,
-    float* __restrict__ x, float* __restrict__ y, float* __restrict__ z, float* __restrict__ vx,
-    float* __restrict__ vy, float* __restrict__ vz, float* __restrict__ ax, float* __restrict__ ay,
-    float* __restrict__ az, float* __restrict__ mass, int count, float smoothing_radius,
+    const uint32_t* __restrict__ sid, float* __restrict__ x, float* __restrict__ y,
+    float* __restrict__ z, float* __restrict__ vx, float* __restrict__ vy, float* __restrict__ vz,
+    float* __restrict__ ax, float* __restrict__ ay, float* __restrict__ az,
+    float* __restrict__ mass, uint32_t* __restrict__ id, int count, float smoothing_radius,
     float cell_size, uint32_t table_size, float viscosity, float gx, float gy, float gz, float dt,
     float domain_min_x, float domain_min_y, float domain_min_z, float domain_max_x,
     float domain_max_y, float domain_max_z, float boundary_damping) {
@@ -217,6 +218,7 @@ __global__ void forces_and_integrate_kernel(
     ay[k] = acc_y;
     az[k] = acc_z;
     mass[k] = smass[k];
+    id[k] = sid[k];
 }
 
 }  // namespace
@@ -241,9 +243,10 @@ void sph_forces_and_integrate(const float* sx, const float* sy, const float* sz,
                               const float* svy, const float* svz, const float* smass,
                               const float* density, const float* pressure,
                               const int64_t* cell_key_sorted, const uint32_t* cell_start,
-                              const uint32_t* cell_end, float* x, float* y, float* z, float* vx,
-                              float* vy, float* vz, float* ax, float* ay, float* az, float* mass,
-                              int count, float smoothing_radius, float cell_size,
+                              const uint32_t* cell_end, const uint32_t* sid, float* x, float* y,
+                              float* z, float* vx, float* vy, float* vz, float* ax, float* ay,
+                              float* az, float* mass, uint32_t* id, int count,
+                              float smoothing_radius, float cell_size,
                               uint32_t table_size, float viscosity, float gx, float gy, float gz,
                               float dt, float domain_min_x, float domain_min_y, float domain_min_z,
                               float domain_max_x, float domain_max_y, float domain_max_z,
@@ -253,7 +256,8 @@ void sph_forces_and_integrate(const float* sx, const float* sy, const float* sz,
     }
     forces_and_integrate_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
         sx, sy, sz, svx, svy, svz, smass, density, pressure, cell_key_sorted, cell_start, cell_end,
-        x, y, z, vx, vy, vz, ax, ay, az, mass, count, smoothing_radius, cell_size, table_size,
+        sid, x, y, z, vx, vy, vz, ax, ay, az, mass, id, count, smoothing_radius, cell_size,
+        table_size,
         viscosity, gx, gy, gz, dt, domain_min_x, domain_min_y, domain_min_z, domain_max_x,
         domain_max_y, domain_max_z, boundary_damping);
     CUDA_CHECK(cudaGetLastError());

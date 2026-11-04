@@ -40,6 +40,8 @@
     "snapshot_interval": 500,
     "snapshot_dir": "snapshots/plummer_10k",
     "diagnostics_interval": 100,
-    "diagnostics_path": "experiments/results/plummer_10k_diagnostics.csv"
+    "diagnostics_path": "experiments/results/plummer_10k_diagnostics.csv",
+    "vtk_interval": 0,
+    "vtk_dir": "vtk"
   }
 }

@@ -48,6 +48,7 @@ SphSolver::SphSolver(const Config& config, int count)
     svy_.allocate(n);
     svz_.allocate(n);
     smass_.allocate(n);
+    sid_.allocate(n);
 
     density_.allocate(n);
     pressure_.allocate(n);
@@ -81,9 +82,10 @@ void SphSolver::compute_cell_bounds(cudaStream_t stream) {
 
 void SphSolver::gather_sorted(ParticleSystem& particles, cudaStream_t stream) {
     sph_gather_sorted(particles.x(), particles.y(), particles.z(), particles.vx(), particles.vy(),
-                      particles.vz(), particles.mass(), cell_key_.get(), index_sorted_.get(),
-                      sx_.get(), sy_.get(), sz_.get(), svx_.get(), svy_.get(), svz_.get(),
-                      smass_.get(), cell_key_sorted_.get(), count_, block_size_, stream);
+                      particles.vz(), particles.mass(), particles.id(), cell_key_.get(),
+                      index_sorted_.get(), sx_.get(), sy_.get(), sz_.get(), svx_.get(), svy_.get(),
+                      svz_.get(), smass_.get(), sid_.get(), cell_key_sorted_.get(), count_,
+                      block_size_, stream);
 }
 
 void SphSolver::build_neighbours_and_density(ParticleSystem& particles, cudaStream_t stream) {
@@ -104,9 +106,9 @@ void SphSolver::step(ParticleSystem& particles, cudaStream_t stream) {
     sph_forces_and_integrate(
         sx_.get(), sy_.get(), sz_.get(), svx_.get(), svy_.get(), svz_.get(), smass_.get(),
         density_.get(), pressure_.get(), cell_key_sorted_.get(), cell_start_.get(), cell_end_.get(),
-        particles.x(), particles.y(), particles.z(), particles.vx(), particles.vy(), particles.vz(),
-        particles.ax(), particles.ay(), particles.az(), particles.mass(), count_,
-        derived_.smoothing_radius, cell_size_, table_size_, sph.viscosity,
+        sid_.get(), particles.x(), particles.y(), particles.z(), particles.vx(), particles.vy(),
+        particles.vz(), particles.ax(), particles.ay(), particles.az(), particles.mass(),
+        particles.id(), count_, derived_.smoothing_radius, cell_size_, table_size_, sph.viscosity,
         config_.external_gravity.x, config_.external_gravity.y, config_.external_gravity.z,
         config_.dt, sph.domain_min.x, sph.domain_min.y, sph.domain_min.z, sph.domain_max.x,
         sph.domain_max.y, sph.domain_max.z, sph.boundary_damping, block_size_, stream);
@@ -169,7 +171,7 @@ std::size_t SphSolver::device_bytes() const {
     return bucket_.bytes() + bucket_sorted_.bytes() + index_.bytes() + index_sorted_.bytes() +
            cell_key_.bytes() + cell_key_sorted_.bytes() + cell_start_.bytes() + cell_end_.bytes() +
            sx_.bytes() + sy_.bytes() + sz_.bytes() + svx_.bytes() + svy_.bytes() + svz_.bytes() +
-           smass_.bytes() + density_.bytes() + pressure_.bytes() + sort_temp_.bytes();
+           smass_.bytes() + sid_.bytes() + density_.bytes() + pressure_.bytes() + sort_temp_.bytes();
 }
 
 }  // namespace cps

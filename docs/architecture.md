@@ -15,6 +15,7 @@ flowchart TD
     SOLVER --> SPH[SphSolver]
     ENGINE --> DIAG[DiagnosticsReducer]
     ENGINE --> SNAP[Snapshot read and write]
+    ENGINE --> VTK[VTK frames and series]
     NB --> KNAIVE[compute_forces_naive]
     NB --> KTILED[compute_forces_tiled]
     NB --> KFUSED[nbody_fused_step]
@@ -45,7 +46,7 @@ There are three library targets and the split is not incidental.
 
 | target | contents | why |
 |---|---|---|
-| `physics_host` | configuration, snapshots, initial conditions, progress | no CUDA runtime dependency, so continuous integration can build and run a meaningful slice of the tests without a GPU |
+| `physics_host` | configuration, snapshots, VTK output, initial conditions, progress | no CUDA runtime dependency, so continuous integration can build and run a meaningful slice of the tests without a GPU |
 | `physics_core` | all device code, respects the fast math switch | what the benchmarks and the demo link |
 | `physics_core_strict` | the same sources, fast math forced off | what every validation test links |
 
@@ -147,7 +148,9 @@ The permutation is kept. After a step the particle arrays are in cell sorted
 order, which is the order the next step wants, so the sort has an effect that
 outlives the step that paid for it. Because that permutation must be a
 bijection, one test checks the multiset of masses is unchanged across a step
-and another checks total mass over two thousand steps.
+and another checks total mass over two thousand steps. `id` travels through the
+gather and the write-back the same way, and a third test follows each id across
+every step, as described under particle ids below.
 
 The bucket scan compares an exact 64 bit cell key before accepting a candidate.
 This is a correctness requirement, not an optimisation. Hashing is many to one,
@@ -188,7 +191,8 @@ match the normal build; timings from it mean nothing.
 
 ## Data layout
 
-Structure of arrays: thirteen float arrays rather than one array of structures.
+Structure of arrays: thirteen float arrays and one id array rather than one array
+of structures.
 
 With an array of structures a warp reading the `x` component of thirty two
 consecutive particles touches thirty two separate cache lines and uses a
@@ -204,6 +208,20 @@ rather than measuring a layout mistake.
 | vx, vy, vz | 3 | velocities, synchronised or half step by convention |
 | ax, ay, az | 3 | accelerations |
 | mass | 1 | particle mass |
+| id | 1 | `uint32` label of the particle; see below |
+
+## Particle ids
+
+Each particle has an id, 0 to N-1 in the initial state's order. Ids label particles
+and do nothing else: no force, sort key or integrator reads them, and the trajectories
+are bit for bit what they were before ids existed.
+
+N-body never permutes, so there an id is just the slot number. The fused position swap
+exchanges position buffers and leaves `id` alone. The fluid solver permutes every step,
+so `id` joins `mass` in the gather and the write-back. `ParticleIds.EachIdMovesContinuouslyThroughTheSort`
+is what shows the permutation is right: looked up by id, every particle must have moved by
+no more than its speed allows since the previous step, which a label on the wrong particle
+misses by a whole particle spacing.
 
 ## Determinism
 
@@ -229,3 +247,30 @@ The format is `CPS2`, laid out in `include/cps/core/snapshot.hpp`: a 64 byte hea
 table with one 40 byte entry per array, and the payload. It records a 64 bit step, the
 simulated time, a physics fingerprint and a payload checksum. `CPS1` from `v1.0.0` is still
 read, with a warning, and never written.
+
+`id` is one more entry in the table, not a format change, and older builds skip it. A file
+with no `id` loads with ids in file order, and for a fluid snapshot written before ids existed
+those labels are arbitrary but consistent from then on. An `id` that is there is checked:
+right type and length, every value below the count, no duplicates.
+
+## Output path
+
+Diagnostics, snapshots and VTK frames take the same route out of the engine. Each runs between
+steps, after the solver clock has stopped and inside the wall clock, and each ends by draining the
+stream, which the download needs anyway. A frame or a snapshot goes through
+`ParticleSystem::download` and the pinned staging buffer, then the non-finite check, so a blown-up
+state reaches neither.
+
+The frame writer in `include/cps/io/vtk.hpp` is a pure function from host arrays to a `.vtp` file,
+in `physics_host`, so its tests need no GPU. `VtkSeries` adds the `.pvd` index and owns the two
+guarantees that matter when a run dies:
+
+- A frame goes to a temporary file and is renamed into place, and only then is the index rewritten
+  the same way. The index therefore only ever names complete frames.
+- On resume, the index goes first and the frames past the snapshot's step come after, including one
+  that was renamed into place just before a kill and that the index never named.
+
+Together with frames falling only on multiples of the cadence, that makes a killed and resumed run
+produce the same frames, to the byte, as one that never stopped. The velocity in a frame is what the
+state holds, half step for the fused and fluid solvers, and `VelocityConvention` in the field data
+records which. Unlike diagnostics, which shift it to report an energy, a frame does not correct it.

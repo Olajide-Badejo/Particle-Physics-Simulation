@@ -513,6 +513,8 @@ void expect_same_config(const cps::Config& a, const cps::Config& b) {
     EXPECT_EQ(a.snapshot_dir, b.snapshot_dir);
     EXPECT_EQ(a.diagnostics_interval, b.diagnostics_interval);
     EXPECT_EQ(a.diagnostics_path, b.diagnostics_path);
+    EXPECT_EQ(a.vtk_interval, b.vtk_interval);
+    EXPECT_EQ(a.vtk_dir, b.vtk_dir);
     EXPECT_EQ(a.nbody.tile_size, b.nbody.tile_size);
     EXPECT_EQ(a.sph.smoothing_radius, b.sph.smoothing_radius);
     EXPECT_EQ(a.sph.rest_density, b.sph.rest_density);
@@ -608,6 +610,35 @@ TEST(Config, V1AndV2FormsHaveTheSameFingerprint) {
     }
 }
 
+TEST(Config, VtkOutputIsOffByDefaultAndRefusesBadValues) {
+    const cps::Config defaults = cps::Config::from_json_string("{\"schema\": 2}");
+    EXPECT_EQ(defaults.vtk_interval, 0);
+    EXPECT_EQ(defaults.vtk_dir, "vtk");
+
+    const cps::Config set = cps::Config::from_json_string(
+        R"({"schema": 2, "output": {"vtk_interval": 50, "vtk_dir": "frames"}})");
+    EXPECT_EQ(set.vtk_interval, 50);
+    EXPECT_EQ(set.vtk_dir, "frames");
+
+    const auto error_from = [](const char* text) -> std::string {
+        try {
+            cps::Config::from_json_string(text);
+        } catch (const std::runtime_error& error) {
+            return error.what();
+        }
+        return "";
+    };
+    EXPECT_NE(error_from(R"({"schema": 2, "output": {"vtk_interval": -1}})").find("vtk_interval"),
+              std::string::npos);
+    EXPECT_NE(error_from(R"({"schema": 2, "output": {"vtk_interval": 5, "vtk_dir": ""}})")
+                  .find("vtk_dir"),
+              std::string::npos);
+    // It only has a meaning once frames are on.
+    EXPECT_EQ(error_from(R"({"schema": 2, "output": {"vtk_dir": ""}})"), "");
+    // A schema 2 key does not start to work in a file that does not ask for schema 2.
+    EXPECT_NE(error_from(R"({"vtk_interval": 5})").find("vtk_interval"), std::string::npos);
+}
+
 // A preset is what the migration produces, not a second hand maintained copy.
 // The file ends in the newline --print-config adds.
 TEST(Config, PresetsAreExactlyTheMigratedFixtures) {
@@ -640,7 +671,7 @@ TEST(Config, PrintsEverySectionInOrderWithNothingOmitted) {
     EXPECT_EQ(root.at("initial_condition").size(), 6u);
     EXPECT_EQ(root.at("nbody").size(), 4u);
     EXPECT_EQ(root.at("sph").size(), 12u);
-    EXPECT_EQ(root.at("output").size(), 4u);
+    EXPECT_EQ(root.at("output").size(), 6u);
 }
 
 TEST(Config, PrintsAFloatAsItsShortestDecimal) {
