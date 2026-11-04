@@ -395,7 +395,7 @@ In Docker, on the same image continuous integration uses, with the NVIDIA runtim
 docker build -t cps:dev --build-arg CPS_GIT_COMMIT="$(git rev-parse --short=12 HEAD)" .
 docker run --rm cps:dev ctest --preset release-fat               # device tests read Skipped
 docker run --rm --gpus all cps:dev ctest --preset release-fat    # the whole suite
-docker run --rm --gpus all cps:dev cuda_physics_sim --config configs/two_body.json
+docker run --rm --gpus all cps:dev cuda_physics_sim --config presets/two_body.json
 ```
 
 Individual targets:
@@ -416,9 +416,9 @@ make check-style     # the style gate
 Run a simulation directly:
 
 ```bash
-./build/bin/cuda_physics_sim --config configs/dam_break_50k.json
-./build/bin/cuda_physics_sim --config configs/plummer_10k.json --variant fused
-./build/bin/cuda_physics_sim --config configs/plummer_10k.json --resume
+./build/bin/cuda_physics_sim --config presets/dam_break_50k.json
+./build/bin/cuda_physics_sim --config presets/plummer_10k.json --variant fused
+./build/bin/cuda_physics_sim --config presets/plummer_10k.json --resume
 ./build/bin/cuda_physics_sim --device-info
 ./build/bin/cuda_physics_sim --version
 ```
@@ -431,7 +431,7 @@ Flags worth knowing:
 - `--allow-unstable-dt` turns the fluid solver's refusal of a time step above its stability
   limits into a warning. At the shipped `dt`, `--particles` above about 190,000 is refused,
   because the acoustic limit shrinks with the smoothing radius.
-- `--print-config` prints the resolved configuration as JSON.
+- `--print-config` prints the resolved configuration as JSON, in schema 2 form with every field.
 
 A CLI parse error exits 2, and zero or negative `--dt`, `--particles` and `--steps` are
 refused. Misspelled or out of range configuration keys abort, zero softening is refused for
@@ -439,21 +439,27 @@ N-body, and non finite state stops a run. Run `--help` for the rest.
 
 ### Configuration
 
-Every key is optional and has a default; `configs/` has complete examples.
+A configuration file starts with `"schema": 2` and groups its keys into the sections `run`,
+`initial_condition`, `nbody`, `sph` and `output`. Every key and section is optional and has a
+default, so `{"schema": 2}` is valid; `presets/` has complete examples.
+
+A file with no `schema` key, or with `"schema": 1`, is the older flat layout. It still works: it
+is migrated when read, with one warning line, and `--print-config` prints its schema 2 form.
 
 | key | default | meaning |
 |---|---:|---|
-| `solver`, `variant` | `nbody`, `tiled` | which solver and which N-body kernel |
-| `num_particles`, `steps`, `dt` | 10000, 1000, 1e-3 | size and length of the run |
-| `softening` | 0.01 | Plummer softening length. In a 10,000 particle sphere of scale radius 1 this is about 7.5 times below the mean separation, so that run is mildly collisional; softening keeps it stable and does not make it collisionless |
-| `diagnostics_interval` | 100 | steps per diagnostics row. Each row costs an all pairs potential pass, so 1 is expensive. `v1.0.0` defaulted to 1 |
-| `snapshot_interval` | 1000 | steps per snapshot |
-| `allow_unstable_dt` | false | see `--allow-unstable-dt` |
+| `solver`, `nbody.variant` | `nbody`, `tiled` | which solver and which N-body kernel |
+| `initial_condition.num_particles`, `run.steps`, `run.dt` | 10000, 1000, 1e-3 | size and length of the run |
+| `nbody.softening` | 0.01 | Plummer softening length. In a 10,000 particle sphere of scale radius 1 this is about 7.5 times below the mean separation, so that run is mildly collisional; softening keeps it stable and does not make it collisionless |
+| `output.diagnostics_interval` | 100 | steps per diagnostics row. Each row costs an all pairs potential pass, so 1 is expensive. `v1.0.0` defaulted to 1 |
+| `output.snapshot_interval` | 1000 | steps per snapshot |
+| `run.allow_unstable_dt` | false | see `--allow-unstable-dt` |
 | `nbody.tile_size` | 256 | tile width of the tiled force kernel: 32, 64, 128 or 256. It moves the timing and not the physics, so a resume may change it |
 | `sph.viscosity` | 0.2 | dynamic viscosity in Pa s. At the default rest density that is 2e-4 m^2/s kinematic, about 200 times water |
 | `sph.boundary_damping` | 0.4 | fraction of the normal velocity kept at a wall, so each impact keeps 16 percent of the normal kinetic energy |
 | `sph.rest_density`, `sph.gas_constant` | 1000, 1000 | equation of state `p = k (rho - rho_0)` |
 | `sph.smoothing_radius`, `sph.particle_mass` | 0 | 0 derives it: the radius from the fluid volume and count, the mass from a kernel sum over the lattice laid out |
+| `sph.external_gravity` | `[0, -9.81, 0]` | uniform acceleration on the fluid. The N-body solver does not read it |
 
 These fluid defaults are documented rather than changed in this release, because changing them
 would change every fluid number.
@@ -520,7 +526,7 @@ tests/               unit (host and device), integration, validation, install co
 benchmarks/          the sweep driver
 scripts/             style gate, plotting, report assets, profiling, number and provenance checks
 cmake/               version stamp and the find_package configuration
-configs/             the three shipped configurations
+presets/             the three shipped configurations
 experiments/         recorded results
 report/              main report sources and figures
 report_debug/        debug report sources

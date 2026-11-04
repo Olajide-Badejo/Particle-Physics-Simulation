@@ -358,7 +358,7 @@ std::string time_step_error(const cps::Config& config) {
 }
 
 cps::Config shipped_dam_break() {
-    return cps::Config::from_json_file(std::filesystem::path(CPS_PROJECT_ROOT) / "configs" /
+    return cps::Config::from_json_file(std::filesystem::path(CPS_PROJECT_ROOT) / "presets" /
                                        "dam_break_50k.json");
 }
 
@@ -468,7 +468,7 @@ cps::Vec3 with_axis(int axis, float value, float fill = 0.0f) {
 
 TEST(SphDomainCheck, AcceptsTheShippedDamBreak) {
     const cps::Config config = cps::Config::from_json_file(
-        std::filesystem::path(CPS_PROJECT_ROOT) / "configs" / "dam_break_50k.json");
+        std::filesystem::path(CPS_PROJECT_ROOT) / "presets" / "dam_break_50k.json");
     const float h = cps::derive_sph_parameters(config).smoothing_radius;
     EXPECT_NO_THROW(
         cps::check_sph_domain_cell_range(config.sph.domain_min, config.sph.domain_max, h));

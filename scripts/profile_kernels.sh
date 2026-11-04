@@ -14,7 +14,7 @@ export PATH=/usr/local/cuda/bin:$PATH
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/build/bin/cuda_physics_sim"
-CONFIG="$ROOT/configs/plummer_10k.json"
+CONFIG="$ROOT/presets/plummer_10k.json"
 OUT="$ROOT/experiments/results"
 NCU="${NCU:-/usr/local/cuda/bin/ncu}"
 PARTICLES="${PARTICLES:-200000}"

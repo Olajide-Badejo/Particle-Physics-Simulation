@@ -134,7 +134,7 @@ check-warnings:
 	@echo "build completed with -Wall -Wextra -Werror and the nvcc equivalents"
 
 run-demo: build
-	./$(BUILD_DIR)/bin/cuda_physics_sim --config configs/dam_break_50k.json --steps 2000
+	./$(BUILD_DIR)/bin/cuda_physics_sim --config presets/dam_break_50k.json --steps 2000
 
 # The order matters: gates before benchmarks so a physics failure stops the
 # line before half an hour of timing runs, and the reports last because they

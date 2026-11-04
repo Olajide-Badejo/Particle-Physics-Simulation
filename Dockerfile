@@ -22,10 +22,10 @@ WORKDIR /src
 COPY CMakeLists.txt CMakePresets.json Makefile LICENSE requirements.txt ./
 COPY benchmarks/ benchmarks/
 COPY cmake/ cmake/
-COPY configs/ configs/
 COPY docs/ docs/
 COPY experiments/ experiments/
 COPY include/ include/
+COPY presets/ presets/
 COPY report/ report/
 COPY report_debug/ report_debug/
 COPY scripts/ scripts/

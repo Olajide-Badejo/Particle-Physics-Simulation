@@ -273,7 +273,7 @@ mass.
 
 **Effect on the dam break.** The equation of state turns excess density directly
 into pressure, so the v1 mass started the interior near `k * 76 = 76 kPa`, against
-a hydrostatic base pressure of `rho g H = 3.9 kPa`. For `configs/dam_break_50k.json`
+a hydrostatic base pressure of `rho g H = 3.9 kPa`. For `presets/dam_break_50k.json`
 the maximum particle speed after 100 steps fell from 3.695 m/s to 0.625 m/s with the
 calibrated mass. Free fall alone would give 0.098 m/s, so the start is still not
 quiet. There is no gate on this here; a hydrostatic test is planned for a later release.
@@ -284,7 +284,7 @@ The fluid solver computes three limits when it is constructed, prints them at
 start up, and refuses a `dt` above the smallest, naming the limit, its value and
 `dt`.
 
-| limit | formula | `configs/dam_break_50k.json` |
+| limit | formula | `presets/dam_break_50k.json` |
 |---|---|---:|
 | acoustic | `0.25 h / sqrt(gas_constant)`, since `c = sqrt(k)` for this equation of state | 1.56e-04 |
 | viscous | `0.125 h^2 rest_density / viscosity`, skipped when the viscosity is zero | 0.243 |

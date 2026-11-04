@@ -40,6 +40,18 @@ a Changelog, and the project uses semantic versioning.
   kernels itself. Its protocol and its columns do not change.
 - A fluid configuration the solver refuses now fails before the derived resolution and the time step
   limits are printed, because the solver prints them. The refusal names the limits itself.
+- **Breaking:** configuration files are now schema 2, with `"schema": 2` and the sections `run`,
+  `initial_condition`, `nbody`, `sph` and `output`. Migration is automatic: a file with no `schema`
+  key, or with `"schema": 1`, still runs, with one warning line, and gives the same simulation.
+  `--print-config` prints its schema 2 form. Any other `schema` value is refused.
+- **Breaking:** `Config::to_json_string` and `--print-config` print schema 2, sections in a fixed
+  order, and floats as the shortest decimal that reads back to the same bits, so `dt` prints as
+  `0.001`. The `Config` struct itself does not change.
+- `external_gravity` lives in the `sph` section, since only the fluid solver reads it.
+- A misplaced key's error names the section it belongs in, from any section: a flat `dt` in a
+  schema 2 file suggests `run.dt`. Type errors from the reader name the full path.
+- **Breaking:** `configs/` is now `presets/`, in schema 2 form. The old files are kept as migration
+  fixtures in `tests/data/configs_v1/`.
 
 ### Removed
 

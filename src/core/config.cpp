@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <bit>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +12,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -125,17 +128,20 @@ public:
         return paths;
     }
 
-    // Throws for the first key that no read asked for, suggesting the closest
-    // known key when one is near enough to be a likely typo. Keys at this level
-    // are suggested by name; elsewhere holds full paths from other levels, so
-    // that a fluid key placed at the top level points at its real home.
+    // Throws for the first key that no read asked for, suggesting a likely home.
+    // The key's exact name in another section comes first, so that a flat dt
+    // points at run.dt. Then the closest key at this level, suggested by name,
+    // and then the closest in elsewhere, which holds full paths from every level.
     void reject_unknown_keys(const std::vector<std::string>& elsewhere = {}) const {
         for (const auto& item : node_.items()) {
             if (std::find(known_.begin(), known_.end(), item.key()) != known_.end()) {
                 continue;
             }
             std::string message = "unknown configuration key '" + prefix_ + item.key() + "'";
-            std::string suggestion = closest(item.key(), known_);
+            std::string suggestion = exact_leaf(item.key(), elsewhere);
+            if (suggestion.empty()) {
+                suggestion = closest(item.key(), known_);
+            }
             if (suggestion.empty()) {
                 suggestion = closest(item.key(), elsewhere, true);
             }
@@ -160,6 +166,15 @@ private:
                                      "' is out of range for a float, got " + value.dump());
         }
         return static_cast<float>(wide);
+    }
+
+    static std::string exact_leaf(const std::string& key, const std::vector<std::string>& paths) {
+        for (const std::string& path : paths) {
+            if (path.ends_with("." + key)) {
+                return path;
+            }
+        }
+        return {};
     }
 
     // With leaf_only, a candidate such as "sph.viscosity" is compared by its
@@ -242,7 +257,262 @@ void require_finite(const char* field, const Vec3& v) {
 
 bool strictly_below(const Vec3& a, const Vec3& b) { return a.x < b.x && a.y < b.y && a.z < b.z; }
 
-json vec3_to_json(const Vec3& v) { return json::array({v.x, v.y, v.z}); }
+// The layout the reader below understands and to_json_string writes.
+constexpr int CURRENT_SCHEMA = 2;
+
+json parse_root(std::string_view text) {
+    json root;
+    try {
+        root = json::parse(text);
+    } catch (const json::parse_error& error) {
+        throw std::runtime_error(std::string("configuration is not valid JSON: ") + error.what());
+    }
+    if (!root.is_object()) {
+        throw std::runtime_error("configuration must be a JSON object");
+    }
+    return root;
+}
+
+// A file with no schema key is schema 1.
+int schema_of(const json& root) {
+    const auto it = root.find("schema");
+    if (it == root.end()) {
+        return 1;
+    }
+    if (!it->is_number_integer()) {
+        throw std::runtime_error(
+            "configuration field 'schema' must be an integer, 1 or 2 are supported, got " +
+            it->dump());
+    }
+    if (*it != 1 && *it != CURRENT_SCHEMA) {
+        throw std::runtime_error("unsupported configuration schema " + it->dump() +
+                                 ", 1 or 2 are supported");
+    }
+    return it->get<int>();
+}
+
+// Where each flat schema 1 key lives in schema 2.
+struct MovedKey {
+    const char* flat;
+    const char* section;
+    const char* leaf;
+};
+
+constexpr MovedKey MOVED_KEYS[] = {
+    {"steps", "run", "steps"},
+    {"dt", "run", "dt"},
+    {"block_size", "run", "block_size"},
+    {"allow_unstable_dt", "run", "allow_unstable_dt"},
+    {"initial_condition", "initial_condition", "type"},
+    {"num_particles", "initial_condition", "num_particles"},
+    {"seed", "initial_condition", "seed"},
+    {"total_mass", "initial_condition", "total_mass"},
+    {"plummer_radius", "initial_condition", "plummer_radius"},
+    {"two_body_separation", "initial_condition", "two_body_separation"},
+    {"variant", "nbody", "variant"},
+    {"softening", "nbody", "softening"},
+    {"gravitational_constant", "nbody", "gravitational_constant"},
+    // Only the fluid solver reads it. N-body has no external field.
+    {"external_gravity", "sph", "external_gravity"},
+    {"snapshot_interval", "output", "snapshot_interval"},
+    {"snapshot_dir", "output", "snapshot_dir"},
+    {"diagnostics_interval", "output", "diagnostics_interval"},
+    {"diagnostics_path", "output", "diagnostics_path"},
+};
+
+[[noreturn]] void reject_schema_2_key_in_schema_1(const std::string& key) {
+    throw std::runtime_error("unknown configuration key '" + key +
+                             "' (a file without \"schema\": 2 is read as schema 1)");
+}
+
+// Rewrites the tree and nothing else, so that there is one reader and the two
+// forms cannot drift apart. Unknown keys are copied across for that reader to
+// refuse. A key that only schema 2 has is refused here, as it always was, since
+// otherwise it would start to work in a file that does not ask for schema 2.
+json migrate_schema_1(const json& v1) {
+    for (const char* section : {"run", "output"}) {
+        if (v1.contains(section)) {
+            reject_schema_2_key_in_schema_1(section);
+        }
+    }
+    json v2 = json::object();
+    for (const auto& item : v1.items()) {
+        const auto moved = std::find_if(std::begin(MOVED_KEYS), std::end(MOVED_KEYS),
+                                        [&](const MovedKey& m) { return item.key() == m.flat; });
+        if (moved == std::end(MOVED_KEYS) && item.key() != "schema") {
+            v2[item.key()] = item.value();
+        }
+    }
+    for (const MovedKey& moved : MOVED_KEYS) {
+        const auto block = v2.find(moved.section);
+        if (block != v2.end() && block->is_object() && block->contains(moved.leaf)) {
+            reject_schema_2_key_in_schema_1(std::string(moved.section) + "." + moved.leaf);
+        }
+    }
+    for (const MovedKey& moved : MOVED_KEYS) {
+        const auto value = v1.find(moved.flat);
+        if (value == v1.end()) {
+            continue;
+        }
+        // A block that is not an object is left for the reader to refuse by name,
+        // which it does before it looks at any stray key.
+        json& block = v2[moved.section];
+        if (block.is_null() || block.is_object()) {
+            block[moved.leaf] = *value;
+        } else {
+            v2[moved.flat] = *value;
+        }
+    }
+    v2["schema"] = CURRENT_SCHEMA;
+    return v2;
+}
+
+// Reads schema 2, and is the only code that does.
+Config read_schema_2(const json& root) {
+    Config config;
+    ObjectReader top(root, "");
+    top.find("schema");
+    top.read("name", config.name);
+
+    std::string text_value;
+    if (top.find("solver") != nullptr) {
+        top.read("solver", text_value);
+        config.solver = solver_from_string(text_value);
+    }
+
+    // Every section reader runs even when its section is absent, reading
+    // nothing, so its key list is available for suggestions everywhere else.
+    const json empty_object = json::object();
+    const auto section = [&](const char* key) -> const json& {
+        const json* node = top.find(key);
+        if (node == nullptr) {
+            return empty_object;
+        }
+        if (!node->is_object()) {
+            throw std::runtime_error("configuration field '" + std::string(key) +
+                                     "' must be an object, got " + node->dump());
+        }
+        return *node;
+    };
+
+    ObjectReader run(section("run"), "run.");
+    run.read("steps", config.steps);
+    run.read("dt", config.dt);
+    run.read("block_size", config.block_size);
+    run.read("allow_unstable_dt", config.allow_unstable_dt);
+
+    ObjectReader initial(section("initial_condition"), "initial_condition.");
+    if (initial.find("type") != nullptr) {
+        initial.read("type", text_value);
+        config.initial_condition = initial_condition_from_string(text_value);
+    }
+    initial.read("num_particles", config.num_particles);
+    initial.read("seed", config.seed);
+    initial.read("total_mass", config.total_mass);
+    initial.read("plummer_radius", config.plummer_radius);
+    initial.read("two_body_separation", config.two_body_separation);
+
+    ObjectReader gravity(section("nbody"), "nbody.");
+    if (gravity.find("variant") != nullptr) {
+        gravity.read("variant", text_value);
+        config.variant = variant_from_string(text_value);
+    }
+    gravity.read("softening", config.softening);
+    gravity.read("gravitational_constant", config.gravitational_constant);
+    gravity.read("tile_size", config.nbody.tile_size);
+
+    ObjectReader fluid(section("sph"), "sph.");
+    fluid.read("smoothing_radius", config.sph.smoothing_radius);
+    fluid.read("rest_density", config.sph.rest_density);
+    fluid.read("gas_constant", config.sph.gas_constant);
+    fluid.read("viscosity", config.sph.viscosity);
+    fluid.read("particle_mass", config.sph.particle_mass);
+    fluid.read("boundary_damping", config.sph.boundary_damping);
+    fluid.read("jitter", config.sph.jitter);
+    fluid.read("domain_min", config.sph.domain_min);
+    fluid.read("domain_max", config.sph.domain_max);
+    fluid.read("fluid_min", config.sph.fluid_min);
+    fluid.read("fluid_max", config.sph.fluid_max);
+    fluid.read("external_gravity", config.external_gravity);
+
+    ObjectReader output(section("output"), "output.");
+    output.read("snapshot_interval", config.snapshot_interval);
+    output.read("snapshot_dir", config.snapshot_dir);
+    output.read("diagnostics_interval", config.diagnostics_interval);
+    output.read("diagnostics_path", config.diagnostics_path);
+
+    std::vector<std::string> paths;
+    for (const ObjectReader* reader : {&run, &initial, &gravity, &fluid, &output}) {
+        const std::vector<std::string> known = reader->known_paths();
+        paths.insert(paths.end(), known.begin(), known.end());
+    }
+    for (const ObjectReader* reader : {&run, &initial, &gravity, &fluid, &output, &top}) {
+        reader->reject_unknown_keys(paths);
+    }
+
+    config.validate();
+    return config;
+}
+
+// Whether text survives what the reader does to a number. The JSON library parses
+// to a double, the reader refuses a double beyond the float range, and narrowing
+// the rest is a second rounding.
+bool reads_back_as(const char* first, const char* last, float value) {
+    double wide = 0.0;
+    const auto [end, error] = std::from_chars(first, last, wide);
+    return error == std::errc() && end == last &&
+           std::fabs(wide) <= static_cast<double>(std::numeric_limits<float>::max()) &&
+           std::bit_cast<std::uint32_t>(static_cast<float>(wide)) ==
+               std::bit_cast<std::uint32_t>(value);
+}
+
+// The shortest decimal that reads back to the same float bit for bit, in plain
+// notation at ordinary magnitudes. A point or an exponent is always present: a
+// bare -0 would parse as the integer 0 and lose its sign. JSON has no NaN or Inf,
+// so those print as null, which the reader refuses.
+std::string float_text(float value) {
+    if (!std::isfinite(value)) {
+        return "null";
+    }
+    char buffer[64];
+    char* const last = buffer + sizeof(buffer);
+    const float magnitude = std::fabs(value);
+    auto result = magnitude >= 1.0e-4f && magnitude < 1.0e7f
+                      ? std::to_chars(buffer, last, value, std::chars_format::fixed)
+                      : std::to_chars(buffer, last, value);
+    // An exhaustive scan finds two magnitudes that need this. The text of the
+    // largest float is just above it as a double, so the reader would refuse it,
+    // and the double of 7.038531e-26 lands on the midpoint between two floats and
+    // narrows to the neighbour. The shortest text of the float's own double always
+    // reads back.
+    if (result.ec != std::errc() || !reads_back_as(buffer, result.ptr, value)) {
+        result = std::to_chars(buffer, last, static_cast<double>(value));
+    }
+    if (result.ec != std::errc()) {
+        throw std::logic_error("cannot format a float");
+    }
+    std::string text(buffer, result.ptr);
+    if (text.find_first_of(".e") == std::string::npos) {
+        text += ".0";
+    }
+    return text;
+}
+
+std::string vec3_text(const Vec3& v) {
+    return "[" + float_text(v.x) + ", " + float_text(v.y) + ", " + float_text(v.z) + "]";
+}
+
+std::string string_text(const std::string& value) { return json(value).dump(); }
+
+std::string bool_text(bool value) { return value ? "true" : "false"; }
+
+// One key and its value, already written as JSON.
+using TextField = std::pair<const char*, std::string>;
+
+struct TextSection {
+    const char* name;
+    std::vector<TextField> fields;
+};
 
 }  // namespace
 
@@ -322,91 +592,8 @@ InitialCondition initial_condition_from_string(std::string_view text) {
 }
 
 Config Config::from_json_string(std::string_view text) {
-    json root;
-    try {
-        root = json::parse(text);
-    } catch (const json::parse_error& error) {
-        throw std::runtime_error(std::string("configuration is not valid JSON: ") + error.what());
-    }
-    if (!root.is_object()) {
-        throw std::runtime_error("configuration must be a JSON object");
-    }
-
-    Config config;
-    ObjectReader top(root, "");
-    top.read("name", config.name);
-
-    std::string text_value;
-    if (top.find("solver") != nullptr) {
-        top.read("solver", text_value);
-        config.solver = solver_from_string(text_value);
-    }
-    if (top.find("variant") != nullptr) {
-        top.read("variant", text_value);
-        config.variant = variant_from_string(text_value);
-    }
-    if (top.find("initial_condition") != nullptr) {
-        top.read("initial_condition", text_value);
-        config.initial_condition = initial_condition_from_string(text_value);
-    }
-
-    top.read("num_particles", config.num_particles);
-    top.read("steps", config.steps);
-    top.read("dt", config.dt);
-    top.read("allow_unstable_dt", config.allow_unstable_dt);
-    top.read("softening", config.softening);
-    top.read("gravitational_constant", config.gravitational_constant);
-    top.read("seed", config.seed);
-    top.read("block_size", config.block_size);
-    top.read("total_mass", config.total_mass);
-    top.read("plummer_radius", config.plummer_radius);
-    top.read("two_body_separation", config.two_body_separation);
-    top.read("external_gravity", config.external_gravity);
-    top.read("snapshot_interval", config.snapshot_interval);
-    top.read("snapshot_dir", config.snapshot_dir);
-    top.read("diagnostics_interval", config.diagnostics_interval);
-    top.read("diagnostics_path", config.diagnostics_path);
-
-    // The nested readers run even when their block is absent, reading nothing,
-    // so their key lists are available for suggestions at the top level.
-    const json* sph_node = top.find("sph");
-    if (sph_node != nullptr && !sph_node->is_object()) {
-        throw std::runtime_error("configuration field 'sph' must be an object, got " +
-                                 sph_node->dump());
-    }
-    const json* nbody_node = top.find("nbody");
-    if (nbody_node != nullptr && !nbody_node->is_object()) {
-        throw std::runtime_error("configuration field 'nbody' must be an object, got " +
-                                 nbody_node->dump());
-    }
-    const json empty_object = json::object();
-    {
-        ObjectReader gravity(nbody_node != nullptr ? *nbody_node : empty_object, "nbody.");
-        gravity.read("tile_size", config.nbody.tile_size);
-        gravity.reject_unknown_keys();
-
-        ObjectReader fluid(sph_node != nullptr ? *sph_node : empty_object, "sph.");
-        fluid.read("smoothing_radius", config.sph.smoothing_radius);
-        fluid.read("rest_density", config.sph.rest_density);
-        fluid.read("gas_constant", config.sph.gas_constant);
-        fluid.read("viscosity", config.sph.viscosity);
-        fluid.read("particle_mass", config.sph.particle_mass);
-        fluid.read("boundary_damping", config.sph.boundary_damping);
-        fluid.read("jitter", config.sph.jitter);
-        fluid.read("domain_min", config.sph.domain_min);
-        fluid.read("domain_max", config.sph.domain_max);
-        fluid.read("fluid_min", config.sph.fluid_min);
-        fluid.read("fluid_max", config.sph.fluid_max);
-        fluid.reject_unknown_keys();
-
-        std::vector<std::string> nested = gravity.known_paths();
-        const std::vector<std::string> fluid_paths = fluid.known_paths();
-        nested.insert(nested.end(), fluid_paths.begin(), fluid_paths.end());
-        top.reject_unknown_keys(nested);
-    }
-
-    config.validate();
-    return config;
+    const json root = parse_root(text);
+    return read_schema_2(schema_of(root) == 1 ? migrate_schema_1(root) : root);
 }
 
 Config Config::from_json_file(const std::filesystem::path& path) {
@@ -417,7 +604,16 @@ Config Config::from_json_file(const std::filesystem::path& path) {
     std::ostringstream buffer;
     buffer << stream.rdbuf();
     try {
-        return from_json_string(buffer.str());
+        const json root = parse_root(buffer.str());
+        const bool migrated = schema_of(root) == 1;
+        const Config config = read_schema_2(migrated ? migrate_schema_1(root) : root);
+        if (migrated) {
+            std::fprintf(stderr,
+                         "warning: %s uses configuration schema 1 and was migrated; "
+                         "--print-config prints its schema 2 form\n",
+                         path.string().c_str());
+        }
+        return config;
     } catch (const std::runtime_error& error) {
         throw std::runtime_error(path.string() + ": " + error.what());
     }
@@ -510,47 +706,85 @@ void Config::validate() const {
 }
 
 std::string Config::to_json_string(int indent) const {
-    json root;
-    root["name"] = name;
-    root["solver"] = to_string(solver);
-    root["variant"] = to_string(variant);
-    root["initial_condition"] = to_string(initial_condition);
-    root["num_particles"] = num_particles;
-    root["steps"] = steps;
-    root["dt"] = dt;
-    root["allow_unstable_dt"] = allow_unstable_dt;
-    root["softening"] = softening;
-    root["gravitational_constant"] = gravitational_constant;
-    root["seed"] = seed;
-    root["block_size"] = block_size;
-    root["total_mass"] = total_mass;
-    root["plummer_radius"] = plummer_radius;
-    root["two_body_separation"] = two_body_separation;
-    root["external_gravity"] = vec3_to_json(external_gravity);
-    root["snapshot_interval"] = snapshot_interval;
-    root["snapshot_dir"] = snapshot_dir;
-    root["diagnostics_interval"] = diagnostics_interval;
-    root["diagnostics_path"] = diagnostics_path;
+    const std::vector<TextField> head{
+        {"schema", std::to_string(CURRENT_SCHEMA)},
+        {"name", string_text(name)},
+        {"solver", string_text(to_string(solver))},
+    };
+    const std::vector<TextSection> sections{
+        {"run",
+         {
+             {"steps", std::to_string(steps)},
+             {"dt", float_text(dt)},
+             {"block_size", std::to_string(block_size)},
+             {"allow_unstable_dt", bool_text(allow_unstable_dt)},
+         }},
+        {"initial_condition",
+         {
+             {"type", string_text(to_string(initial_condition))},
+             {"num_particles", std::to_string(num_particles)},
+             {"seed", std::to_string(seed)},
+             {"total_mass", float_text(total_mass)},
+             {"plummer_radius", float_text(plummer_radius)},
+             {"two_body_separation", float_text(two_body_separation)},
+         }},
+        {"nbody",
+         {
+             {"variant", string_text(to_string(variant))},
+             {"softening", float_text(softening)},
+             {"gravitational_constant", float_text(gravitational_constant)},
+             {"tile_size", std::to_string(nbody.tile_size)},
+         }},
+        {"sph",
+         {
+             {"smoothing_radius", float_text(sph.smoothing_radius)},
+             {"rest_density", float_text(sph.rest_density)},
+             {"gas_constant", float_text(sph.gas_constant)},
+             {"viscosity", float_text(sph.viscosity)},
+             {"particle_mass", float_text(sph.particle_mass)},
+             {"boundary_damping", float_text(sph.boundary_damping)},
+             {"jitter", float_text(sph.jitter)},
+             {"domain_min", vec3_text(sph.domain_min)},
+             {"domain_max", vec3_text(sph.domain_max)},
+             {"fluid_min", vec3_text(sph.fluid_min)},
+             {"fluid_max", vec3_text(sph.fluid_max)},
+             {"external_gravity", vec3_text(external_gravity)},
+         }},
+        {"output",
+         {
+             {"snapshot_interval", std::to_string(snapshot_interval)},
+             {"snapshot_dir", string_text(snapshot_dir)},
+             {"diagnostics_interval", std::to_string(diagnostics_interval)},
+             {"diagnostics_path", string_text(diagnostics_path)},
+         }},
+    };
 
-    json nbody_node;
-    nbody_node["tile_size"] = nbody.tile_size;
-    root["nbody"] = nbody_node;
+    // Written by hand rather than through the JSON library, which holds a float
+    // as a double and would print 0.0010000000474974513 for a dt of 0.001. A
+    // negative indent is the compact form, as it is for the library.
+    const bool compact = indent < 0;
+    const std::string line_end = compact ? "" : "\n";
+    const std::string colon = compact ? ":" : ": ";
+    const auto pad = [&](int depth) {
+        return std::string(compact ? 0 : static_cast<std::size_t>(indent * depth), ' ');
+    };
+    const auto key_text = [](const char* key) { return "\"" + std::string(key) + "\""; };
 
-    json sph_node;
-    sph_node["smoothing_radius"] = sph.smoothing_radius;
-    sph_node["rest_density"] = sph.rest_density;
-    sph_node["gas_constant"] = sph.gas_constant;
-    sph_node["viscosity"] = sph.viscosity;
-    sph_node["particle_mass"] = sph.particle_mass;
-    sph_node["boundary_damping"] = sph.boundary_damping;
-    sph_node["jitter"] = sph.jitter;
-    sph_node["domain_min"] = vec3_to_json(sph.domain_min);
-    sph_node["domain_max"] = vec3_to_json(sph.domain_max);
-    sph_node["fluid_min"] = vec3_to_json(sph.fluid_min);
-    sph_node["fluid_max"] = vec3_to_json(sph.fluid_max);
-    root["sph"] = sph_node;
-
-    return root.dump(indent);
+    std::string out = "{" + line_end;
+    for (const TextField& field : head) {
+        out += pad(1) + key_text(field.first) + colon + field.second + "," + line_end;
+    }
+    for (std::size_t s = 0; s < sections.size(); ++s) {
+        out += pad(1) + key_text(sections[s].name) + colon + "{" + line_end;
+        const std::vector<TextField>& fields = sections[s].fields;
+        for (std::size_t f = 0; f < fields.size(); ++f) {
+            out += pad(2) + key_text(fields[f].first) + colon + fields[f].second +
+                   (f + 1 < fields.size() ? "," : "") + line_end;
+        }
+        out += pad(1) + "}" + (s + 1 < sections.size() ? "," : "") + line_end;
+    }
+    out += "}";
+    return out;
 }
 
 }  // namespace cps

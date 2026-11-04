@@ -100,16 +100,18 @@ struct Config {
     NBodyConfig nbody{};
     SphConfig sph{};
 
+    // Both read schema 2. A schema 1 document, flat and with no schema key or with
+    // "schema": 1, has its JSON tree migrated first and then takes the same path.
     static Config from_json_string(std::string_view text);
+    // As above, and a migrated file prints one warning line to stderr.
     static Config from_json_file(const std::filesystem::path& path);
 
     // Throws std::runtime_error with a message naming the offending field.
     // Parsing also rejects any key it does not read, at every level.
     void validate() const;
 
-    // Canonical form: every field is written, keys are sorted, and floats are
-    // printed with enough digits that parsing the output gives back the same
-    // Config bit for bit.
+    // Canonical form: schema 2, with every field written in a fixed order, and
+    // floats printed as the shortest decimal that parses back to the same bits.
     std::string to_json_string(int indent = 2) const;
 };
 
