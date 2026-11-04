@@ -405,14 +405,14 @@ relative differences were stable to a tenth of a percentage point was false.
 
 **Fix and why.** Interleave the compared configurations in rounds with a rotating order, report medians
 with dispersion, take comparisons from the ratio inside each round, and measure a reference at the
-start, middle and end of the sweep. Drift in the current results is <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent.
+start, middle and end of the sweep. Drift in the current results is <!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent.
 Refuse a dirty tree. Record a commit that exists, because both hashes in the `v1.0.0` results do not,
 after a history rewrite.
 
 **What it showed.** Fused beats tiled by about 1 percent over most of the range, with a paired ratio of
-<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9909<!-- /num --> at 150,000 particles. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is not resolved:
-<!-- num:FusedOverTiledRatioAtMaxN -->0.9914<!-- /num -->, IQR <!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0276<!-- /num -->, with tiled trials bimodal near
-<!-- num:TiledLowModeMsAtMaxN -->43.1<!-- /num --> and <!-- num:TiledHighModeMsAtMaxN -->44.4<!-- /num --> ms, which I do not yet understand. Those gains are
+<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9905<!-- /num --> at 150,000 particles. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is not resolved:
+<!-- num:FusedOverTiledRatioAtMaxN -->0.9913<!-- /num -->, IQR <!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0097<!-- /num -->, with tiled trials bimodal near
+<!-- num:TiledLowModeMsAtMaxN -->43.2<!-- /num --> and <!-- num:TiledHighModeMsAtMaxN -->43.6<!-- /num --> ms, which I do not yet understand. Those gains are
 several times the <!-- num:ModelSavingPercentAtMaxN -->0.048<!-- /num --> percent the removed bytes would cost at streaming bandwidth,
 so the "absolute ceiling" of the 2026-08-02 entry was not one. It also turned out the split path reads the
 acceleration array twice per step, so that entry's description of the traffic was wrong as well. The tile

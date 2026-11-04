@@ -38,8 +38,9 @@ a Changelog, and the project uses semantic versioning.
 
 ### Changed
 
-- **The fluid's neighbour search is now a dense uniform grid and not a spatial hash.** Which
-  neighbours are found and what is computed with them are unchanged, and the brute force gate runs as
+- **The fluid's neighbour search is now a dense uniform grid and not a spatial hash.** A step
+  takes 0.40 to 0.42 of the hash's time at 10,000 to 100,000 particles, side by side over the same
+  steps. Which neighbours are found and what is computed with them are unchanged, and the brute force gate runs as
   it did. SPH trajectories differ from `v1.1`, because the neighbours sum in a new order. The difference
   starts at the rounding level and does not stay there: the dam break is chaotic at the particle
   level, so individual particles diverge after a few hundred steps, as they do for any rounding change.
@@ -55,6 +56,11 @@ a Changelog, and the project uses semantic versioning.
   size and table size, and `SphSolver::table_size` gives way to `SphSolver::grid`.
 - `sph_pipeline_split.csv` names its passes `assign_cells`, `sort`, `cell_bounds`, `gather`,
   `density`, `force_and_integrate` and `between_kernels`. There is no longer a clear pass.
+- `model_bytes_per_step` counts 54 arrays per fluid particle and not 44, counted from the launchers.
+- `make bench` runs from a temporary copy of `bench_all`, because the filesystem a binary loads from
+  moves its timings by up to 0.7 percent.
+- `scripts/check_doc_numbers.py` fails on a mark inside a code span that names a real metric, which
+  it would otherwise never compare. The commit quoted in the README had been one.
 - The presets print `run.use_graphs`, regenerated through the migration fixtures.
 - `scripts/profile_kernels.sh` and `scripts/profile_sph_split.sh` run with `--graphs off`, because
   they report per kernel and per launch.

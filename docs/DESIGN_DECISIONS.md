@@ -76,6 +76,10 @@ it puts neighbouring cells close together in memory, with the cells of an x row 
 search reads nine ranges instead of visiting twenty seven cells. The radix sort still stops at the
 bits the index can use. Whether all that made the step faster was a prediction, tested against
 the rule that the grid stays only if it is not slower at 10,000, 50,000 or 100,000 particles.
+It held by a wide margin. Side by side against commit 1b5410e over the same steps, both binaries
+loaded from one filesystem, over 10 interleaved rounds with graphs on, a step took 0.396, 0.419 and
+0.402 of the hash's time at those sizes. That was a one-off comparison and is not recorded in
+`experiments/results`.
 
 A grid costs one thing: it is as large as the domain, whatever the particle count. So the solver
 derives its size from the domain and refuses, naming the dimensions and the memory, more than
@@ -288,9 +292,9 @@ check on a project whose output is trustworthy numbers is the wrong trade.
 ### The default tile width is <!-- num:BestTileWidth -->256<!-- /num -->
 
 **Changed by measurement.** `v1.0.0` defaulted to 32 and reported its sweep. A width of
-<!-- num:BestTileWidth -->256<!-- /num --> runs at <!-- num:BestTileMs -->11.487<!-- /num --> ms against <!-- num:TileThirtyTwoMs -->12.116<!-- /num --> at <!-- num:TileSweepParticles -->100,000<!-- /num --> particles, a
-paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9483<!-- /num --> with an IQR of <!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0028<!-- /num -->,
-far outside the session drift of <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent, so the default moved and the ladder
+<!-- num:BestTileWidth -->256<!-- /num --> runs at <!-- num:BestTileMs -->11.514<!-- /num --> ms against <!-- num:TileThirtyTwoMs -->12.144<!-- /num --> at <!-- num:TileSweepParticles -->100,000<!-- /num --> particles, a
+paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9486<!-- /num --> with an IQR of <!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0020<!-- /num -->,
+far outside the session drift of <!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent, so the default moved and the ladder
 was measured there. Two barriers are paid per tile, so a narrow tile pays them more often per unit of
 arithmetic, which fits the direction of the result; the barrier cost was not measured on its own. Each
 width stays a compile time instantiation so the inner loop can be unrolled, and `nbody.tile_size` picks one
@@ -308,11 +312,11 @@ passes through untouched and matches how the prose is required to write ranges.
 ### Fusion was expected to be worth 10 to 20 percent
 
 **Measured at about 1 percent, and not resolved at the largest size.** Paired ratios of fused over
-tiled are <!-- num:FusedOverTiledRatioAtTenThousand -->0.9445<!-- /num --> at 10,000 particles and
-<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9909<!-- /num --> at 150,000, each outside its IQR and the session drift
-of <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is <!-- num:FusedOverTiledRatioAtMaxN -->0.9914<!-- /num --> with an IQR of
-<!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0276<!-- /num -->, because tiled trials are bimodal, near <!-- num:TiledLowModeMsAtMaxN -->43.1<!-- /num --> and
-<!-- num:TiledHighModeMsAtMaxN -->44.4<!-- /num --> ms, for a reason not yet understood.
+tiled are <!-- num:FusedOverTiledRatioAtTenThousand -->0.9624<!-- /num --> at 10,000 particles and
+<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9905<!-- /num --> at 150,000, each outside its IQR and the session drift
+of <!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is <!-- num:FusedOverTiledRatioAtMaxN -->0.9913<!-- /num --> with an IQR of
+<!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0097<!-- /num -->, because tiled trials are bimodal, near <!-- num:TiledLowModeMsAtMaxN -->43.2<!-- /num --> and
+<!-- num:TiledHighModeMsAtMaxN -->43.6<!-- /num --> ms, for a reason not yet understood.
 
 The all pairs sum is O(N^2) arithmetic over O(N) data, and device memory throughput is under one
 percent of peak, which is why 10 to 20 percent was too high. But the traffic does not explain the gain

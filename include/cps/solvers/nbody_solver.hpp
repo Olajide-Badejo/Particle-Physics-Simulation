@@ -21,8 +21,8 @@ namespace cps {
 //          drops by the block size; the cost is two barriers per tile.
 //
 //   fused  the tiled force evaluation and the Verlet update happen in one
-//          launch, removing the 12N byte read back of the acceleration array
-//          and one launch per step. The acceleration is still written.
+//          kernel, removing 24N bytes of reads of the acceleration array and
+//          two kernels per step. The acceleration is still written.
 //
 // Each tile width is its own instantiation, chosen at launch, so the inner loop can
 // be unrolled. The default, DEFAULT_TILE_SIZE, is the width the tile sweep measured

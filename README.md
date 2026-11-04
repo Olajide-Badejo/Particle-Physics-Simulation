@@ -68,14 +68,14 @@ wrong; [CHANGELOG.md](CHANGELOG.md) lists each one under Corrections to v1.0.0.
 
 | | |
 |---|---|
-| **Shared memory tiling** | **<!-- num:TilingSpeedupAtMaxN -->1.96<!-- /num -->x faster** than the naive kernel at <!-- num:LadderMaxN -->200,000<!-- /num --> particles (paired ratio <!-- num:TiledOverNaiveRatioAtMaxN -->0.5110<!-- /num -->, IQR <!-- num:TiledOverNaiveRatioIqrAtMaxN -->0.0103<!-- /num -->) |
-| **Sustained throughput** | **<!-- num:TiledGigaInteractionsAtMaxN -->927<!-- /num --> billion interactions per second**, which is <!-- num:TiledTflopsAtMaxN -->18.54<!-- /num --> TFLOP/s at the conventional <!-- num:ConventionalFlopsPerInteraction -->20<!-- /num --> flops per interaction and <!-- num:TiledTflopsAtMeasuredFlops -->16.72<!-- /num --> at the <!-- num:MeasuredFlopsPerInteraction -->18.0<!-- /num --> the counters report |
-| **Fluid solver** | **50,000 particles at <!-- num:SphMsAtFiftyThousand -->0.345<!-- /num --> ms/step**, about <!-- num:SphInteractiveMargin -->48<!-- /num -->x inside a 60 frame per second budget |
+| **Shared memory tiling** | **<!-- num:TilingSpeedupAtMaxN -->1.96<!-- /num -->x faster** than the naive kernel at <!-- num:LadderMaxN -->200,000<!-- /num --> particles (paired ratio <!-- num:TiledOverNaiveRatioAtMaxN -->0.5112<!-- /num -->, IQR <!-- num:TiledOverNaiveRatioIqrAtMaxN -->0.0039<!-- /num -->) |
+| **Sustained throughput** | **<!-- num:TiledGigaInteractionsAtMaxN -->926<!-- /num --> billion interactions per second**, which is <!-- num:TiledTflopsAtMaxN -->18.52<!-- /num --> TFLOP/s at the conventional <!-- num:ConventionalFlopsPerInteraction -->20<!-- /num --> flops per interaction and <!-- num:TiledTflopsAtMeasuredFlops -->16.70<!-- /num --> at the <!-- num:MeasuredFlopsPerInteraction -->18.0<!-- /num --> the counters report |
+| **Fluid solver** | **50,000 particles at <!-- num:SphMsAtFiftyThousand -->0.114<!-- /num --> ms/step**, about <!-- num:SphInteractiveMargin -->147<!-- /num -->x inside a 60 frame per second budget |
 | **Physics gates** | **<!-- num:GateCount -->14<!-- /num --> of <!-- num:GateCount -->14<!-- /num --> pass**; [the validation document](docs/physics_validation.md) says what each one is evidence of |
 | **Two body energy error** | **<!-- num:EnergyDriftMeasured -->1.33e-5<!-- /num -->** over 10,000 steps against a 1e-03 limit. This is single precision rounding, so the integrator's order is gated separately in double precision |
 | **Snapshot and resume** | **bit identical**, proven for all four solver paths |
 
-Measured at commit `<!-- num:BenchCommit -->a27a69ed5ec4<!-- /num -->` with session drift of <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent.
+Measured at commit <!-- num:BenchCommit -->6823f76a56af<!-- /num --> with session drift of <!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent.
 
 ---
 
@@ -96,12 +96,12 @@ TFLOP/s.
 
 | particles | naive (ms) | tiled (ms) | fused (ms) | tiled speedup | fused / tiled (IQR) | tiled interactions/s (billions) |
 |---:|---:|---:|---:|---:|---:|---:|
-| 10,000 | <!-- num:NaiveMsAtTenThousand -->0.471<!-- /num --> | <!-- num:TiledMsAtTenThousand -->0.156<!-- /num --> | <!-- num:FusedMsAtTenThousand -->0.148<!-- /num --> | <!-- num:TilingSpeedupAtTenThousand -->3.01<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTenThousand -->0.9445<!-- /num --> (<!-- num:FusedOverTiledIqrAtTenThousand -->0.0075<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTenThousand -->639<!-- /num --> |
-| 20,000 | <!-- num:NaiveMsAtTwentyThousand -->1.069<!-- /num --> | <!-- num:TiledMsAtTwentyThousand -->0.540<!-- /num --> | <!-- num:FusedMsAtTwentyThousand -->0.527<!-- /num --> | <!-- num:TilingSpeedupAtTwentyThousand -->1.98<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTwentyThousand -->0.9764<!-- /num --> (<!-- num:FusedOverTiledIqrAtTwentyThousand -->0.0021<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTwentyThousand -->741<!-- /num --> |
-| 50,000 | <!-- num:NaiveMsAtFiftyThousand -->6.635<!-- /num --> | <!-- num:TiledMsAtFiftyThousand -->3.206<!-- /num --> | <!-- num:FusedMsAtFiftyThousand -->3.166<!-- /num --> | <!-- num:TilingSpeedupAtFiftyThousand -->2.07<!-- /num -->x | <!-- num:FusedOverTiledRatioAtFiftyThousand -->0.9875<!-- /num --> (<!-- num:FusedOverTiledIqrAtFiftyThousand -->0.0062<!-- /num -->) | <!-- num:TiledGigaInteractionsAtFiftyThousand -->780<!-- /num --> |
-| 100,000 | <!-- num:NaiveMsAtHundredThousand -->22.826<!-- /num --> | <!-- num:TiledMsAtHundredThousand -->11.441<!-- /num --> | <!-- num:FusedMsAtHundredThousand -->11.349<!-- /num --> | <!-- num:TilingSpeedupAtHundredThousand -->2.00<!-- /num -->x | <!-- num:FusedOverTiledRatioAtHundredThousand -->0.9892<!-- /num --> (<!-- num:FusedOverTiledIqrAtHundredThousand -->0.0075<!-- /num -->) | <!-- num:TiledGigaInteractionsAtHundredThousand -->874<!-- /num --> |
-| 150,000 | <!-- num:NaiveMsAtHundredFiftyThousand -->48.783<!-- /num --> | <!-- num:TiledMsAtHundredFiftyThousand -->24.755<!-- /num --> | <!-- num:FusedMsAtHundredFiftyThousand -->24.534<!-- /num --> | <!-- num:TilingSpeedupAtHundredFiftyThousand -->1.97<!-- /num -->x | <!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9909<!-- /num --> (<!-- num:FusedOverTiledIqrAtHundredFiftyThousand -->0.0013<!-- /num -->) | <!-- num:TiledGigaInteractionsAtHundredFiftyThousand -->909<!-- /num --> |
-| 200,000 | <!-- num:NaiveMsAtTwoHundredThousand -->84.725<!-- /num --> | <!-- num:TiledMsAtTwoHundredThousand -->43.156<!-- /num --> | <!-- num:FusedMsAtTwoHundredThousand -->43.186<!-- /num --> | <!-- num:TilingSpeedupAtTwoHundredThousand -->1.96<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTwoHundredThousand -->0.9914<!-- /num --> (<!-- num:FusedOverTiledIqrAtTwoHundredThousand -->0.0276<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTwoHundredThousand -->927<!-- /num --> |
+| 10,000 | <!-- num:NaiveMsAtTenThousand -->0.467<!-- /num --> | <!-- num:TiledMsAtTenThousand -->0.154<!-- /num --> | <!-- num:FusedMsAtTenThousand -->0.148<!-- /num --> | <!-- num:TilingSpeedupAtTenThousand -->3.04<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTenThousand -->0.9624<!-- /num --> (<!-- num:FusedOverTiledIqrAtTenThousand -->0.0043<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTenThousand -->651<!-- /num --> |
+| 20,000 | <!-- num:NaiveMsAtTwentyThousand -->1.066<!-- /num --> | <!-- num:TiledMsAtTwentyThousand -->0.535<!-- /num --> | <!-- num:FusedMsAtTwentyThousand -->0.527<!-- /num --> | <!-- num:TilingSpeedupAtTwentyThousand -->1.99<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTwentyThousand -->0.9848<!-- /num --> (<!-- num:FusedOverTiledIqrAtTwentyThousand -->0.0017<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTwentyThousand -->747<!-- /num --> |
+| 50,000 | <!-- num:NaiveMsAtFiftyThousand -->6.638<!-- /num --> | <!-- num:TiledMsAtFiftyThousand -->3.211<!-- /num --> | <!-- num:FusedMsAtFiftyThousand -->3.199<!-- /num --> | <!-- num:TilingSpeedupAtFiftyThousand -->2.07<!-- /num -->x | <!-- num:FusedOverTiledRatioAtFiftyThousand -->0.9922<!-- /num --> (<!-- num:FusedOverTiledIqrAtFiftyThousand -->0.0065<!-- /num -->) | <!-- num:TiledGigaInteractionsAtFiftyThousand -->779<!-- /num --> |
+| 100,000 | <!-- num:NaiveMsAtHundredThousand -->22.851<!-- /num --> | <!-- num:TiledMsAtHundredThousand -->11.488<!-- /num --> | <!-- num:FusedMsAtHundredThousand -->11.384<!-- /num --> | <!-- num:TilingSpeedupAtHundredThousand -->1.99<!-- /num -->x | <!-- num:FusedOverTiledRatioAtHundredThousand -->0.9919<!-- /num --> (<!-- num:FusedOverTiledIqrAtHundredThousand -->0.0032<!-- /num -->) | <!-- num:TiledGigaInteractionsAtHundredThousand -->871<!-- /num --> |
+| 150,000 | <!-- num:NaiveMsAtHundredFiftyThousand -->48.797<!-- /num --> | <!-- num:TiledMsAtHundredFiftyThousand -->24.783<!-- /num --> | <!-- num:FusedMsAtHundredFiftyThousand -->24.568<!-- /num --> | <!-- num:TilingSpeedupAtHundredFiftyThousand -->1.97<!-- /num -->x | <!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9905<!-- /num --> (<!-- num:FusedOverTiledIqrAtHundredFiftyThousand -->0.0012<!-- /num -->) | <!-- num:TiledGigaInteractionsAtHundredFiftyThousand -->908<!-- /num --> |
+| 200,000 | <!-- num:NaiveMsAtTwoHundredThousand -->84.499<!-- /num --> | <!-- num:TiledMsAtTwoHundredThousand -->43.208<!-- /num --> | <!-- num:FusedMsAtTwoHundredThousand -->43.206<!-- /num --> | <!-- num:TilingSpeedupAtTwoHundredThousand -->1.96<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTwoHundredThousand -->0.9913<!-- /num --> (<!-- num:FusedOverTiledIqrAtTwoHundredThousand -->0.0097<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTwoHundredThousand -->926<!-- /num --> |
 
 ![N-body step cost against particle count](report/figures/fig_nbody_time.png)
 
@@ -117,21 +117,25 @@ This is the part of the project I would keep if I could keep only one.
 
 The paired ratios in the table above are the result. From 10,000 to 150,000
 particles fused beats tiled by more than the ratio's IQR and the session drift of
-<!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent: <!-- num:FusedOverTiledRatioAtTenThousand -->0.9445<!-- /num --> at 10,000 and
-<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9909<!-- /num --> at 150,000. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is not
-resolved: <!-- num:FusedOverTiledRatioAtMaxN -->0.9914<!-- /num --> with an IQR of <!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0276<!-- /num -->.
-The tiled trials there are bimodal, <!-- num:TiledHighModeRoundsAtMaxN -->4<!-- /num --> of <!-- num:PairedRoundsAtMaxN -->10<!-- /num -->
-near <!-- num:TiledHighModeMsAtMaxN -->44.4<!-- /num --> ms and the rest near <!-- num:TiledLowModeMsAtMaxN -->43.1<!-- /num --> ms, for a
+<!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent: <!-- num:FusedOverTiledRatioAtTenThousand -->0.9624<!-- /num --> at 10,000 and
+<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9905<!-- /num --> at 150,000. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is not
+resolved: <!-- num:FusedOverTiledRatioAtMaxN -->0.9913<!-- /num --> with an IQR of <!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0097<!-- /num -->.
+The tiled trials there are bimodal, <!-- num:TiledHighModeRoundsAtMaxN -->3<!-- /num --> of <!-- num:PairedRoundsAtMaxN -->10<!-- /num -->
+near <!-- num:TiledHighModeMsAtMaxN -->43.6<!-- /num --> ms and the rest near <!-- num:TiledLowModeMsAtMaxN -->43.2<!-- /num --> ms, for a
 reason not yet understood.
 
-What fusion removes, from the code: the split path takes three launches, and both
-integrator launches read the acceleration array, 24N bytes per step. The fused path
-takes one launch and reads that array in neither. It still writes it, 12N bytes, though
+What fusion removes, from the code: the split path runs three kernels, and both
+integrator kernels read the acceleration array, 24N bytes per step. The fused path
+runs one kernel and reads that array in neither. It still writes it, 12N bytes, though
 the engine no longer reads that write, because the diagnostics and the velocity
-conversions recompute the force first. Counting each array once per launch, and leaving
+conversions recompute the force first. Counting each array once per kernel, and leaving
 out the force sum's repeated source reads, which both paths share and which dominate, the
 split path touches <!-- num:ModelBytesPerParticleSplit -->124<!-- /num -->N bytes per step and the fused path
 <!-- num:ModelBytesPerParticleFused -->64<!-- /num -->N.
+
+The split path in this table launches as a captured CUDA graph, which removes time between its
+kernels and so takes away some of what fusion had to offer. Fused runs one kernel and is not
+captured. With no graphs, the ratio at 10,000 particles was 0.9445.
 
 Why 10 to 20 percent was too high: an all pairs sum is O(N^2) arithmetic over O(N) data,
 and hardware counters put device memory throughput **below one percent of peak** for
@@ -140,7 +144,7 @@ every variant.
 Why that does not explain the gain either: at the measured streaming bandwidth of
 <!-- num:GpuMeasuredBandwidth -->575.1<!-- /num --> GB/s, those <!-- num:ModelBytesPerParticleSaved -->60<!-- /num -->N bytes take
 <!-- num:ModelSavingMsAtMaxN -->0.0209<!-- /num --> ms at <!-- num:LadderMaxN -->200,000<!-- /num --> particles, <!-- num:ModelSavingPercentAtMaxN -->0.048<!-- /num --> percent
-of a step, and <!-- num:ModelSavingPercentAtMinN -->0.67<!-- /num --> percent at 10,000. The measured gains are
+of a step, and <!-- num:ModelSavingPercentAtMinN -->0.68<!-- /num --> percent at 10,000. The measured gains are
 several times larger. `v1.0.0` called a figure of this kind an absolute ceiling on what
 fusion could deliver, and that was wrong: it prices one resource, not the whole step. The
 source of the gain has not been measured.
@@ -231,17 +235,19 @@ fused force and integration pass.
 
 | particles | ms per step | steps per second |
 |---:|---:|---:|
-| 10,000 | <!-- num:SphStepMsAtTenThousand -->0.2483<!-- /num --> | <!-- num:SphStepsPerSecondAtTenThousand -->4,028<!-- /num --> |
-| 25,000 | <!-- num:SphStepMsAtTwentyFiveThousand -->0.2934<!-- /num --> | <!-- num:SphStepsPerSecondAtTwentyFiveThousand -->3,408<!-- /num --> |
-| 50,000 | <!-- num:SphStepMsAtFiftyThousand -->0.3450<!-- /num --> | <!-- num:SphStepsPerSecondAtFiftyThousand -->2,899<!-- /num --> |
-| 75,000 | <!-- num:SphStepMsAtSeventyFiveThousand -->0.5505<!-- /num --> | <!-- num:SphStepsPerSecondAtSeventyFiveThousand -->1,817<!-- /num --> |
-| 100,000 | <!-- num:SphStepMsAtHundredThousand -->0.5928<!-- /num --> | <!-- num:SphStepsPerSecondAtHundredThousand -->1,687<!-- /num --> |
+| 10,000 | <!-- num:SphStepMsAtTenThousand -->0.0830<!-- /num --> | <!-- num:SphStepsPerSecondAtTenThousand -->12,049<!-- /num --> |
+| 25,000 | <!-- num:SphStepMsAtTwentyFiveThousand -->0.0969<!-- /num --> | <!-- num:SphStepsPerSecondAtTwentyFiveThousand -->10,324<!-- /num --> |
+| 50,000 | <!-- num:SphStepMsAtFiftyThousand -->0.1137<!-- /num --> | <!-- num:SphStepsPerSecondAtFiftyThousand -->8,794<!-- /num --> |
+| 75,000 | <!-- num:SphStepMsAtSeventyFiveThousand -->0.1537<!-- /num --> | <!-- num:SphStepsPerSecondAtSeventyFiveThousand -->6,507<!-- /num --> |
+| 100,000 | <!-- num:SphStepMsAtHundredThousand -->0.1873<!-- /num --> | <!-- num:SphStepsPerSecondAtHundredThousand -->5,338<!-- /num --> |
 
-The interquartile range of these trials is <!-- num:SphIqrLeastPercent -->3.2<!-- /num --> to <!-- num:SphIqrMostPercent -->9.7<!-- /num -->
+The interquartile range of these trials is <!-- num:SphIqrLeastPercent -->11.5<!-- /num --> to <!-- num:SphIqrMostPercent -->17.3<!-- /num -->
 percent of the median. That is the flow rather than noise: the fluid keeps moving through
 the measurement, and per round times trace a smooth curve. These numbers are not
 comparable with `v1.0.0`, because the particle mass changed and the fluid behaves
-differently.
+differently. Nor can they be divided by another version's: the length of a trial depends on what
+a step costs, so a faster build times a later and cheaper stretch of the flow. Comparing versions
+takes a side by side run over the same steps.
 
 The fluid update is a kick drift leapfrog with no initial offset, and its viscous term is
 first order. The defaults are not water: see [Configuration](#configuration).
@@ -527,8 +533,8 @@ would change every fluid number.
 
 The default tile width of <!-- num:BestTileWidth -->256<!-- /num --> comes from the sweep.
 At <!-- num:TileSweepParticles -->100,000<!-- /num --> particles it is <!-- num:TileWidthGainPercent -->5.2<!-- /num --> percent faster than the width of
-32 that `v1.0.0` defaulted to, a paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9483<!-- /num --> with an IQR of
-<!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0028<!-- /num -->.
+32 that `v1.0.0` defaulted to, a paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9486<!-- /num --> with an IQR of
+<!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0020<!-- /num -->.
 
 ---
 

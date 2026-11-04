@@ -65,6 +65,13 @@ def find_marks(line: str) -> tuple[list[re.Match], str]:
     return marks, rest
 
 
+def marks_in_code(line: str) -> list[re.Match]:
+    """The marks on a line inside code spans, which are never compared."""
+    spans = [span.span() for span in CODE_SPAN.finditer(line)]
+    return [mark for mark in MARK.finditer(line)
+            if any(start <= mark.start() < end for start, end in spans)]
+
+
 def process(text: str, table: dict[str, str] | None, shown: str, fix: bool,
             failures: list[str]) -> tuple[str, int]:
     """Check one file's text. Returns the text, with any fixes applied, and its mark count."""
@@ -86,6 +93,11 @@ def process(text: str, table: dict[str, str] | None, shown: str, fix: bool,
         if STRAY_MARK.search(rest):
             failures.append(f"{shown}:{number}: a num mark is not closed on the same line")
         count += len(marks)
+        # An example names no real metric. One that does would go stale unnoticed.
+        for mark in marks_in_code(line):
+            if table is not None and mark.group(1) in table:
+                failures.append(f"{shown}:{number}: {mark.group(1)}: a mark inside a code span "
+                                "is never compared; move it out of the span")
         # Backwards, so that rewriting one value leaves the earlier offsets valid.
         for mark in reversed(marks):
             metric, value = mark.group(1), mark.group(2)
