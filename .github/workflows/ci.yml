@@ -2,14 +2,16 @@ name: ci
 
 # Three jobs. No runner has a GPU, so no device code is ever executed here.
 #
-#   host-tests   runs the style gate and the gate registry check
-#                (check_provenance.py --gates-only), then builds the CUDA free
-#                half of the project and runs its three ctest entries:
+#   host-tests   runs the style gate, the local path scan and the gate registry
+#                check (check_provenance.py --gates-only), then builds the CUDA free
+#                half of the project and runs its ctest entries:
 #                unit_host (unit_tests_host), validation_host
 #                (validation_tests_host, the physics gates that need no device:
 #                the pair force expression, the Plummer sampler and the SPH
-#                kernel normalisation) and doc_numbers_tool (the test of
-#                check_doc_numbers.py). No toolkit involved at all.
+#                kernel normalisation), doc_numbers_tool (the test of
+#                check_doc_numbers.py), cps_io_tool and profile_tools (the test of
+#                the local path scan and the profiler tooling). No toolkit involved
+#                at all.
 #   cuda-build   compiles the whole project inside the official CUDA image with
 #                the ci preset, a fat build with warnings as errors, so physics_core
 #                targets sm_75 to sm_120 and everything else sm_120. It checks
@@ -59,6 +61,9 @@ jobs:
 
       - name: Style gate
         run: python3 scripts/check_no_dashes.py .
+
+      - name: No local paths in the tracked files
+        run: python3 scripts/check_no_local_paths.py
 
       - name: Every registered gate has a committed result
         run: python3 scripts/check_provenance.py --gates-only

@@ -59,7 +59,7 @@ Run everything with `make test`. `make validate` runs both validation entries.
 ## Before opening a pull request
 
 ```bash
-make check-style   # the dash gate, must be silent
+make check-style   # the dash gate and the local path check, must be silent
 make build         # warnings are errors, so a clean build is the gate
 make test
 ```
@@ -71,6 +71,13 @@ in the compiled PDFs. `scripts/check_no_dashes.py` enforces it and runs as part
 of the report build. In LaTeX prose never type two hyphens: TeX turns them into
 an en dash silently, and `\texttt` does not suppress it, only a verbatim region
 does. Write ranges as "10 to 20".
+
+**No paths from your machine.** A profiler or build tool will print the absolute path
+of what it ran, and a committed file then publishes your account name and folders.
+`scripts/check_no_local_paths.py` scans every text file git knows about, and the compiled
+PDFs through `pdftotext`, for home directories and drive paths, and names the file and the
+line. It runs in continuous integration next to the dash gate. A real documentation example
+goes on its allow-list.
 
 **No number without a run.** Any performance figure in the documentation or the
 reports must come from a file written by a program in this repository. The
@@ -88,7 +95,9 @@ leaves `experiments/results` alone. `make record-results` is the only target tha
 updates the committed gate values, and `make bench` replaces benchmark rows. Commit
 first: `bench_all` refuses a dirty tree, and `scripts/check_provenance.py` fails on any
 row whose commit does not resolve or was measured under another protocol. If you change
-a kernel, rerun `make bench` and regenerate.
+a kernel, rerun `make bench` and regenerate. `make profile` follows the same rule:
+its scripts refuse a dirty tree or a binary older than the checkout, and take `--out` with
+`--allow-dirty` for a trial run somewhere else.
 
 **A claim must clear the drift.** A performance difference is quoted only if it
 exceeds the session drift, the `RepeatabilitySpread` metric, or it is worded as not

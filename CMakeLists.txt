@@ -286,7 +286,7 @@ function(cps_add_device_library target fast_math architectures)
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
   target_link_libraries(${target}
     PUBLIC physics_host CUDA::cudart
-    PRIVATE $<BUILD_LOCAL_INTERFACE:cps_warnings>)
+    PRIVATE $<BUILD_LOCAL_INTERFACE:cps_warnings> $<BUILD_LOCAL_INTERFACE:CUDA::nvtx3>)
   set_target_properties(${target} PROPERTIES
     CUDA_ARCHITECTURES "${architectures}"
     CUDA_SEPARABLE_COMPILATION OFF)
@@ -402,6 +402,13 @@ if(CPS_BUILD_TESTS)
       COMMAND ${Python3_EXECUTABLE} -I
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts/test_cps_io.py)
     set_tests_properties(cps_io_tool PROPERTIES LABELS "host" SKIP_RETURN_CODE 77)
+
+    # The local path scanner, the SPH split attribution and the provenance rules
+    # for the profiler files, all on scratch files.
+    add_test(NAME profile_tools
+      COMMAND ${Python3_EXECUTABLE}
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts/test_profile_tools.py)
+    set_tests_properties(profile_tools PROPERTIES LABELS "host")
   endif()
 
   # Everything below needs the CUDA runtime, so it is skipped entirely in host

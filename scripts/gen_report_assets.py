@@ -30,6 +30,22 @@ except ImportError:  # pragma: no cover
         return iterable
 
 
+# The stall columns of profile_summary.csv and the word each takes in a macro name,
+# and the sizes a macro can name. A macro name is letters only.
+STALL_COLUMNS = {
+    "stall_wait": "Wait",
+    "stall_not_selected": "NotSelected",
+    "stall_short_scoreboard": "ShortScoreboard",
+    "stall_long_scoreboard": "LongScoreboard",
+    "stall_math_pipe_throttle": "MathPipeThrottle",
+    "stall_mio_throttle": "MioThrottle",
+    "stall_lg_throttle": "LgThrottle",
+    "stall_barrier": "Barrier",
+    "stall_no_instruction": "NoInstruction",
+}
+PROFILE_SIZE_NAMES = {200000: "TwoHundredK", 100000: "HundredK", 10000: "TenK"}
+
+
 def read_csv(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
@@ -615,11 +631,17 @@ class Assets:
 
     # -- hardware counters ------------------------------------------------
     def profile(self) -> None:
-        rows = read_csv(self.results / "profile_summary.csv")
-        if not rows:
+        all_rows = read_csv(self.results / "profile_summary.csv")
+        if not all_rows:
             return
         order = {"naive": 0, "tiled": 1, "fused": 2}
-        rows.sort(key=lambda r: order.get(r["variant"], 9))
+        all_rows.sort(key=lambda r: order.get(r["variant"], 9))
+        self.profile_stalls(all_rows)
+        # The counter table and its macros are for the largest size profiled. An
+        # older summary holds one size, and one written before the column existed
+        # was profiled at 100,000.
+        headline = max(int(r.get("num_particles") or 100000) for r in all_rows)
+        rows = [r for r in all_rows if int(r.get("num_particles") or 100000) == headline]
 
         lines = [
             r"\begin{tabular}{l rrrr rr}",
@@ -682,6 +704,56 @@ class Assets:
             if interactions_per_second > 0.0:
                 self.macro("TiledTflopsAtMeasuredFlops",
                            f"{interactions_per_second * measured_flops / 1.0e12:.2f}")
+
+    def profile_stalls(self, rows: list[dict[str, str]]) -> None:
+        """The stall breakdown, for each variant at each size, once it has been profiled."""
+        if not rows or "stall_wait" not in rows[0]:
+            return
+        ordered = sorted(rows, key=lambda r: -int(r["num_particles"]))
+        lines = [
+            r"\begin{tabular}{r l rrrrrrrrr rr}",
+            r"\toprule",
+            r"& & \multicolumn{9}{c}{warps stalled per cycle with an issue active} "
+            r"& \multicolumn{2}{c}{L1, L2 hit} \\",
+            r"\cmidrule(lr){3-11}\cmidrule(lr){12-13}",
+            r"particles & variant & wait & not sel. & short sb. & long sb. & math & MIO & LG "
+            r"& barrier & no inst. & percent & percent \\",
+            r"\midrule",
+        ]
+        for row in ordered:
+            cells = " & ".join(f"{float(row[column]):.2f}" for column in STALL_COLUMNS)
+            lines.append(f"{int(row['num_particles']):,} & {row['variant']} & {cells} & "
+                         f"{float(row['l1_global_load_hit_pct']):.2f} & "
+                         f"{float(row['l2_hit_pct']):.2f} \\\\")
+        lines += [r"\bottomrule", r"\end{tabular}"]
+        self.write_table("profile_stalls", "\n".join(lines) + "\n")
+
+        for row in ordered:
+            size = PROFILE_SIZE_NAMES.get(int(row["num_particles"]))
+            if size is None:
+                continue
+            variant = row["variant"].capitalize()
+            for column, word in STALL_COLUMNS.items():
+                self.macro(f"{variant}Stall{word}{size}", f"{float(row[column]):.2f}")
+            self.macro(f"{variant}RegistersPerThread{size}",
+                       f"{float(row['registers_per_thread']):.0f}")
+            self.macro(f"{variant}WavesPerMultiprocessor{size}",
+                       f"{float(row['waves_per_multiprocessor']):.2f}")
+            self.macro(f"{variant}IssueActivePct{size}", f"{float(row['issue_pct_active']):.2f}")
+
+    def sph_split(self) -> None:
+        rows = read_csv(self.results / "sph_pipeline_split.csv")
+        if not rows:
+            return
+        self.macro("SphSplitParticles", f"{int(rows[0]['num_particles']):,}")
+        self.macro("SphSplitWarmupSteps", f"{int(rows[0]['warmup_steps']):,}")
+        self.macro("SphSplitMeasuredSteps", f"{int(rows[0]['measured_steps']):,}")
+        self.macro("SphSplitTracedStepMs", f"{float(rows[0]['traced_step_ms']):.3f}")
+        self.macro("SphSplitUntracedStepMs", f"{float(rows[0]['untraced_step_ms']):.3f}")
+        for row in rows:
+            word = "".join(part.capitalize() for part in row["pass"].split("_"))
+            self.macro(f"SphSplit{word}Pct", f"{float(row['percent_of_step']):.1f}")
+            self.macro(f"SphSplit{word}Ms", f"{float(row['ms_per_step']):.4f}")
 
     # -- debug report -----------------------------------------------------
     def debug_entries(self, sections: Path) -> None:
@@ -778,6 +850,7 @@ def main() -> int:
         ("tile_sweep.csv", lambda: assets.tile_sweep()),
         ("validation_gates.csv", lambda: assets.gates()),
         ("profile_summary.csv", lambda: assets.profile()),
+        ("sph_pipeline_split.csv", lambda: assets.sph_split()),
         ("report_debug/sections", lambda: assets.debug_entries(root / "report_debug" / "sections")),
         ("benchmarks.csv", lambda: assets.provenance(benchmarks)),
     ]

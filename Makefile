@@ -38,7 +38,7 @@ help:
 	@echo "  validate       run the physics gates (results go to the build tree)"
 	@echo "  record-results run the whole suite and record the gates in $(RESULTS)"
 	@echo "  bench          run the full benchmark sweep, resuming where it left off"
-	@echo "  profile        collect hardware counters with Nsight Compute"
+	@echo "  profile        collect hardware counters and the SPH split with Nsight"
 	@echo "  plots          draw the figures from the recorded results"
 	@echo "  assets         generate the LaTeX tables and macros"
 	@echo "  report         build report/main.pdf"
@@ -100,13 +100,17 @@ bench: build
 bench-quick: build
 	./$(BUILD_DIR)/bin/bench_all --quick --allow-dirty
 
+# Both refuse a tree with uncommitted code, or a binary older than the checkout.
 profile: build
 	bash scripts/profile_kernels.sh
+	bash scripts/profile_sph_split.sh
 
 # The colours are checked first, against the white page the figures are drawn on.
 plots:
 	$(PYTHON) scripts/validate_palette.py "$$($(PYTHON) scripts/plot_results.py --print-palette)" \
 		--surface "#ffffff" --pairs all
+	$(PYTHON) scripts/validate_palette.py "$$($(PYTHON) scripts/plot_results.py --print-pass-palette)" \
+		--surface "#ffffff" --pairs adjacent
 	$(PYTHON) scripts/plot_results.py
 
 assets:
@@ -126,6 +130,7 @@ docs: assets
 
 check-style:
 	$(PYTHON) scripts/check_no_dashes.py .
+	$(PYTHON) scripts/check_no_local_paths.py
 
 # Warnings are already errors in the default configuration, so a successful
 # build is the gate. This target states that explicitly for anyone reading.

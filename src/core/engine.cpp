@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "../utils/nvtx_range.hpp"
 #include "cps/core/initial_conditions.hpp"
 #include "cps/core/physics_fingerprint.hpp"
 #include "cps/core/snapshot.hpp"
@@ -205,6 +206,7 @@ void SimulationEngine::step() {
     if (!initialized_) {
         throw std::runtime_error("the engine must be initialised or resumed before stepping");
     }
+    const NvtxRange range("step");
     solver_->step(*particles_, stream_.get());
     ++current_step_;
 }
@@ -228,6 +230,7 @@ void SimulationEngine::check_state_finite(const HostParticleState& state) const 
 }
 
 Diagnostics SimulationEngine::diagnostics(bool include_potential) {
+    const NvtxRange range("diagnostics");
     check_device_errors();
     solver_->prepare_diagnostics(*particles_, stream_.get());
     const float half_dt = half_step_velocity_ ? 0.5f * config_.dt : 0.0f;
@@ -249,6 +252,7 @@ Diagnostics SimulationEngine::diagnostics(bool include_potential) {
 }
 
 void SimulationEngine::write_snapshot_now() const {
+    const NvtxRange range("snapshot");
     check_device_errors();
     Snapshot snapshot;
     snapshot.step = static_cast<uint64_t>(current_step_);
@@ -268,6 +272,7 @@ void SimulationEngine::write_snapshot_now() const {
 }
 
 void SimulationEngine::write_vtk_frame_now() {
+    const NvtxRange range("frame");
     check_device_errors();
     HostParticleState state;
     particles_->download(state, stream_.get());

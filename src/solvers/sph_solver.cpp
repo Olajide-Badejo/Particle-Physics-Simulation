@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "../utils/nvtx_range.hpp"
 #include "cps/physics/spatial_hash.hpp"
 #include "cps/solvers/sph_passes.hpp"
 
@@ -64,23 +65,30 @@ SphSolver::SphSolver(const Config& config, int count)
 }
 
 void SphSolver::hash_particles(ParticleSystem& particles, cudaStream_t stream) {
+    const NvtxRange range("sph hash");
     sph_hash_particles(particles.x(), particles.y(), particles.z(), bucket_.get(), cell_key_.get(),
                        index_.get(), non_finite_flag_.get(), count_, cell_size_, table_size_,
                        block_size_, stream);
 }
 
 void SphSolver::sort_by_bucket(cudaStream_t stream) {
+    const NvtxRange range("sph sort");
     sph_sort_by_bucket(sort_temp_.get(), sort_temp_.bytes(), bucket_.get(), bucket_sorted_.get(),
                        index_.get(), index_sorted_.get(), count_, table_size_, stream);
 }
 
 void SphSolver::compute_cell_bounds(cudaStream_t stream) {
-    sph_clear_cell_bounds(cell_start_.get(), cell_end_.get(), table_size_, block_size_, stream);
+    {
+        const NvtxRange range("sph clear");
+        sph_clear_cell_bounds(cell_start_.get(), cell_end_.get(), table_size_, block_size_, stream);
+    }
+    const NvtxRange range("sph cell bounds");
     sph_compute_cell_bounds(bucket_sorted_.get(), cell_start_.get(), cell_end_.get(), count_,
                             block_size_, stream);
 }
 
 void SphSolver::gather_sorted(ParticleSystem& particles, cudaStream_t stream) {
+    const NvtxRange range("sph gather");
     sph_gather_sorted(particles.x(), particles.y(), particles.z(), particles.vx(), particles.vy(),
                       particles.vz(), particles.mass(), particles.id(), cell_key_.get(),
                       index_sorted_.get(), sx_.get(), sy_.get(), sz_.get(), svx_.get(), svy_.get(),
@@ -93,6 +101,7 @@ void SphSolver::build_neighbours_and_density(ParticleSystem& particles, cudaStre
     sort_by_bucket(stream);
     compute_cell_bounds(stream);
     gather_sorted(particles, stream);
+    const NvtxRange range("sph density");
     sph_compute_density(sx_.get(), sy_.get(), sz_.get(), smass_.get(), cell_key_sorted_.get(),
                         cell_start_.get(), cell_end_.get(), density_.get(), pressure_.get(), count_,
                         derived_.smoothing_radius, cell_size_, table_size_,
@@ -103,6 +112,7 @@ void SphSolver::step(ParticleSystem& particles, cudaStream_t stream) {
     build_neighbours_and_density(particles, stream);
 
     const SphConfig& sph = config_.sph;
+    const NvtxRange range("sph force and integrate");
     sph_forces_and_integrate(
         sx_.get(), sy_.get(), sz_.get(), svx_.get(), svy_.get(), svz_.get(), smass_.get(),
         density_.get(), pressure_.get(), cell_key_sorted_.get(), cell_start_.get(), cell_end_.get(),

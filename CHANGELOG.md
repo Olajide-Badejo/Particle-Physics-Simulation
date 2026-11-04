@@ -7,6 +7,13 @@ a Changelog, and the project uses semantic versioning.
 
 ### Added
 
+- NVTX ranges around the step, each SPH pass, diagnostics, snapshots and frames, in the device
+  libraries only. `CUDA::nvtx3` is linked privately, so an installed consumer never sees it.
+- `scripts/profile_sph_split.sh`, which writes `sph_pipeline_split.csv` from the kernel records in
+  Nsight Systems, with CUB's kernels and memsets under the sort and a figure in `plot_results.py`.
+  It fails rather than record a pass that is absent or a kernel it cannot attribute.
+- `scripts/check_no_local_paths.py`, run in the host job of continuous integration and by
+  `make check-style`, which fails on an absolute home or drive path in a tracked text file or PDF.
 - The `cps` command: `cps run <preset-or-path>`, `cps presets`, `cps info` and
   `cps convert <input> <output>`, which turns a v1 configuration into schema 2 and, with
   `--config <file>`, a CPS1 snapshot into CPS2. Help is on `cps --help` and `cps <subcommand> --help`.
@@ -15,6 +22,13 @@ a Changelog, and the project uses semantic versioning.
 
 ### Changed
 
+- `scripts/profile_kernels.sh` profiles at three particle counts and adds the stall reasons, issue
+  and pipe figures over active cycles, hit rates and launch figures. `profile_runs.csv` records the
+  commit, dirty flag, particle count, tile width and block size of each export, and
+  `check_provenance.py` checks it. The script refuses a dirty tree or a stale binary, takes `--out` and
+  writes nothing until every run has worked. `profile_summary.csv` gains a row per size and these
+  columns, and the existing columns and report macros stay, quoting the largest size. New macros
+  give the stall figures.
 - **Breaking:** the program and its CMake target are now `cps`, and the project is `cps`. The name
   `cuda_physics_sim` stays for one major version as a symbolic link to it in the build and install
   trees. The form with flags and no subcommand still works under both names, and prints one line
@@ -69,6 +83,14 @@ a Changelog, and the project uses semantic versioning.
   schema 2 file suggests `run.dt`. Type errors from the reader name the full path.
 - **Breaking:** `configs/` is now `presets/`, in schema 2 form. The old files are kept as migration
   fixtures in `tests/data/configs_v1/`.
+
+### Fixed
+
+- The Nsight Compute exports no longer carry a local path. The `ncu_*.csv` files in the published
+  `v1.1.0` contain a line naming the program by its full path on the author's machine, because the
+  script captured the profiler's `==PROF==` output. The script now drops those lines, the line is gone
+  from the three committed files with no other change, and the new check keeps it from coming back.
+  The tag itself is unchanged, so that release still contains them.
 
 ### Removed
 

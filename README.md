@@ -327,7 +327,8 @@ whose small gain was easy to accept.
 
 - [experiments/results/benchmarks.csv](experiments/results/benchmarks.csv), every timing with full provenance
 - [experiments/results/validation_gates.csv](experiments/results/validation_gates.csv), every gate value
-- [experiments/results/profile_summary.csv](experiments/results/profile_summary.csv), the hardware counters
+- [experiments/results/profile_summary.csv](experiments/results/profile_summary.csv), the hardware counters and stall reasons, with [profile_runs.csv](experiments/results/profile_runs.csv) saying which commit made each export
+- [experiments/results/sph_pipeline_split.csv](experiments/results/sph_pipeline_split.csv), where a fluid step goes, pass by pass
 - [report/figures/](report/figures/), every chart as both PDF and PNG
 
 ---
@@ -408,7 +409,7 @@ make validate        # the physics gates; results go to the build tree
 make record-results  # the whole suite, recording the gates in experiments/results
 make bench           # the benchmark sweep and tile sweep; refuses a dirty tree
 make bench-quick     # a smoke test of the driver; its rows go to a temporary directory
-make profile         # hardware counters through Nsight Compute
+make profile         # hardware counters and the SPH split through Nsight; refuses a dirty tree
 make reports         # both PDFs
 make check-style     # the style gate
 ```
@@ -547,6 +548,14 @@ The bandwidth comparisons here use the **measured** figure, never the theoretica
 The device memory percentages in the counter table are percent of peak as Nsight Compute
 reports them.
 
+`scripts/profile_kernels.sh` profiles naive, tiled and fused at three particle counts through
+Nsight Compute, which serialises the launches, so it describes each kernel and nothing between
+them. `scripts/profile_sph_split.sh` times the passes of a fluid step from the kernel records in
+Nsight Systems, which does not, and states its warmup and measured steps in the file. The engine and
+the fluid solver mark the step, each pass, diagnostics, snapshots and frames with NVTX ranges. Both
+scripts take `--out` for a scratch directory and, only with that, `--allow-dirty`. A missing profiler
+is a failure unless `CPS_ALLOW_NO_NCU=1` or `CPS_ALLOW_NO_NSYS=1` says otherwise.
+
 ---
 
 ## Reproducibility
@@ -585,7 +594,7 @@ src/io/              the VTK frame and series writer
 python/cps_io/       NumPy readers for snapshots and frames, and the frame checker
 tests/               unit (host and device), integration, validation, install consumer
 benchmarks/          the sweep driver
-scripts/             style gate, plotting, report assets, profiling, number and provenance checks
+scripts/             style gate, plotting, report assets, profiling, number, provenance and path checks
 cmake/               version stamp and the find_package configuration
 presets/             the three shipped configurations
 experiments/         recorded results

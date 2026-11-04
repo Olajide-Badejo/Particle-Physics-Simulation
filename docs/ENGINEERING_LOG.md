@@ -434,3 +434,27 @@ error of the same orbit is about 9.9e-13.
 slope from 2 is <!-- num:VerletSlopeErrorEccentric -->0.0072<!-- /num --> at eccentricity 0.5, and distance from 4 is
 <!-- num:VerletSlopeErrorCircular -->0.0040<!-- /num --> on an unsoftened circular orbit, where symmetry cancels the second order
 term. A slope of 2 cannot appear on the circular orbit, which the first plan for this gate had wrong.
+
+---
+
+## 2026-11-04: the profile published where it was run
+
+**Theme:** provenance.
+
+**Symptom.** The Nsight Compute exports in `v1.1.0` began with a line naming the program by its full
+path on my machine.
+
+**Root cause.** `profile_kernels.sh` sent the profiler's standard output straight to the result file,
+and Nsight Compute reports the process it attached to on that stream. Nothing looked at those files,
+because the summary starts reading at the header row.
+
+**Fix and why.** The script now builds each file in a temporary directory, drops those lines, scans
+what is left and moves everything into place only after every run has worked. A scanner over the tracked
+files runs in continuous integration, because a rule about one script does not cover the next tool. The
+exports also said nothing about the commit that made them, so a companion file now does, and the provenance
+check holds it to the same rules as the benchmark rows.
+
+**Why it mattered.** Counters read one launch of one kernel with the launches serialised, which is why they
+can name a stall reason but not the cost between kernels. The split of the fluid step comes from the kernel
+records in Nsight Systems, which traces CUDA kernels under WSL2 here, so the two tools now answer different
+questions rather than one answering both badly.
