@@ -220,8 +220,8 @@ cannot be right here.
 **Root cause.** The bottleneck is the first level cache and the load store
 pipeline, not the memory bus. Counters at <!-- num:ProfileParticles -->200,000<!-- /num --> particles, as remeasured for `v1.1`:
 global load sectors fall by a factor of <!-- num:SectorReduction -->63.9<!-- /num -->; L1 throughput falls from
-<!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent of peak, close to saturation, to <!-- num:TiledLoneTexPct -->45.4<!-- /num --> percent; warp issue
-efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.7<!-- /num --> percent. Arithmetic instruction counts
+<!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent of peak, close to saturation, to <!-- num:TiledLoneTexPct -->45.5<!-- /num --> percent; warp issue
+efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.8<!-- /num --> percent. Arithmetic instruction counts
 are equal across all three variants to within a fraction of a percent, which is the control. This entry
 first quoted counters at 100,000 particles, from a profile that was not the size it claimed to explain.
 

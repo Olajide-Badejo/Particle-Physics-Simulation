@@ -1,0 +1,10 @@
+file,commit,dirty,variant,num_particles,tile_size,block_size,launch
+ncu_naive.csv,f0221dc4e0ea,0,naive,200000,0,256,3
+ncu_tiled.csv,f0221dc4e0ea,0,tiled,200000,256,256,3
+ncu_fused.csv,f0221dc4e0ea,0,fused,200000,256,256,3
+ncu_naive_100000.csv,f0221dc4e0ea,0,naive,100000,0,256,3
+ncu_tiled_100000.csv,f0221dc4e0ea,0,tiled,100000,256,256,3
+ncu_fused_100000.csv,f0221dc4e0ea,0,fused,100000,256,256,3
+ncu_naive_10000.csv,f0221dc4e0ea,0,naive,10000,0,256,3
+ncu_tiled_10000.csv,f0221dc4e0ea,0,tiled,10000,256,256,3
+ncu_fused_10000.csv,f0221dc4e0ea,0,fused,10000,256,256,3
