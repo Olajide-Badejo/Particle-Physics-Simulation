@@ -272,7 +272,7 @@ set(CPS_DEVICE_SOURCES
   src/kernels/nbody_tiled.cu
   src/kernels/nbody_fused.cu
   src/kernels/integrators.cu
-  src/kernels/spatial_hash.cu
+  src/kernels/uniform_grid.cu
   src/kernels/sph_forces.cu
   src/solvers/nbody_solver.cpp
   src/solvers/solver_factory.cpp
@@ -365,7 +365,7 @@ if(CPS_BUILD_TESTS)
     tests/unit/test_gate_recording.cpp
     tests/unit/test_snapshot_format.cpp
     tests/unit/test_sph_kernels.cpp
-    tests/unit/test_spatial_hash.cpp
+    tests/unit/test_uniform_grid.cpp
     tests/unit/test_initial_conditions.cpp
     tests/unit/test_vtk.cpp)
   target_link_libraries(unit_tests_host
@@ -439,6 +439,7 @@ if(CPS_BUILD_TESTS)
     tests/integration/test_diagnostics.cpp
     tests/integration/test_graphs.cpp
     tests/integration/test_input_safety.cpp
+    tests/integration/test_neighbour_search.cpp
     tests/integration/test_particle_ids.cpp
     tests/integration/test_vtk_output.cpp)
   target_link_libraries(integration_tests

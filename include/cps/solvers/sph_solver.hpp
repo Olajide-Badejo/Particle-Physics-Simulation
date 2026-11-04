@@ -6,24 +6,25 @@
 #include "cps/core/config.hpp"
 #include "cps/core/initial_conditions.hpp"
 #include "cps/core/particle_system.hpp"
+#include "cps/physics/uniform_grid.hpp"
 #include "cps/solvers/solver.hpp"
 #include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 
-// Weakly compressible smoothed particle hydrodynamics with spatial hash
-// neighbour search.
+// Weakly compressible smoothed particle hydrodynamics with dense grid neighbour
+// search.
 //
 // One step is six device passes:
 //
-//   1. hash      integer cell coordinate, hash bucket and exact cell key per
-//                particle; also where a non finite position is noticed
-//   2. sort      CUB radix sort of (bucket, index) pairs
-//   3. bounds    first and last entry of every occupied bucket
+//   1. cells     cell index per particle, which is its sort key; also where a non
+//                finite position is noticed
+//   2. sort      CUB radix sort of (cell, index) pairs
+//   3. bounds    where each cell's run begins in the sorted array
 //   4. gather    particle data permuted into sorted order, so the neighbour
 //                loop reads contiguous memory
-//   5. density   poly6 sum over the twenty seven surrounding cells, then the
-//                equation of state
+//   5. density   poly6 sum over the nine surrounding x rows, then the equation of
+//                state
 //   6. force     spiky pressure gradient, viscosity Laplacian, external
 //                gravity, kick-drift leapfrog update and boundary handling
 //
@@ -36,9 +37,9 @@ namespace cps {
 // order, which is the order the next step wants anyway, so the sort has an
 // effect that outlives the step that paid for it.
 //
-// The constructor refuses a domain too large for the cell size, which is what
-// keeps every finite position's cell key free of aliasing, and a time step above
-// the stability limits, unless the configuration allows that.
+// The constructor refuses a domain whose grid would be too large (see make_sph_grid)
+// or that this device cannot hold, and a time step above the stability limits, unless
+// the configuration allows that.
 class SphSolver final : public Solver {
    public:
     SphSolver(const Config& config, int count);
@@ -91,26 +92,23 @@ class SphSolver final : public Solver {
     const float* density() const { return density_.get(); }
     const float* pressure() const { return pressure_.get(); }
     const uint32_t* sorted_index() const { return index_sorted_.get(); }
-    uint32_t table_size() const { return table_size_; }
+    const uint32_t* cell_start() const { return cell_start_.get(); }
+    const UniformGrid& grid() const { return grid_; }
     const SphDerivedParameters& derived() const { return derived_; }
 
-    // Number of particles whose bucket collided with another occupied cell,
-    // reported once at start up as a health check on the hash. Drains the stream.
-    int count_bucket_collisions(ParticleSystem& particles, cudaStream_t stream);
-
-    // True once a hash pass has met a NaN or Inf position. It stays set for
+    // True once a cell pass has met a NaN or Inf position. It stays set for
     // the life of the solver, because the wall clamp turns an infinite
     // position back into a finite one and leaves nothing later to find. Reading
     // it drains the stream, which has to be the one the passes ran on, so it is
     // not for use on every step. A position that first goes bad in a step's
-    // update is only seen by the hash pass of the following step.
+    // update is only seen by the cell pass of the following step.
     bool non_finite_position_seen(cudaStream_t stream) const;
 
     std::size_t device_bytes() const;
 
    private:
-    void hash_particles(ParticleSystem& particles, cudaStream_t stream);
-    void sort_by_bucket(cudaStream_t stream);
+    void assign_cells(ParticleSystem& particles, cudaStream_t stream);
+    void sort_by_cell(cudaStream_t stream);
     void compute_cell_bounds(cudaStream_t stream);
     void gather_sorted(ParticleSystem& particles, cudaStream_t stream);
 
@@ -118,17 +116,13 @@ class SphSolver final : public Solver {
     SphDerivedParameters derived_{};
     int count_ = 0;
     int block_size_ = 256;
-    uint32_t table_size_ = 0;
-    float cell_size_ = 0.0f;
+    UniformGrid grid_{};
 
-    DeviceBuffer<uint32_t> bucket_;
-    DeviceBuffer<uint32_t> bucket_sorted_;
+    DeviceBuffer<uint32_t> cell_;
+    DeviceBuffer<uint32_t> cell_sorted_;
     DeviceBuffer<uint32_t> index_;
     DeviceBuffer<uint32_t> index_sorted_;
-    DeviceBuffer<int64_t> cell_key_;
-    DeviceBuffer<int64_t> cell_key_sorted_;
     DeviceBuffer<uint32_t> cell_start_;
-    DeviceBuffer<uint32_t> cell_end_;
 
     // Sorted copies consumed by the density and force passes.
     DeviceBuffer<float> sx_, sy_, sz_;
@@ -140,10 +134,9 @@ class SphSolver final : public Solver {
     DeviceBuffer<float> pressure_;
 
     DeviceBuffer<char> sort_temp_;
-    DeviceBuffer<int> collision_counter_;
     DeviceBuffer<int> non_finite_flag_;
 
-    // Where the two single int reads above land. Reading the flag is logically
+    // Where the read of the flag above lands. Reading the flag is logically
     // const, and it does not change anything the solver computes.
     mutable HostBuffer<int> scalar_staging_;
 };

@@ -212,20 +212,41 @@ TEST(SolverSmoke, InteriorDensityRecoversTheRestDensity) {
         << config.sph.rest_density;
 }
 
-// The hash is meant to spread cells across the table. This records what the
-// collision rate actually is on the shipped configuration rather than assuming
-// it is small.
-TEST(SolverSmoke, TheHashTableCollisionRateIsSmall) {
+// A cell has one index, so a run of the sorted array should hold that cell's
+// particles and no others. This checks what the rate of foreign particles actually
+// is on the shipped configuration rather than assuming it is zero.
+TEST(SolverSmoke, EveryCellRunHoldsOnlyThatCellsParticles) {
     SKIP_WITHOUT_GPU();
     cps::Config config = sph_config(30000, 0);
     cps::SimulationEngine engine(config);
     engine.initialize();
 
     cps::SphSolver solver(config, config.num_particles);
-    const int collisions = solver.count_bucket_collisions(engine.particles(), engine.stream());
-    const double rate = static_cast<double>(collisions) / config.num_particles;
-    EXPECT_LT(rate, 0.05) << collisions << " of " << config.num_particles
-                          << " particles sit next to a foreign cell in their bucket";
+    solver.build_neighbours_and_density(engine.particles(), engine.stream());
+    CUDA_CHECK(cudaStreamSynchronize(engine.stream()));
+
+    const cps::UniformGrid& grid = solver.grid();
+    std::vector<uint32_t> cell_start(cps::cell_table_entries(grid.num_cells));
+    CUDA_CHECK(cudaMemcpy(cell_start.data(), solver.cell_start(),
+                          cell_start.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+    std::vector<uint32_t> sorted_index(static_cast<std::size_t>(config.num_particles));
+    CUDA_CHECK(cudaMemcpy(sorted_index.data(), solver.sorted_index(),
+                          sorted_index.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+    cps::HostParticleState state;
+    engine.particles().download(state, engine.stream());
+
+    EXPECT_EQ(cell_start.front(), 0u);
+    EXPECT_EQ(cell_start.back(), static_cast<uint32_t>(config.num_particles));
+    int foreign = 0;
+    for (std::size_t k = 0; k < sorted_index.size(); ++k) {
+        const std::size_t i = sorted_index[k];
+        const uint32_t cell = cps::cell_index(grid, state.x[i], state.y[i], state.z[i]);
+        if (k < cell_start[cell] || k >= cell_start[cell + 1u]) {
+            ++foreign;
+        }
+    }
+    EXPECT_EQ(foreign, 0) << foreign << " of " << config.num_particles
+                          << " particles sit outside the run of their own cell";
 }
 
 // The contract in simulation_engine.hpp: the arrays are safe to read directly

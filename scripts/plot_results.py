@@ -46,10 +46,22 @@ SERIES = {
     "fused": {"color": "#1baf7a", "marker": "^", "label": "fused"},
 }
 # The passes of the SPH step, in the order they run and so in the order they stack.
-# Slots one to eight of the same validated palette. Only neighbours in the stack have
-# to be told apart by colour, so `make plots` checks them with --pairs adjacent; the
-# legend also gives every pass its name and value.
+# Slots from the same validated palette. Only neighbours in the stack have to be told
+# apart by colour, so `make plots` checks them with --pairs adjacent; the legend also
+# gives every pass its name and value.
 SPH_PASSES = {
+    "assign_cells": ("assign cells", "#2a78d6"),
+    "sort": ("sort", "#eb6834"),
+    "cell_bounds": ("cell bounds", "#1baf7a"),
+    "gather": ("gather", "#e87ba4"),
+    "density": ("density", "#008300"),
+    "force_and_integrate": ("force and integrate", "#6250d6"),
+    "between_kernels": ("between kernels", "#e34948"),
+}
+# The same for a split recorded while the search was a spatial hash, which had two
+# passes that no longer exist. A file that holds a hash pass gets this one, so its
+# figure comes out as it was committed.
+SPH_PASSES_WITH_HASH = {
     "hash": ("hash", "#2a78d6"),
     "sort": ("sort", "#eb6834"),
     "clear": ("clear", "#1baf7a"),
@@ -455,13 +467,14 @@ def plot_sph_split(path: Path, out_dir: Path) -> None:
     if not rows:
         return
     by_pass = {row["pass"]: row for row in rows}
-    unknown = by_pass.keys() - SPH_PASSES.keys()
+    passes = SPH_PASSES_WITH_HASH if "hash" in by_pass else SPH_PASSES
+    unknown = by_pass.keys() - passes.keys()
     if unknown:
         raise SystemExit(f"error: {path} holds a pass this figure does not know: {sorted(unknown)}")
 
     fig, ax = plt.subplots(figsize=(7.0, 2.9))
     left = 0.0
-    for name, (label, color) in SPH_PASSES.items():
+    for name, (label, color) in passes.items():
         if name not in by_pass:
             continue
         value = float(by_pass[name]["ms_per_step"])

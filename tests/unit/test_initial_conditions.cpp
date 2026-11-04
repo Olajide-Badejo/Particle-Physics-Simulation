@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "cps/core/initial_conditions.hpp"
-#include "cps/physics/spatial_hash.hpp"
+#include "cps/physics/uniform_grid.hpp"
 #include "cps/physics/sph_kernels.hpp"
 
 namespace {
@@ -451,7 +451,7 @@ TEST(SphTimeStep, EveryStepTheWallsWouldHaveHiddenIsRefused) {
 // The message of the error the check has to raise.
 std::string domain_error(const cps::Vec3& low, const cps::Vec3& high, float cell_size) {
     try {
-        cps::check_sph_domain_cell_range(low, high, cell_size);
+        cps::make_sph_grid(low, high, cell_size);
     } catch (const std::runtime_error& error) {
         return error.what();
     }
@@ -470,8 +470,7 @@ TEST(SphDomainCheck, AcceptsTheShippedDamBreak) {
     const cps::Config config = cps::Config::from_json_file(
         std::filesystem::path(CPS_PROJECT_ROOT) / "presets" / "dam_break_50k.json");
     const float h = cps::derive_sph_parameters(config).smoothing_radius;
-    EXPECT_NO_THROW(
-        cps::check_sph_domain_cell_range(config.sph.domain_min, config.sph.domain_max, h));
+    EXPECT_NO_THROW(cps::make_sph_grid(config.sph.domain_min, config.sph.domain_max, h));
 }
 
 TEST(SphDomainCheck, RejectsATooLargeDomainOnEachAxisAndNamesIt) {
@@ -490,12 +489,12 @@ TEST(SphDomainCheck, RejectsATooLargeDomainOnEachAxisAndNamesIt) {
     }
 }
 
-// 2^20 - 2 is exactly representable, as is the float just below it, and a cell
+// 2^20 is exactly representable, as is the float just below it, and a cell
 // size of a half or of one divides exactly, so both sides of the limit can be
 // hit on the nose. The limit itself is out.
 TEST(SphDomainCheck, TheLimitIsExclusiveOnBothSidesOfZero) {
-    const float limit = static_cast<float>(cps::SPH_DOMAIN_CELL_LIMIT);
-    ASSERT_EQ(static_cast<double>(limit), 1048574.0);
+    const float limit = static_cast<float>(cps::SPH_GRID_AXIS_LIMIT);
+    ASSERT_EQ(static_cast<double>(limit), 1048576.0);
     const float below = std::nextafter(limit, 0.0f);
 
     for (const float h : {1.0f, 0.5f}) {
@@ -504,17 +503,38 @@ TEST(SphDomainCheck, TheLimitIsExclusiveOnBothSidesOfZero) {
         const float inside = below * h;
         for (int axis = 0; axis < 3; ++axis) {
             SCOPED_TRACE(axis);
-            EXPECT_NO_THROW(cps::check_sph_domain_cell_range({0.0f, 0.0f, 0.0f},
-                                                             with_axis(axis, inside), h));
-            EXPECT_THROW(cps::check_sph_domain_cell_range({0.0f, 0.0f, 0.0f},
-                                                          with_axis(axis, at_limit), h),
+            EXPECT_NO_THROW(cps::make_sph_grid({0.0f, 0.0f, 0.0f}, with_axis(axis, inside), h));
+            EXPECT_THROW(cps::make_sph_grid({0.0f, 0.0f, 0.0f}, with_axis(axis, at_limit), h),
                          std::runtime_error);
-            EXPECT_NO_THROW(cps::check_sph_domain_cell_range(with_axis(axis, -inside),
-                                                             {0.0f, 0.0f, 0.0f}, h));
-            EXPECT_THROW(cps::check_sph_domain_cell_range(with_axis(axis, -at_limit),
-                                                          {0.0f, 0.0f, 0.0f}, h),
+            EXPECT_NO_THROW(cps::make_sph_grid(with_axis(axis, -inside), {0.0f, 0.0f, 0.0f}, h));
+            EXPECT_THROW(cps::make_sph_grid(with_axis(axis, -at_limit), {0.0f, 0.0f, 0.0f}, h),
                          std::runtime_error);
         }
+    }
+}
+
+// The grid counts cells from one wall to the other, so the width has its own limit:
+// each bound on its own is inside, and the two together are not.
+TEST(SphDomainCheck, TheWidthAcrossZeroHasTheSameLimit) {
+    const float half = static_cast<float>(cps::SPH_GRID_AXIS_LIMIT) * 0.5f;
+    for (int axis = 0; axis < 3; ++axis) {
+        SCOPED_TRACE(axis);
+        EXPECT_NO_THROW(cps::make_sph_grid(with_axis(axis, -std::nextafter(half, 0.0f)),
+                                           with_axis(axis, half), 1.0f));
+        EXPECT_THROW(cps::make_sph_grid(with_axis(axis, -half), with_axis(axis, half), 1.0f),
+                     std::runtime_error);
+    }
+}
+
+// A domain a few cells wide but so far from the origin that float positions cannot
+// resolve the support. It stays refused, as it was when the key's bit fields set
+// the limit: the index would work and the distances would be meaningless.
+TEST(SphDomainCheck, ADomainFarFromTheOriginIsRefusedHoweverNarrow) {
+    const float far = static_cast<float>(cps::SPH_GRID_AXIS_LIMIT);
+    for (int axis = 0; axis < 3; ++axis) {
+        SCOPED_TRACE(axis);
+        EXPECT_THROW(cps::make_sph_grid(with_axis(axis, far), with_axis(axis, far + 16.0f), 1.0f),
+                     std::runtime_error);
     }
 }
 
@@ -527,17 +547,16 @@ TEST(SphDomainCheck, RejectsANonFiniteRatio) {
     const cps::Vec3 unit{1.0f, 1.0f, 1.0f};
 
     // x / 0 is infinite and 0 / 0 is NaN.
-    EXPECT_THROW(cps::check_sph_domain_cell_range(origin, unit, 0.0f), std::runtime_error);
-    EXPECT_THROW(cps::check_sph_domain_cell_range(origin, origin, 0.0f), std::runtime_error);
-    EXPECT_THROW(cps::check_sph_domain_cell_range(origin, unit, nan), std::runtime_error);
+    EXPECT_THROW(cps::make_sph_grid(origin, unit, 0.0f), std::runtime_error);
+    EXPECT_THROW(cps::make_sph_grid(origin, origin, 0.0f), std::runtime_error);
+    EXPECT_THROW(cps::make_sph_grid(origin, unit, nan), std::runtime_error);
     for (int axis = 0; axis < 3; ++axis) {
         SCOPED_TRACE(axis);
-        EXPECT_THROW(cps::check_sph_domain_cell_range(origin, with_axis(axis, inf, 1.0f), 0.1f),
+        EXPECT_THROW(cps::make_sph_grid(origin, with_axis(axis, inf, 1.0f), 0.1f),
                      std::runtime_error);
-        EXPECT_THROW(cps::check_sph_domain_cell_range(origin, with_axis(axis, nan, 1.0f), 0.1f),
+        EXPECT_THROW(cps::make_sph_grid(origin, with_axis(axis, nan, 1.0f), 0.1f),
                      std::runtime_error);
-        EXPECT_THROW(cps::check_sph_domain_cell_range(with_axis(axis, -inf), unit, 0.1f),
-                     std::runtime_error);
+        EXPECT_THROW(cps::make_sph_grid(with_axis(axis, -inf), unit, 0.1f), std::runtime_error);
     }
 }
 

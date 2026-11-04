@@ -43,6 +43,15 @@ Its tile sweep rows timed the force kernel alone for tiled, with particles that 
 moved, against whole steps for fused, so any comparison across variants in that table was
 void. Both variants now time a whole step.
 
+\section{Neighbour search}
+
+\texttt{v1.0.0} chose a spatial hash over a dense grid, because a dense grid needs storage
+proportional to the bounding volume and a dam break leaves most of that empty. That argument
+was wrong. The hash table had twice as many slots as particles, so it was larger than the grid
+it avoided, which at fifty thousand particles has 22,386 cells against 100,003 slots, by
+derivation from the domain and the smoothing radius. The search is now that grid, which also
+removed the per candidate key comparison that hashing had made necessary.
+
 \section{Provenance}
 
 Both commit hashes recorded in the \texttt{v1.0.0} results do not exist in the published

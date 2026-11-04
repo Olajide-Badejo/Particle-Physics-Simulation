@@ -123,10 +123,9 @@ density field wrong by the same few percent everywhere, and the fluid still
 looks like a fluid.
 
 \paragraph{Neighbour search against brute force.} The density field from the
-hashed neighbour search is compared against an $O(N^2)$ host sum over the same
+neighbour search is compared against an $O(N^2)$ host sum over the same
 positions. This is what would catch a dropped or double counted neighbour, and
-it is the direct test of the cell key defence described in
-Chapter~\ref{ch:background}.
+it is the direct test of the grid described in Chapter~\ref{ch:background}.
 
 \paragraph{Interior density.} A jittered block at the calibrated mass is measured away
 from its free surface, with positions and densities read in the same order. The mean error

@@ -11,7 +11,7 @@
 Two solvers sitting at opposite ends of the spectrum a GPU cares about:
 **direct all pairs gravitational N-body dynamics**, which is regular and
 arithmetic bound, and **weakly compressible smoothed particle hydrodynamics**
-with spatial hash neighbour search, which is irregular and has to rediscover
+with dense grid neighbour search, which is irregular and has to rediscover
 its own data dependencies every step.
 
 Author: **Olajide Badejo**
@@ -226,7 +226,7 @@ Full derivations, and what each gate is designed to catch, are in
 
 ## The fluid solver
 
-Weakly compressible SPH with a three prime spatial hash, CUB radix sort, and a
+Weakly compressible SPH with a dense grid neighbour search, CUB radix sort, and a
 fused force and integration pass.
 
 | particles | ms per step | steps per second |
@@ -248,13 +248,14 @@ first order. The defaults are not water: see [Configuration](#configuration).
 
 ![Fluid step cost against particle count](report/figures/fig_sph_scaling.png)
 
-One design point is worth calling out, because it is the subtlest correctness
-issue in the project. Hashing is many to one, so two of the twenty seven cells
-the neighbour search visits can land in the same bucket, and a naive scan would
-then **count those neighbours twice**. Filtering by distance does not save you:
-those particles genuinely are within the smoothing radius. The engine stores an
-exact 64 bit cell key per particle and compares it during the scan, and a gate
-verifies the resulting density field against a brute force O(N²) sum, agreeing to
+One design point is worth calling out, because a wrong neighbour search still
+looks like a fluid. Every domain is bounded, so each cell gets a unique linear index,
+with x varying fastest. No two visited cells can share a slot, so **no neighbour can be
+counted twice**, and once sorted the three cells of an x row are contiguous, so the search
+reads nine ranges instead of twenty seven cells. An earlier version used a spatial hash, to
+avoid the storage of a dense grid, and that argument was wrong: the hash table was larger
+than the grid it avoided. A gate verifies the resulting density field against a brute force
+O(N²) sum, agreeing to
 <!-- num:NeighbourSearchError -->2.85e-7<!-- /num -->.
 
 ---
@@ -274,7 +275,7 @@ flowchart TD
     NB --> KNAIVE[compute_forces_naive]
     NB --> KTILED[compute_forces_tiled]
     NB --> KFUSED[nbody_fused_step]
-    SPH --> KHASH[spatial hash, sort, cell bounds, gather]
+    SPH --> KGRID[cell index, sort, cell bounds, gather]
     SPH --> KSPH[density, pressure, viscosity, integrate]
     PHYS[physics headers: compile as host and device] --> KNAIVE
     PHYS --> KTILED
@@ -283,7 +284,7 @@ flowchart TD
     PHYS --> HOSTTESTS[host only unit tests, no GPU needed]
 ```
 
-The force law, smoothing kernels and spatial hash live in headers that compile
+The force law, smoothing kernels and uniform grid live in headers that compile
 both as device code and as ordinary host C++. The kernels and the tests
 therefore cannot drift apart, and the formula level tests run in continuous
 integration on a machine with no GPU. The one place this sharing is
@@ -584,7 +585,7 @@ Values no CSV records, typed here and labelled: the double precision truncation 
 ## Repository layout
 
 ```text
-include/cps/physics/ force law, SPH kernels, spatial hash (host and device)
+include/cps/physics/ force law, SPH kernels, uniform grid (host and device)
 include/cps/core/    configuration, particle state, engine, snapshots, diagnostics
 include/cps/solvers/ the N-body and fluid solver interfaces
 include/cps/io/      the VTK frame and series writer

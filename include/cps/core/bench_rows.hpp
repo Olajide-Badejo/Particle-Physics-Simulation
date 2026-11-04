@@ -54,7 +54,7 @@ inline double gflops(SolverType solver, int num_particles, double ms_per_step) {
 inline double model_bytes_per_step(SolverType solver, NBodyVariant variant, int num_particles) {
     const double n = static_cast<double>(num_particles);
     if (solver == SolverType::Sph) {
-        // hash, sort, bounds, gather, density and force passes, counted as the
+        // cell, sort, bounds, gather, density and force passes, counted as the
         // arrays each one touches once.
         return n * 4.0 * 44.0;
     }

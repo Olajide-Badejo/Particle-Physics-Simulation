@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cmath>
+#include <string>
 
 #include "cps/core/config.hpp"
 #include "cps/core/snapshot.hpp"
+#include "cps/physics/uniform_grid.hpp"
 
 namespace cps {
 
@@ -116,11 +118,18 @@ SphTimeStepLimits sph_time_step_limits(const Config& config, float smoothing_rad
 // stays finite and gives no other error.
 void check_sph_time_step(const Config& config, float smoothing_radius);
 
-// Throws std::runtime_error unless |domain_min| / cell_size and
-// |domain_max| / cell_size are below SPH_DOMAIN_CELL_LIMIT on every axis. A non
-// finite ratio, such as one from a zero cell size, fails as well. Past the
-// limit two different cells could share a cell key, and the neighbour search
-// would mix up their particles without any error.
-void check_sph_domain_cell_range(const Vec3& domain_min, const Vec3& domain_max, float cell_size);
+// The grid the fluid solver searches, from its domain and the kernel support. Bounded
+// domains only: the grid is as large as the domain and clamps at its walls. Throws
+// std::runtime_error unless |domain_min|, |domain_max| and their distance apart are all
+// below SPH_GRID_AXIS_LIMIT times the support on every axis, which a non finite ratio
+// or a zero support fails as well, and unless check_sph_grid_size accepts the result.
+UniformGrid make_sph_grid(const Vec3& domain_min, const Vec3& domain_max, float support);
+
+// Throws std::runtime_error, giving the dimensions and the memory the table would
+// take, if a grid of this shape is over SPH_GRID_CELL_LIMIT cells.
+void check_sph_grid_size(int nx, int ny, int nz);
+
+// "41 x 26 x 21 cells, ...", for the start up report and for the errors a grid raises.
+std::string sph_grid_description(const UniformGrid& grid);
 
 }  // namespace cps

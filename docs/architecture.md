@@ -20,7 +20,7 @@ flowchart TD
     NB --> KTILED[compute_forces_tiled]
     NB --> KFUSED[nbody_fused_step]
     NB --> KINT[Verlet integrator kernels]
-    SPH --> KHASH[spatial_hash.cu]
+    SPH --> KGRID[uniform_grid.cu]
     SPH --> KSPH[sph_forces.cu]
     PHYS[physics headers: host and device] --> KNAIVE
     PHYS --> KTILED
@@ -30,7 +30,7 @@ flowchart TD
 ```
 
 The one boundary worth explaining is the `physics` headers. The force law, the
-smoothing kernels, the equation of state and the spatial hash are written once,
+smoothing kernels, the equation of state and the uniform grid are written once,
 marked to compile both as device code and as ordinary host C++, and included by
 both the kernels and the tests. The kernels and the tests therefore cannot
 drift apart, and the formula level tests run on a machine with no GPU.
@@ -133,10 +133,10 @@ width is run control, like `block_size`, and stays out of the physics fingerprin
 
 ```mermaid
 flowchart LR
-    H[1. hash: cell coordinate, bucket, exact cell key] --> S[2. sort: CUB radix sort of bucket and index]
-    S --> B[3. bounds: first and last entry per bucket]
+    H[1. cells: linear cell index per particle] --> S[2. sort: CUB radix sort of cell and index]
+    S --> B[3. bounds: where each cell starts, a prefix sum]
     B --> G[4. gather: permute particle data into cell order]
-    G --> D[5. density: poly6 over 27 cells, then equation of state]
+    G --> D[5. density: poly6 over 9 x rows, then equation of state]
     D --> F[6. force and integrate: pressure, viscosity, gravity, walls]
 ```
 
@@ -153,12 +153,12 @@ and another checks total mass over two thousand steps. `id` travels through the
 gather and the write-back the same way, and a third test follows each id across
 every step, as described under particle ids below.
 
-The bucket scan compares an exact 64 bit cell key before accepting a candidate.
-This is a correctness requirement, not an optimisation. Hashing is many to one,
-so two of the twenty seven visited cells can land in the same bucket, and a
-scan without the comparison would count those particles twice. Distance
-filtering does not help, because those particles genuinely are within the
-smoothing radius.
+The search reads nine ranges. A cell's index is `ix + nx * (iy + ny * iz)`, unique and with x
+varying fastest, so once sorted the three cells of an x row are contiguous and a row is one range.
+Rows off the grid are left out and a row at a wall is cut short, so a range cannot run on into the
+next row. The table holds a prefix sum, so an empty cell is an empty range. A cell is slightly wider
+than the smoothing radius, so rounding cannot put two neighbours two cells apart. No visited cell can
+turn up twice, which is why nothing has to compare a key. `docs/DESIGN_DECISIONS.md` has the reasoning.
 
 ## Streams and synchronisation
 
@@ -228,7 +228,7 @@ part left on the stream.
 
 **What stays outside.** Diagnostics, snapshots, frames, the device error flag and the
 non-finite scans all run on the stream between launches, against the state they always
-saw. The hash pass inside the graph sets the same device flag, which is read outside.
+saw. The cell pass inside the graph sets the same device flag, which is read outside.
 
 **Tools.** An NVTX range is host code, so the ranges around the fluid's passes fire once
 during capture, inside a `graph capture` range, and never at a launch. The `step` range

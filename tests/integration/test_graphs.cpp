@@ -358,7 +358,7 @@ TEST_F(Graphs, ANonFiniteStateStillStopsARunNamingTheStep) {
     }
 }
 
-// The fluid's own flag is written by a captured hash pass and read outside the graph.
+// The fluid's own flag is written by a captured cell pass and read outside the graph.
 TEST_F(Graphs, TheDeviceErrorFlagIsSetFromInsideTheGraph) {
     SKIP_WITHOUT_GPU();
     const Case& sph = EVERY_SOLVER[3];

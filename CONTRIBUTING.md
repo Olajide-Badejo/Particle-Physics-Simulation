@@ -5,7 +5,7 @@
 A CUDA capable GPU is required to run the execution tests, the benchmarks and
 the profiler. It is **not** required to build the project or to run the host
 tests, which cover configuration parsing, the snapshot format, the smoothing
-kernels, the spatial hash and the initial condition generators. Device entries
+kernels, the uniform grid and the initial condition generators. Device entries
 on a machine without a GPU show as Skipped rather than passed, with the reason
 stated, so a run there is honest rather than merely green.
 

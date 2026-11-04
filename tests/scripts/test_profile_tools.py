@@ -78,8 +78,7 @@ SORT_KERNELS = ("void cub::_V_300304_SM_1200::detail::radix_sort::DeviceRadixSor
                 "<cub::policy>(const unsigned int *)", "[CUDA memset]",
                 "void cub::_V_300304_SM_1200::detail::radix_sort::DeviceRadixSortOnesweepKernel"
                 "<cub::policy>(const unsigned int *)")
-STEP = ("cps::<unnamed>::hash_particles_kernel(const float *)", *SORT_KERNELS,
-        "cps::<unnamed>::clear_cell_bounds_kernel(unsigned int *)",
+STEP = ("cps::<unnamed>::assign_cells_kernel(const float *)", *SORT_KERNELS,
         "cps::<unnamed>::cell_bounds_kernel(const unsigned int *)",
         "cps::<unnamed>::gather_sorted_kernel(const float *)",
         "cps::<unnamed>::density_kernel(const float *)",
@@ -107,14 +106,14 @@ class SphSplit(Scratch):
         self.assertEqual(result.returncode, 0, result.stderr)
         with (self.root / "split.csv").open(newline="", encoding="utf-8") as handle:
             rows = {row["pass"]: row for row in csv.DictReader(handle)}
-        self.assertEqual(set(rows), {"hash", "sort", "clear", "cell_bounds", "gather", "density",
+        self.assertEqual(set(rows), {"assign_cells", "sort", "cell_bounds", "gather", "density",
                                      "force_and_integrate", "between_kernels"})
-        self.assertAlmostEqual(float(rows["hash"]["ms_per_step"]), 0.01)
+        self.assertAlmostEqual(float(rows["assign_cells"]["ms_per_step"]), 0.01)
         self.assertAlmostEqual(float(rows["sort"]["ms_per_step"]), 0.03)
         self.assertEqual(float(rows["sort"]["launches_per_step"]), 3.0)
-        self.assertAlmostEqual(float(rows["between_kernels"]["ms_per_step"]), 0.09)
-        self.assertEqual(rows["hash"]["commit"], "abc")
-        self.assertEqual(rows["hash"]["measured_steps"], "2")
+        self.assertAlmostEqual(float(rows["between_kernels"]["ms_per_step"]), 0.08)
+        self.assertEqual(rows["assign_cells"]["commit"], "abc")
+        self.assertEqual(rows["assign_cells"]["measured_steps"], "2")
         self.assertAlmostEqual(sum(float(r["percent_of_step"]) for r in rows.values()), 100.0,
                                delta=0.05)
 
@@ -204,7 +203,7 @@ class Provenance(Scratch):
         self.assertIn("profile_runs.csv", result.stdout)
 
     def test_the_split_needs_its_stamp(self) -> None:
-        (self.root / "sph_pipeline_split.csv").write_text("pass,ms_per_step\nhash,1\n",
+        (self.root / "sph_pipeline_split.csv").write_text("pass,ms_per_step\nsort,1\n",
                                                           encoding="utf-8")
         result = self.check()
         self.assertEqual(result.returncode, 1)

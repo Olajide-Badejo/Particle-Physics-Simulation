@@ -2,14 +2,13 @@
 """Turn an Nsight Systems trace of the SPH step into a per pass time split.
 
 The input is the `cuda_gpu_trace` report, with one row per kernel and per memory
-operation. A step runs from the start of one hash kernel to the start of the next.
-Each pass is the time its kernels took:
+operation. A step runs from the start of one assign_cells kernel to the start of the
+next. Each pass is the time its kernels took:
 
-    hash                 hash_particles_kernel
+    assign_cells         assign_cells_kernel
     sort                 every kernel in cub::, and the memset CUB launches between
                          its passes. A memset belongs to the sort only if it falls
-                         between the hash and the clear of its step.
-    clear                clear_cell_bounds_kernel
+                         between the assign_cells and the cell_bounds of its step.
     cell_bounds          cell_bounds_kernel
     gather               gather_sorted_kernel
     density              density_kernel
@@ -29,14 +28,13 @@ import statistics
 from pathlib import Path
 
 KERNEL_PASSES = {
-    "hash_particles_kernel": "hash",
-    "clear_cell_bounds_kernel": "clear",
+    "assign_cells_kernel": "assign_cells",
     "cell_bounds_kernel": "cell_bounds",
     "gather_sorted_kernel": "gather",
     "density_kernel": "density",
     "forces_and_integrate_kernel": "force_and_integrate",
 }
-PASSES = ("hash", "sort", "clear", "cell_bounds", "gather", "density", "force_and_integrate")
+PASSES = ("assign_cells", "sort", "cell_bounds", "gather", "density", "force_and_integrate")
 BETWEEN = "between_kernels"
 FIELDS = ("pass", "launches_per_step", "ms_per_step", "ms_stddev", "percent_of_step",
           "num_particles", "block_size", "warmup_steps", "measured_steps", "traced_step_ms",
@@ -52,8 +50,7 @@ def classify(name: str) -> str | None:
     bare = name.split("(")[0]
     if "cub::" in bare:
         return "sort"
-    # The longest first, because cell_bounds_kernel is the tail of another name.
-    for kernel, pass_name in sorted(KERNEL_PASSES.items(), key=lambda item: -len(item[0])):
+    for kernel, pass_name in KERNEL_PASSES.items():
         if bare.endswith(kernel) or f"{kernel}<" in bare:
             return pass_name
     return None
@@ -73,26 +70,26 @@ def read_trace(path: Path) -> list[tuple[int, int, str]]:
 def split_steps(events: list[tuple[int, int, str]], warmup: int,
                 measured: int) -> list[dict[str, tuple[int, int]]]:
     """One dict per measured step: pass to (nanoseconds, launches), plus the step's length."""
-    hashes = [start for start, _, name in events if classify(name) == "hash"]
-    if len(hashes) < warmup + measured + 1:
-        raise SplitError(f"the trace holds {len(hashes)} hash kernels, and {warmup} of warmup plus "
-                         f"{measured} measured steps need {warmup + measured + 1}")
+    starts = [start for start, _, name in events if classify(name) == "assign_cells"]
+    if len(starts) < warmup + measured + 1:
+        raise SplitError(f"the trace holds {len(starts)} assign_cells kernels, and {warmup} of "
+                         f"warmup plus {measured} measured steps need {warmup + measured + 1}")
 
     steps = []
     position = 0
     for index in range(warmup, warmup + measured):
-        begin, end = hashes[index], hashes[index + 1]
+        begin, end = starts[index], starts[index + 1]
         step = {name: (0, 0) for name in PASSES}
-        seen_clear = False
+        seen_bounds = False
         while position < len(events) and events[position][0] < begin:
             position += 1
         while position < len(events) and events[position][0] < end:
             start, duration, name = events[position]
             position += 1
             pass_name = classify(name)
-            if pass_name == "clear":
-                seen_clear = True
-            if pass_name is None and name.startswith("[CUDA memset") and not seen_clear:
+            if pass_name == "cell_bounds":
+                seen_bounds = True
+            if pass_name is None and name.startswith("[CUDA memset") and not seen_bounds:
                 pass_name = "sort"
             if pass_name is None:
                 raise SplitError(f"step {index} holds something no pass accounts for: {name[:80]}")

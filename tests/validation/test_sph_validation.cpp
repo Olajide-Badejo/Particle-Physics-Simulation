@@ -104,9 +104,8 @@ TEST(SphValidation, InteriorDensityRecoversTheRestDensity) {
     EXPECT_LT(max_deviation, 0.10);
 }
 
-// A hash based neighbour search that silently drops or double counts
-// neighbours is the single most likely defect in this solver, and the exact
-// cell key comparison is what prevents it. This checks the outcome directly:
+// A neighbour search that silently drops or double counts neighbours is the
+// single most likely defect in this solver. This checks the outcome directly:
 // the number of neighbours the search finds must match the number a brute
 // force scan finds, for every sampled particle.
 TEST(SphValidation, NeighbourSearchAgreesWithABruteForceScan) {

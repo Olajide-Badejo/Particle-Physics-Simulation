@@ -38,6 +38,23 @@ a Changelog, and the project uses semantic versioning.
 
 ### Changed
 
+- **The fluid's neighbour search is now a dense uniform grid and not a spatial hash.** Which
+  neighbours are found and what is computed with them are unchanged, and the brute force gate runs as
+  it did. SPH trajectories differ from `v1.1`, because the neighbours sum in a new order. The difference
+  starts at the rounding level and does not stay there: the dam break is chaotic at the particle
+  level, so individual particles diverge after a few hundred steps, as they do for any rounding change.
+  See `docs/physics_validation.md`. Snapshots still resume.
+- The solver now refuses a domain whose grid would pass `2^31` cells, naming the dimensions and the
+  memory, and a failed allocation of the cell table names the grid. `check_sph_domain_cell_range`
+  and `SPH_DOMAIN_CELL_LIMIT` give way to `make_sph_grid` and `SPH_GRID_AXIS_LIMIT`. An axis limit
+  now counts the width as well as the bounds, and sits at `2^20`.
+- **Breaking:** `cps/physics/spatial_hash.hpp` is now `cps/physics/uniform_grid.hpp`, with no
+  forwarding header. `spatial_hash`, `cell_key`, `next_prime`, `sph_hash_particles`,
+  `sph_sort_by_bucket`, `sph_clear_cell_bounds`, `sph_count_bucket_collisions` and
+  `SphSolver::count_bucket_collisions` are gone, the passes take a `UniformGrid` in place of a cell
+  size and table size, and `SphSolver::table_size` gives way to `SphSolver::grid`.
+- `sph_pipeline_split.csv` names its passes `assign_cells`, `sort`, `cell_bounds`, `gather`,
+  `density`, `force_and_integrate` and `between_kernels`. There is no longer a clear pass.
 - The presets print `run.use_graphs`, regenerated through the migration fixtures.
 - `scripts/profile_kernels.sh` and `scripts/profile_sph_split.sh` run with `--graphs off`, because
   they report per kernel and per launch.

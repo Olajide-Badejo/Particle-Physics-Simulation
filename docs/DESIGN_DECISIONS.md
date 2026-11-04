@@ -66,21 +66,70 @@ a launch, so updating in place would let a block that has finished its force
 sum overwrite a position another block is still reading. Costs 12N bytes and no
 bandwidth.
 
-### Spatial hashing rather than a dense grid or a k-d tree
+### A dense grid rather than a spatial hash or a k-d tree
 
-A dense grid needs storage proportional to the bounding volume; a dam break
-occupies a small and moving part of its domain, so most of it would be empty. A
-k-d tree is a poor fit for a full GPU rebuild every step.
+Every fluid domain here is bounded and has walls, so a cell can be named by where it sits in
+the grid: `ix + nx * (iy + ny * iz)`, with x varying fastest. That index does three things a hash
+could not. It is unique, so the neighbour search has no collisions to survive and no two visited
+cells can count a particle twice. It needs no modulus and no per candidate check. And sorting by
+it puts neighbouring cells close together in memory, with the cells of an x row contiguous, so the
+search reads nine ranges instead of visiting twenty seven cells. The radix sort still stops at the
+bits the index can use. Whether all that made the step faster was a prediction, tested against
+the rule that the grid stays only if it is not slower at 10,000, 50,000 or 100,000 particles.
 
-### Exact cell keys in the neighbour scan
+A grid costs one thing: it is as large as the domain, whatever the particle count. So the solver
+derives its size from the domain and refuses, naming the dimensions and the memory, more than
+`2^31` cells. Only bounded domains can use it. A periodic axis would be a wrap of the index, which
+`axis_cell` leaves a place for and nothing implements. A k-d tree is a poor fit for a full GPU
+rebuild every step.
 
-Hashing is many to one, so two of the twenty seven visited cells can collide in
-the table and a naive scan counts those particles twice. Distance filtering does
-not help, because they genuinely are within the smoothing radius. An exact 64
-bit cell key compared per candidate rejects both foreign particles and double
-visits at one comparison each. Rejected deduplicating the twenty seven hashed
-buckets, which costs hundreds of comparisons per particle rather than one per
-candidate.
+**Corrected.** Until this change the search was a spatial hash, chosen because a dense grid
+needs storage proportional to the bounding volume and a dam break leaves most of that empty. That
+argument was wrong: the hash table was larger than the grid it avoided. The table had twice as many
+slots as particles, while the shipped dam break's domain comes to about 0.42 cells per particle. At
+50,000 particles, by derivation from the domain and the smoothing radius, that is
+41 x 26 x 21 = 22,386 cells against a table of 100,003 slots, and the table was two arrays, with
+an eight byte key per particle on top. A hash table keeps its collisions rare by being mostly empty,
+so counting the grid's empty cells and not the table's was never a fair comparison.
+
+### No cell key in the neighbour scan
+
+The scan used to compare an exact 64 bit cell key for every candidate. That was correct and
+necessary, because hashing is many to one and two of the twenty seven cells could land in one
+bucket, and it existed only because of the hash. With a unique index there is no key to compare.
+The property it protected is now structural, and the brute force gate that proved it still runs
+unchanged.
+
+### A prefix sum cell table, filled by binary search
+
+The cell table holds, for each cell, how many particles are in the cells before it. A row of cells
+is then two reads, and an empty cell is an entry equal to the next one, so no pass has to test for
+one and the table needs no clearing. The two arrays of the hash, with an empty marker, would have
+taken six reads per row, or a test per cell.
+
+Each entry is filled by its own binary search of the sorted keys. Each entry then has one writer,
+with no atomics, and every thread does about the same work. Writing the gaps from the particles'
+side is less work in total, but one thread writes each run of empty cells, and in a sparsely
+filled domain one run can be most of the table. A histogram and a scan would add launches.
+
+### A cell slightly wider than the support
+
+With a cell of exactly the smoothing radius, twenty seven cells cover the support only in exact
+arithmetic. Two particles just inside the support can come out two cells apart, because the
+coordinate is rounded, and the unit tests find such pairs. So a cell is wider than the support by
+`(widest + 2) * 2^-21` of it, where `widest` is the grid's longest axis in supports, which is more
+than all the rounding involved can add up to. That is about 2e-5 of a cell at 41 cells wide. The hash
+had this exposure too, without the margin. The kernels vanish at the edge of the support, so such
+a loss would never have shown in a result, which is why it has to be ruled out and not measured.
+
+### A reserved slot for non finite positions
+
+A NaN or Inf position has no cell. It gets the sort key `num_cells`, one past the last cell, and sets
+the device flag. All finite particles therefore sort ahead of it, the table's last entry closes the
+last real cell's range, and no search ever scans the slot, so it cannot contaminate a neighbour. A
+non finite particle searches nothing itself: that test is on the bits, so it does not depend on what
+a fast math build may assume about NaN. The sort's bit range counts the slot, because a grid
+of exactly `2^k` cells needs one more bit for it than for any real cell.
 
 ### Three smoothing kernels rather than one
 

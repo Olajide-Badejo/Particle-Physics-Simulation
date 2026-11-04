@@ -10,8 +10,8 @@
 #include <string>
 
 #include "cps/physics/hd_macros.hpp"
-#include "cps/physics/spatial_hash.hpp"
 #include "cps/physics/sph_kernels.hpp"
+#include "cps/physics/uniform_grid.hpp"
 
 namespace cps {
 namespace {
@@ -327,7 +327,39 @@ void check_sph_time_step(const Config& config, float smoothing_radius) {
                  buffer);
 }
 
-void check_sph_domain_cell_range(const Vec3& domain_min, const Vec3& domain_max, float cell_size) {
+namespace {
+
+// The dimensions of a grid and what its table takes, for the start up report and for
+// every error about a grid. Takes the three counts rather than a grid, because a
+// grid over the cell limit has products that do not fit its fields.
+std::string describe_grid(int nx, int ny, int nz) {
+    const uint64_t cells = static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) *
+                           static_cast<uint64_t>(nz);
+    char buffer[128];
+    std::snprintf(buffer, sizeof(buffer), "%d x %d x %d cells, %llu in all, cell table %.3f MiB",
+                  nx, ny, nz, static_cast<unsigned long long>(cells),
+                  static_cast<double>(cell_table_bytes(cells)) / (1024.0 * 1024.0));
+    return buffer;
+}
+
+}  // namespace
+
+std::string sph_grid_description(const UniformGrid& grid) {
+    return describe_grid(grid.nx, grid.ny, grid.nz);
+}
+
+void check_sph_grid_size(int nx, int ny, int nz) {
+    const uint64_t cells = static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) *
+                           static_cast<uint64_t>(nz);
+    if (cells <= SPH_GRID_CELL_LIMIT) {
+        return;
+    }
+    throw std::runtime_error("the fluid grid is too large: " + describe_grid(nx, ny, nz) +
+                             ", against a limit of " + std::to_string(SPH_GRID_CELL_LIMIT) +
+                             " cells; raise the smoothing radius or shrink the domain");
+}
+
+UniformGrid make_sph_grid(const Vec3& domain_min, const Vec3& domain_max, float support) {
     const struct {
         const char* name;
         float low;
@@ -336,22 +368,35 @@ void check_sph_domain_cell_range(const Vec3& domain_min, const Vec3& domain_max,
                 {"y", domain_min.y, domain_max.y},
                 {"z", domain_min.z, domain_max.z}};
 
-    // Single precision division, which is what cell_coordinate does with a
-    // position on the wall. The comparison is written so a NaN ratio fails it.
-    const float limit = static_cast<float>(SPH_DOMAIN_CELL_LIMIT);
+    // In double precision, which is exact on the bounds and lets the limit be hit on
+    // the nose. Every comparison is written so a NaN ratio fails it. The bounds count as
+    // well as the width, because in a domain far from the origin the spacing of a float
+    // position says nothing useful about the support, however few cells wide it is.
+    const double h = static_cast<double>(support);
+    const double limit = static_cast<double>(SPH_GRID_AXIS_LIMIT);
+    const bool usable_support = support > 0.0f && std::isfinite(support);
     for (const auto& axis : axes) {
-        if (std::abs(axis.low / cell_size) < limit && std::abs(axis.high / cell_size) < limit) {
+        const double low = static_cast<double>(axis.low);
+        const double high = static_cast<double>(axis.high);
+        if (usable_support && std::abs(low / h) < limit && std::abs(high / h) < limit &&
+            (high - low) / h < limit) {
             continue;
         }
         char buffer[160];
         std::snprintf(buffer, sizeof(buffer),
-                      "the domain [%g, %g] on axis %s is too large for cell size %g: ",
-                      static_cast<double>(axis.low), static_cast<double>(axis.high), axis.name,
-                      static_cast<double>(cell_size));
-        throw std::runtime_error(std::string(buffer) + "|domain| / cell size must stay below " +
-                                 std::to_string(SPH_DOMAIN_CELL_LIMIT) +
+                      "the domain [%g, %g] on axis %s is too large for cell size %g: ", low, high,
+                      axis.name, h);
+        throw std::runtime_error(std::string(buffer) +
+                                 "|domain| and its width over the cell size must stay below " +
+                                 std::to_string(SPH_GRID_AXIS_LIMIT) +
                                  " on every axis; raise the smoothing radius or shrink the domain");
     }
+
+    const UniformGrid grid =
+        make_uniform_grid(domain_min.x, domain_min.y, domain_min.z, domain_max.x, domain_max.y,
+                          domain_max.z, support);
+    check_sph_grid_size(grid.nx, grid.ny, grid.nz);
+    return grid;
 }
 
 HostParticleState make_dam_break(const Config& config) {

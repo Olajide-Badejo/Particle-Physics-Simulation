@@ -15,8 +15,8 @@ touched only when a snapshot is actually written.
 
 \section{Separating the physics from the kernels}
 
-The force law, the smoothing kernels, the equation of state and the spatial
-hash all live in headers marked so they compile both as device code and as
+The force law, the smoothing kernels, the equation of state and the uniform
+grid all live in headers marked so they compile both as device code and as
 ordinary host C++. This buys two things. The kernels and the host side tests
 cannot drift apart, because they are the same code. And the formula level
 tests, which are the majority of them, run in continuous integration on a
@@ -37,13 +37,18 @@ branch free.
 
 \section{The fluid step}
 
-One fluid step is six device passes: hash, sort, cell bounds, gather, density,
+One fluid step is six device passes: cell index, sort, cell bounds, gather, density,
 and a combined force and integration pass.
 
-The sort is a CUB radix sort of bucket and index pairs \cite{cccl}. Only the
-bits that can differ are sorted: the table size bounds the bucket index, so the
+The sort is a CUB radix sort of cell and particle index pairs \cite{cccl}. Only the
+bits that can differ are sorted: the number of cells bounds the key, so the
 sort stops at the significant bit count rather than walking all thirty two
-bits.
+bits. A non finite position has no cell and takes the key one past the last, which the
+bit count includes. Every finite particle sorts ahead of it, and no search reads it.
+
+The cell bounds pass fills a table with the number of particles before each cell, so a row
+of cells is two reads and an empty cell is an empty range. A cell is slightly wider than the
+smoothing radius, so that rounding cannot put two neighbours two cells apart.
 
 After sorting, particle data is gathered into cell sorted order, and the
 permutation is kept. The particle arrays end a step in the order the next step
