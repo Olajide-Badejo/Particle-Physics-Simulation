@@ -44,9 +44,9 @@ TEST(BenchRow, ModelBytesPerStep) {
     // Fused: 1000 * 4 bytes * (7 + 9 = 16 arrays) = 64000.
     EXPECT_DOUBLE_EQ(bench::model_bytes_per_step(SolverType::NBody, NBodyVariant::Fused, 1000),
                      64000.0);
-    // Fluid: 1000 * 4 bytes * 44 arrays = 176000, whatever the variant field holds.
+    // Fluid: 1000 * 4 bytes * 54 arrays = 216000, whatever the variant field holds.
     EXPECT_DOUBLE_EQ(bench::model_bytes_per_step(SolverType::Sph, NBodyVariant::Fused, 1000),
-                     176000.0);
+                     216000.0);
 }
 
 TEST(BenchRow, ModelGbPerSecond) {

@@ -315,7 +315,7 @@ longer is.
 **What this means.** Bit identical resume is still exact, because within one build the arithmetic
 repeats. Across builds, comparing particles after a few hundred steps measures the chaos and not the
 code. Bulk quantities hold better, though not perfectly: in the same control the centre of mass moved
-by at most 0.054 smoothing radii and the kinetic energy differed by up to about 2 percent. Any
+by at most 0.054 smoothing radii and the kinetic energy differed by up to 2.4 percent. Any
 quantitative comparison of this flow, against an earlier version or against experiment, needs an
 ensemble and a stated spread, not one run.
 

@@ -54,9 +54,11 @@ inline double gflops(SolverType solver, int num_particles, double ms_per_step) {
 inline double model_bytes_per_step(SolverType solver, NBodyVariant variant, int num_particles) {
     const double n = static_cast<double>(num_particles);
     if (solver == SolverType::Sph) {
-        // cell, sort, bounds, gather, density and force passes, counted as the
-        // arrays each one touches once.
-        return n * 4.0 * 44.0;
+        // Each array counts once per pass: cells 5, sort 4, bounds 1, gather 17,
+        // density 6, force and integration 21. The neighbour reads are left out for
+        // the reason the tile reads are. So is the cell table, which has an entry per
+        // cell and not per particle, and is under 1 percent of this for the dam break.
+        return n * 4.0 * 54.0;
     }
     if (variant == NBodyVariant::Fused) {
         // Reads x, y, z, mass, and the three velocities; writes three
