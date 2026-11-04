@@ -128,6 +128,46 @@ identical in the strict library, which `TileWidthTest` holds, and it is byte ide
 in the fast math library on the runs that were compared, which nothing asserts. So the
 width is run control, like `block_size`, and stays out of the physics fingerprint.
 
+`nbody.blocking_factor` picks how many target particles each thread of the same two
+kernels holds in registers against the one staged tile: 1, 2, 4 or 8, each its own
+instantiation. A source load then feeds that many pair evaluations, whose arithmetic does
+not depend on itself, so a warp has more to issue while a long latency result is on its
+way. The block covers the factor times `block_size` particles, so the grid shrinks by the
+factor and an SM has fewer warps to choose from. Which of the two effects wins is measured
+and not assumed, and the default stays at 1 until it has been. What has to hold at every
+factor is in `src/kernels/nbody_blocking.hpp`:
+
+- The j order for each i does not change. Tiles and slots are visited in order, and a
+  target adds its own terms to its own sum, so the sum is the same expression at every
+  factor. `unit_tests_gpu` and `unit_tests_gpu_fast` hold it by bit pattern on the strict
+  and the fast math library, which is why the factor is run control and stays out of the
+  physics fingerprint.
+- A thread never leaves early. A target past `count` sits at the origin, adds a sum nobody
+  reads and has its own write masked, and the tile loop and the stride loop depend only on
+  values the whole block shares, so every thread reaches the same barriers.
+- The barrier before the shared buffer is overwritten and the barrier after it is staged
+  stay where they were, and the first also separates the passes of a block.
+- The self interaction falls on whichever target is that particle, and that pair has a zero
+  numerator and a softened denominator wherever it lands.
+- The fused kernel does its write out, velocity update and position write per target, in
+  the same arithmetic order, and positions stay double buffered.
+
+Each pass of the slot loop unrolls the tile width over the factor, so the code stays about
+one tile of pair evaluations long at every factor, and the instantiations do not multiply
+the code size as well as the count.
+
+The outer loop is a grid stride: a block makes passes spaced by the grid, so any grid covers
+every particle. The launchers size the grid for the particles, so a block makes one pass
+unless a caller passes `max_grid`.
+
+The kernels carry `__launch_bounds__` at the default block size only, and every other size
+runs an unbounded instantiation, since each bound multiplies the instantiations across tile
+widths, factors, kernels, libraries and architectures. A bound is not used for a size below
+it, because the compiler can read a bound as room for more registers. A large block with a
+high factor can need more registers than an SM has, and which pairs fit depends on the kernel
+the compiler built for that architecture. So the launcher asks the runtime first and refuses
+such a pair, naming both, and the configuration does not try to know.
+
 ## The fluid step
 
 ```mermaid

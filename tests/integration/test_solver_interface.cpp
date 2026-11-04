@@ -476,11 +476,13 @@ TEST_F(SolverInterfaceTest, TheEngineBuildsTheConfiguredSolverOtherwise) {
     cps::Config c = config();
     c.variant = cps::NBodyVariant::Fused;
     c.nbody.tile_size = 64;
+    c.nbody.blocking_factor = 4;
     cps::SimulationEngine engine(c);
     const auto* solver = dynamic_cast<const cps::NBodySolver*>(&engine.solver());
     ASSERT_NE(solver, nullptr);
     EXPECT_EQ(solver->variant(), cps::NBodyVariant::Fused);
     EXPECT_EQ(solver->tile_size(), 64);
+    EXPECT_EQ(solver->blocking_factor(), 4);
     EXPECT_EQ(solver->velocity_convention(), cps::VelocityConvention::HalfStep);
 }
 
@@ -567,6 +569,98 @@ TEST_F(TileWidthTest, OneStepIsBitIdenticalAtEveryWidth) {
                 expect_same_accelerations(reference_after, after, label + " after the step");
                 expect_same_state(reference_state, state, label);
             }
+        }
+    }
+}
+
+// The same through the solver and the engine, at each blocking factor: the seed, the
+// acceleration after a step, the state, and the diagnostics row, whose force
+// recompute on the fused path goes through the configured factor as well.
+class BlockingFactorTest : public TileWidthTest {};
+
+TEST_F(BlockingFactorTest, OneStepAndItsDiagnosticsAreBitIdenticalAtEveryFactor) {
+    SKIP_WITHOUT_GPU();
+    for (const cps::NBodyVariant variant :
+         {cps::NBodyVariant::Naive, cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
+        cps::Config base;
+        base.solver = cps::SolverType::NBody;
+        base.variant = variant;
+        base.initial_condition = cps::InitialCondition::Plummer;
+        base.num_particles = 1000;
+        base.dt = 1.0e-3f;
+        base.softening = 0.05f;
+        base.block_size = 128;
+        base.snapshot_interval = 0;
+        base.diagnostics_interval = 0;
+        base.diagnostics_path.clear();
+
+        struct Outcome {
+            Accelerations seed;
+            Accelerations after;
+            cps::HostParticleState state;
+            cps::Diagnostics row;
+        };
+        const auto run_at = [&](int factor) {
+            cps::Config config = base;
+            config.nbody.blocking_factor = factor;
+            cps::SimulationEngine engine(config);
+            Outcome outcome;
+            engine.initialize();
+            outcome.seed = read_accelerations(engine);
+            engine.step();
+            outcome.after = read_accelerations(engine);
+            outcome.row = engine.diagnostics();
+            engine.particles().download(outcome.state, engine.stream());
+            return outcome;
+        };
+
+        const Outcome reference = run_at(1);
+        for (const int factor : {2, 4, 8}) {
+            const std::string label = cps::to_string(variant) + " BF " + std::to_string(factor);
+            SCOPED_TRACE(label);
+            const Outcome outcome = run_at(factor);
+            expect_same_accelerations(reference.seed, outcome.seed, label + " seed");
+            expect_same_accelerations(reference.after, outcome.after, label + " after the step");
+            expect_same_state(reference.state, outcome.state, label);
+            EXPECT_EQ(std::bit_cast<std::uint64_t>(reference.row.total),
+                      std::bit_cast<std::uint64_t>(outcome.row.total));
+            EXPECT_EQ(std::bit_cast<std::uint64_t>(reference.row.kinetic),
+                      std::bit_cast<std::uint64_t>(outcome.row.kinetic));
+            EXPECT_EQ(std::bit_cast<std::uint64_t>(reference.row.potential),
+                      std::bit_cast<std::uint64_t>(outcome.row.potential));
+        }
+    }
+}
+
+// Bypasses the configuration on purpose. A factor that reaches the launcher is refused
+// there by name, so seeing that error from a solver call shows the solver passed its
+// setting on, which nothing else here can tell from the bit identical result.
+TEST_F(BlockingFactorTest, TheSolverPassesItsFactorToTheKernels) {
+    SKIP_WITHOUT_GPU();
+    const int count = 64;
+    for (const cps::NBodyVariant variant :
+         {cps::NBodyVariant::Naive, cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
+        cps::Config config;
+        config.solver = cps::SolverType::NBody;
+        config.variant = variant;
+        config.num_particles = count;
+        config.block_size = 64;
+        config.nbody.blocking_factor = 3;
+        SCOPED_TRACE(cps::to_string(variant));
+        cps::NBodySolver solver(config);
+        cps::ParticleSystem particles(count);
+        particles.upload(cps_test::random_cloud(count, 1u), nullptr);
+        try {
+            solver.initialize(particles, nullptr);
+            ADD_FAILURE() << "the seed did not reach the launcher";
+        } catch (const std::runtime_error& error) {
+            EXPECT_NE(std::string(error.what()).find("unsupported blocking factor 3"),
+                      std::string::npos)
+                << error.what();
+        }
+        if (variant == cps::NBodyVariant::Fused) {
+            EXPECT_THROW(solver.step(particles, nullptr), std::runtime_error);
+            EXPECT_THROW(solver.prepare_diagnostics(particles, nullptr), std::runtime_error);
         }
     }
 }

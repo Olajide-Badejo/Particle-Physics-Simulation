@@ -17,8 +17,8 @@ name: ci
 #                targets sm_75 to sm_120 and everything else sm_120. It checks
 #                that real sm_120 and sm_75 code was emitted, then runs the full
 #                ctest: the three host entries run again, and unit_gpu,
-#                integration and validation find no device, exit with code 77
-#                and show as Skipped.
+#                unit_gpu_fast, integration and validation find no device, exit
+#                with code 77 and show as Skipped.
 #   reports      runs the full provenance check, which resolves every commit
 #                hash in experiments/results and so needs the whole history.
 #                It then rebuilds the figures, tables, docs/generated_numbers.md

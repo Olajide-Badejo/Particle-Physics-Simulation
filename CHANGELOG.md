@@ -7,6 +7,19 @@ a Changelog, and the project uses semantic versioning.
 
 ### Added
 
+- `nbody.blocking_factor`, 1, 2, 4 or 8 and 1 by default: how many target particles each thread of
+  the tiled force kernel and the fused step holds in registers against one staged tile. The results
+  are bit identical at every factor, in the strict and the fast math library, so it stays out of the
+  physics fingerprint, and a resume may change it. Whether a factor above 1 is faster is not settled
+  here and the default does not move.
+- `__launch_bounds__` on the tiled and fused kernels at the default block size, with an unbounded
+  instantiation for every other size. Every block size the configuration allows still runs. A large
+  block with a high factor can need more registers than an SM has, and that launch is refused with
+  an error naming both.
+- A grid stride outer loop in the same kernels, so a launch covers every particle on any grid.
+  `compute_forces_tiled` and `nbody_fused_step` take an optional `max_grid` to cap the blocks.
+- `unit_tests_gpu_fast` and its ctest entry `unit_gpu_fast`, which run the blocking tests against
+  `physics_core`. Every other device test binary links the strict library.
 - NVTX ranges around the step, each SPH pass, diagnostics, snapshots and frames, in the device
   libraries only. `CUDA::nvtx3` is linked privately, so an installed consumer never sees it.
 - `scripts/profile_sph_split.sh`, which writes `sph_pipeline_split.csv` from the kernel records in
@@ -22,6 +35,9 @@ a Changelog, and the project uses semantic versioning.
 
 ### Changed
 
+- **Breaking:** `compute_forces_tiled` and `nbody_fused_step` take `blocking_factor` before the
+  stream, with no default.
+- The presets print `nbody.blocking_factor`, regenerated through `--print-config`.
 - `scripts/profile_kernels.sh` profiles at three particle counts and adds the stall reasons, issue
   and pipe figures over active cycles, hit rates and launch figures. `profile_runs.csv` records the
   commit, dirty flag, particle count, tile width and block size of each export, and

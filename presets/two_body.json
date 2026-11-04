@@ -20,7 +20,8 @@
     "variant": "tiled",
     "softening": 0.01,
     "gravitational_constant": 1.0,
-    "tile_size": 256
+    "tile_size": 256,
+    "blocking_factor": 1
   },
   "sph": {
     "smoothing_radius": 0.0,

@@ -411,6 +411,49 @@ TEST(Config, ReadsTheTileWidthFromTheNBodyBlock) {
     }
 }
 
+TEST(Config, ReadsTheBlockingFactorFromTheNBodyBlock) {
+    EXPECT_EQ(cps::Config::from_json_string("{}").nbody.blocking_factor,
+              cps::DEFAULT_BLOCKING_FACTOR);
+    EXPECT_EQ(cps::DEFAULT_BLOCKING_FACTOR, 1);
+    for (const int factor : {1, 2, 4, 8}) {
+        SCOPED_TRACE(factor);
+        const std::string text =
+            R"({"nbody": {"blocking_factor": )" + std::to_string(factor) + "}}";
+        const cps::Config config = cps::Config::from_json_string(text);
+        EXPECT_EQ(config.nbody.blocking_factor, factor);
+        EXPECT_EQ(cps::Config::from_json_string(config.to_json_string()).nbody.blocking_factor,
+                  factor);
+    }
+}
+
+TEST(Config, RejectsABlockingFactorWithNoKernel) {
+    for (const char* factor : {"0", "-1", "3", "6", "16"}) {
+        SCOPED_TRACE(factor);
+        const std::string message =
+            error_of(R"({"nbody": {"blocking_factor": )" + std::string(factor) + "}}");
+        EXPECT_NE(message.find("nbody.blocking_factor must be 1, 2, 4 or 8, got " +
+                               std::string(factor)),
+                  std::string::npos)
+            << message;
+    }
+    const std::string fractional = error_of(R"({"nbody": {"blocking_factor": 1.5}})");
+    EXPECT_NE(fractional.find("'nbody.blocking_factor' must be an integer"), std::string::npos)
+        << fractional;
+    const std::string top_level = error_of(R"({"blocking_factor": 2})");
+    EXPECT_NE(top_level.find("did you mean 'nbody.blocking_factor'"), std::string::npos)
+        << top_level;
+}
+
+// It moves the launch shape and nothing else, so it is no reason to refuse a resume.
+TEST(Config, TheBlockingFactorStaysOutOfThePhysicsFingerprint) {
+    const cps::Config base;
+    for (const int factor : {2, 4, 8}) {
+        cps::Config changed = base;
+        changed.nbody.blocking_factor = factor;
+        EXPECT_EQ(cps::physics_fingerprint(changed), cps::physics_fingerprint(base));
+    }
+}
+
 TEST(Config, RejectsATileWidthWithNoKernel) {
     for (const char* width : {"0", "-32", "16", "100", "512"}) {
         SCOPED_TRACE(width);
@@ -516,6 +559,7 @@ void expect_same_config(const cps::Config& a, const cps::Config& b) {
     EXPECT_EQ(a.vtk_interval, b.vtk_interval);
     EXPECT_EQ(a.vtk_dir, b.vtk_dir);
     EXPECT_EQ(a.nbody.tile_size, b.nbody.tile_size);
+    EXPECT_EQ(a.nbody.blocking_factor, b.nbody.blocking_factor);
     EXPECT_EQ(a.sph.smoothing_radius, b.sph.smoothing_radius);
     EXPECT_EQ(a.sph.rest_density, b.sph.rest_density);
     EXPECT_EQ(a.sph.gas_constant, b.sph.gas_constant);
@@ -669,7 +713,7 @@ TEST(Config, PrintsEverySectionInOrderWithNothingOmitted) {
     EXPECT_EQ(root.at("schema"), 2);
     EXPECT_EQ(root.at("run").size(), 4u);
     EXPECT_EQ(root.at("initial_condition").size(), 6u);
-    EXPECT_EQ(root.at("nbody").size(), 4u);
+    EXPECT_EQ(root.at("nbody").size(), 5u);
     EXPECT_EQ(root.at("sph").size(), 12u);
     EXPECT_EQ(root.at("output").size(), 6u);
 }

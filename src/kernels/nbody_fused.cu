@@ -1,9 +1,7 @@
-#include <stdexcept>
-#include <string>
-
 #include "cps/physics/gravity.hpp"
 #include "cps/solvers/nbody_solver.hpp"
 #include "cps/utils/cuda_helpers.hpp"
+#include "nbody_blocking.hpp"
 
 namespace cps {
 namespace {
@@ -34,79 +32,126 @@ namespace {
 // updated its own particles in place would corrupt the positions that a block
 // still working on its sum is reading. The second buffer costs 12N bytes of
 // memory and no additional bandwidth, since the write happens either way.
-template <int TILE>
-__global__ void nbody_fused_step_kernel(
+//
+// The force sum is the one in nbody_blocking.hpp, against BF targets per thread,
+// and the outer loop is the same grid stride as in the tiled kernel. What follows
+// the sum happens per target, in the same arithmetic order at every BF, each one
+// masked on its own index: a_n is written out, the velocity updated in place, and
+// the position written to the other buffer. A target's velocity belongs to the
+// one thread that owns it, so nothing here reads what another target writes. A
+// thread with nothing to write does not return, because its block may have another
+// pass with barriers that thread has to reach.
+template <int TILE, int BF>
+__device__ __forceinline__ void fused_step(
     const float* __restrict__ x_in, const float* __restrict__ y_in, const float* __restrict__ z_in,
     float* __restrict__ x_out, float* __restrict__ y_out, float* __restrict__ z_out,
     float* __restrict__ vx, float* __restrict__ vy, float* __restrict__ vz,
     float* __restrict__ ax_out, float* __restrict__ ay_out, float* __restrict__ az_out,
     const float* __restrict__ mass, int count, float softening_sq, float gravitational_constant,
     float dt) {
-    __shared__ float tile_x[TILE];
-    __shared__ float tile_y[TILE];
-    __shared__ float tile_z[TILE];
-    __shared__ float tile_mass[TILE];
-
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    const bool active = i < count;
-
-    const float xi = active ? x_in[i] : 0.0f;
-    const float yi = active ? y_in[i] : 0.0f;
-    const float zi = active ? z_in[i] : 0.0f;
-
-    float ax = 0.0f;
-    float ay = 0.0f;
-    float az = 0.0f;
-
-    for (int tile_start = 0; tile_start < count; tile_start += TILE) {
-        __syncthreads();
-        for (int t = static_cast<int>(threadIdx.x); t < TILE; t += static_cast<int>(blockDim.x)) {
-            const int source = tile_start + t;
-            if (source < count) {
-                tile_x[t] = x_in[source];
-                tile_y[t] = y_in[source];
-                tile_z[t] = z_in[source];
-                tile_mass[t] = mass[source];
-            } else {
-                tile_x[t] = 0.0f;
-                tile_y[t] = 0.0f;
-                tile_z[t] = 0.0f;
-                tile_mass[t] = 0.0f;
-            }
-        }
-        __syncthreads();
+    const int block_span = BF * static_cast<int>(blockDim.x);
+    const int stride = block_span * static_cast<int>(gridDim.x);
+    for (int block_first = static_cast<int>(blockIdx.x) * block_span; block_first < count;
+         block_first += stride) {
+        const int first = first_target<BF>(block_first);
+        TargetBlock<BF> targets = load_targets<BF>(x_in, y_in, z_in, first, count);
+        accumulate_over_tiles<TILE, BF>(targets, x_in, y_in, z_in, mass, count, softening_sq);
 
 #pragma unroll
-        for (int t = 0; t < TILE; ++t) {
-            accumulate_pair_acceleration(xi, yi, zi, tile_x[t], tile_y[t], tile_z[t], tile_mass[t],
-                                         softening_sq, ax, ay, az);
+        for (int k = 0; k < BF; ++k) {
+            const int i = first + k;
+            if (i < count) {
+                const float ax = targets.ax[k] * gravitational_constant;
+                const float ay = targets.ay[k] * gravitational_constant;
+                const float az = targets.az[k] * gravitational_constant;
+
+                ax_out[i] = ax;
+                ay_out[i] = ay;
+                az_out[i] = az;
+
+                const float nvx = vx[i] + ax * dt;
+                const float nvy = vy[i] + ay * dt;
+                const float nvz = vz[i] + az * dt;
+
+                vx[i] = nvx;
+                vy[i] = nvy;
+                vz[i] = nvz;
+
+                x_out[i] = targets.x[k] + nvx * dt;
+                y_out[i] = targets.y[k] + nvy * dt;
+                z_out[i] = targets.z[k] + nvz * dt;
+            }
         }
     }
+}
 
-    if (!active) {
-        return;
+// Launch bounds let the compiler fit its register allocation to the block launched.
+template <int TILE, int BF, int BLOCK>
+__global__ __launch_bounds__(BLOCK) void nbody_fused_step_kernel(
+    const float* __restrict__ x_in, const float* __restrict__ y_in, const float* __restrict__ z_in,
+    float* __restrict__ x_out, float* __restrict__ y_out, float* __restrict__ z_out,
+    float* __restrict__ vx, float* __restrict__ vy, float* __restrict__ vz,
+    float* __restrict__ ax_out, float* __restrict__ ay_out, float* __restrict__ az_out,
+    const float* __restrict__ mass, int count, float softening_sq, float gravitational_constant,
+    float dt) {
+    fused_step<TILE, BF>(x_in, y_in, z_in, x_out, y_out, z_out, vx, vy, vz, ax_out, ay_out, az_out,
+                         mass, count, softening_sq, gravitational_constant, dt);
+}
+
+// Every block size with no bound of its own.
+template <int TILE, int BF>
+__global__ void nbody_fused_step_unbounded_kernel(
+    const float* __restrict__ x_in, const float* __restrict__ y_in, const float* __restrict__ z_in,
+    float* __restrict__ x_out, float* __restrict__ y_out, float* __restrict__ z_out,
+    float* __restrict__ vx, float* __restrict__ vy, float* __restrict__ vz,
+    float* __restrict__ ax_out, float* __restrict__ ay_out, float* __restrict__ az_out,
+    const float* __restrict__ mass, int count, float softening_sq, float gravitational_constant,
+    float dt) {
+    fused_step<TILE, BF>(x_in, y_in, z_in, x_out, y_out, z_out, vx, vy, vz, ax_out, ay_out, az_out,
+                         mass, count, softening_sq, gravitational_constant, dt);
+}
+
+struct FusedLaunch {
+    const float* x_in;
+    const float* y_in;
+    const float* z_in;
+    float* x_out;
+    float* y_out;
+    float* z_out;
+    float* vx;
+    float* vy;
+    float* vz;
+    float* ax;
+    float* ay;
+    float* az;
+    const float* mass;
+    int count;
+    float softening_sq;
+    float gravitational_constant;
+    float dt;
+    int block_size;
+    int max_grid;
+    cudaStream_t stream;
+
+    template <int TILE, int BF, int BLOCK>
+    void bounded() const {
+        const int grid = blocked_grid(count, BF, block_size, max_grid);
+        nbody_fused_step_kernel<TILE, BF, BLOCK><<<grid, block_size, 0, stream>>>(
+            x_in, y_in, z_in, x_out, y_out, z_out, vx, vy, vz, ax, ay, az, mass, count,
+            softening_sq, gravitational_constant, dt);
+        CUDA_CHECK(cudaGetLastError());
     }
 
-    ax *= gravitational_constant;
-    ay *= gravitational_constant;
-    az *= gravitational_constant;
-
-    ax_out[i] = ax;
-    ay_out[i] = ay;
-    az_out[i] = az;
-
-    const float nvx = vx[i] + ax * dt;
-    const float nvy = vy[i] + ay * dt;
-    const float nvz = vz[i] + az * dt;
-
-    vx[i] = nvx;
-    vy[i] = nvy;
-    vz[i] = nvz;
-
-    x_out[i] = xi + nvx * dt;
-    y_out[i] = yi + nvy * dt;
-    z_out[i] = zi + nvz * dt;
-}
+    template <int TILE, int BF>
+    void unbounded() const {
+        require_block_fits(nbody_fused_step_unbounded_kernel<TILE, BF>, BF, block_size);
+        const int grid = blocked_grid(count, BF, block_size, max_grid);
+        nbody_fused_step_unbounded_kernel<TILE, BF><<<grid, block_size, 0, stream>>>(
+            x_in, y_in, z_in, x_out, y_out, z_out, vx, vy, vz, ax, ay, az, mass, count,
+            softening_sq, gravitational_constant, dt);
+        CUDA_CHECK(cudaGetLastError());
+    }
+};
 
 }  // namespace
 
@@ -114,38 +159,16 @@ void nbody_fused_step(const float* x_in, const float* y_in, const float* z_in, f
                       float* y_out, float* z_out, float* vx, float* vy, float* vz, float* ax,
                       float* ay, float* az, const float* mass, int count, float softening,
                       float gravitational_constant, float dt, int block_size, int tile_size,
-                      cudaStream_t stream) {
+                      int blocking_factor, cudaStream_t stream, int max_grid) {
     if (count <= 0) {
         return;
     }
-    const int grid = grid_for(count, block_size);
     const float softening_sq = softening * softening;
-
-#define CPS_LAUNCH_FUSED(TILE)                                                                   \
-    nbody_fused_step_kernel<TILE><<<grid, block_size, 0, stream>>>(                               \
-        x_in, y_in, z_in, x_out, y_out, z_out, vx, vy, vz, ax, ay, az, mass, count, softening_sq, \
-        gravitational_constant, dt)
-
-    switch (tile_size) {
-        case 32:
-            CPS_LAUNCH_FUSED(32);
-            break;
-        case 64:
-            CPS_LAUNCH_FUSED(64);
-            break;
-        case 128:
-            CPS_LAUNCH_FUSED(128);
-            break;
-        case 256:
-            CPS_LAUNCH_FUSED(256);
-            break;
-        default:
-            throw std::runtime_error("unsupported tile size " + std::to_string(tile_size) +
-                                     ", expected 32, 64, 128 or 256");
-    }
-#undef CPS_LAUNCH_FUSED
-
-    CUDA_CHECK(cudaGetLastError());
+    const FusedLaunch launch{x_in, y_in, z_in, x_out, y_out, z_out,
+                             vx,   vy,   vz,   ax,    ay,    az,
+                             mass, count, softening_sq, gravitational_constant, dt,
+                             block_size, max_grid, stream};
+    launch_nbody_kernel(launch, tile_size, blocking_factor, block_size);
     CPS_SYNC_POINT(stream);
 }
 

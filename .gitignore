@@ -22,6 +22,7 @@ experiments/results/*
 !experiments/results/ncu_*.csv
 !experiments/results/profile_runs.csv
 !experiments/results/sph_pipeline_split.csv
+!experiments/results/blocking_sweep.csv
 !experiments/results/energy_drift_two_body.csv
 !experiments/results/momentum_drift_plummer.csv
 !experiments/results/plummer_radial_density.csv

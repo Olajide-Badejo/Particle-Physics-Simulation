@@ -29,6 +29,11 @@ namespace cps {
 // fastest; the others exist so the sweep can keep checking that against real numbers
 // rather than arguing about it.
 //
+// The tiled force sum and the fused step also take a blocking factor: 1, 2, 4 or 8
+// target particles per thread, each its own instantiation. It changes how the sum is
+// laid out on the threads, and every target adds the same terms in the same order, so
+// the results are bit identical at every factor.
+//
 // Every launcher takes its stream with no default, so a caller cannot end up on
 // the legacy default stream by leaving it out. nullptr names that stream on
 // purpose, which is for tests that drive a launcher on its own.
@@ -40,8 +45,8 @@ void compute_forces_naive(const float* x, const float* y, const float* z, const 
 
 void compute_forces_tiled(const float* x, const float* y, const float* z, const float* mass,
                           float* ax, float* ay, float* az, int count, float softening,
-                          float gravitational_constant, int block_size,
-                          int tile_size, cudaStream_t stream);
+                          float gravitational_constant, int block_size, int tile_size,
+                          int blocking_factor, cudaStream_t stream, int max_grid = 0);
 
 // One complete leapfrog step in a single launch.
 //
@@ -51,11 +56,15 @@ void compute_forces_tiled(const float* x, const float* y, const float* z, const 
 // updated in place. The accelerations are also written out, purely so the
 // diagnostics and the snapshot path can see them; nothing in the step depends
 // on reading them back.
+//
+// max_grid, here and on the tiled force sum, caps the blocks of the launch, and 0 means
+// as many as the particles need. The kernel covers every particle on any grid, by
+// having a block make several passes, so this changes nothing the launch computes.
 void nbody_fused_step(const float* x_in, const float* y_in, const float* z_in, float* x_out,
                       float* y_out, float* z_out, float* vx, float* vy, float* vz, float* ax,
                       float* ay, float* az, const float* mass, int count, float softening,
-                      float gravitational_constant, float dt, int block_size,
-                      int tile_size, cudaStream_t stream);
+                      float gravitational_constant, float dt, int block_size, int tile_size,
+                      int blocking_factor, cudaStream_t stream, int max_grid = 0);
 
 // Velocity Verlet, split across two launches for the unfused variants.
 //
@@ -77,8 +86,9 @@ void integrate_verlet_velocity(float* vx, float* vy, float* vz, const float* ax,
 // The N-body solver: the three variants above, over the launchers above.
 //
 // All three seed and recompute with the tiled kernel, the naive variant included,
-// so that is the only place nbody.tile_size reaches the naive variant. The fused
-// variant carries the half step velocity and the other two the synchronised one.
+// so that is the only place nbody.tile_size and nbody.blocking_factor reach the naive
+// variant. The fused variant carries the half step velocity and the other two the
+// synchronised one.
 //
 // Positions are double buffered for the fused variant, so x() names a different
 // array after each of its steps. The solver holds no pointers across a step.
@@ -95,9 +105,10 @@ class NBodySolver final : public Solver {
 
     NBodyVariant variant() const { return config_.variant; }
     int tile_size() const { return config_.nbody.tile_size; }
+    int blocking_factor() const { return config_.nbody.blocking_factor; }
 
    private:
-    // The tiled force evaluation, at the configured width.
+    // The tiled force evaluation, at the configured width and blocking factor.
     void compute_forces(ParticleSystem& particles, cudaStream_t stream);
     void step_split(ParticleSystem& particles, cudaStream_t stream);
     void step_fused(ParticleSystem& particles, cudaStream_t stream);

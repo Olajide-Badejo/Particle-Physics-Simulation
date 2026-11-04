@@ -424,13 +424,27 @@ if(CPS_BUILD_TESTS)
 
   # Device unit tests.
   add_executable(unit_tests_gpu
+    tests/unit/test_blocking_parity.cu
     tests/unit/test_device_reductions.cu
     tests/unit/test_kernel_parity.cu
     tests/unit/test_solver_factory.cpp)
   target_link_libraries(unit_tests_gpu PRIVATE physics_core_strict cps_gpu_test_main cps_warnings cps_test_support)
+  target_compile_definitions(unit_tests_gpu PRIVATE CPS_EXPECTED_FAST_MATH=0)
   set_target_properties(unit_tests_gpu PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
   add_test(NAME unit_gpu COMMAND unit_tests_gpu)
   set_tests_properties(unit_gpu PROPERTIES LABELS "gpu" SKIP_RETURN_CODE 77)
+
+  # Every other test binary links the strict library. Bit identity across blocking
+  # factors is also claimed of physics_core, which is what the benchmarks run, so the
+  # same tests link that as well: the fast math library, in every preset that names
+  # fast math.
+  add_executable(unit_tests_gpu_fast tests/unit/test_blocking_parity.cu)
+  target_link_libraries(unit_tests_gpu_fast PRIVATE physics_core cps_gpu_test_main cps_warnings cps_test_support)
+  target_compile_definitions(unit_tests_gpu_fast PRIVATE
+    CPS_EXPECTED_FAST_MATH=$<BOOL:${CPS_USE_FAST_MATH}>)
+  set_target_properties(unit_tests_gpu_fast PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+  add_test(NAME unit_gpu_fast COMMAND unit_tests_gpu_fast)
+  set_tests_properties(unit_gpu_fast PROPERTIES LABELS "gpu" SKIP_RETURN_CODE 77)
 
   add_executable(integration_tests
     tests/integration/test_solver_smoke.cpp
