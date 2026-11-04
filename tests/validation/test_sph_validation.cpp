@@ -5,9 +5,9 @@
 #include <filesystem>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
-#include "physics/sph_kernels.hpp"
-#include "solvers/sph_solver.hpp"
+#include "cps/core/simulation_engine.hpp"
+#include "cps/physics/sph_kernels.hpp"
+#include "cps/solvers/sph_solver.hpp"
 #include "test_support_gpu.hpp"
 #include "validation/sph_fluid_config.hpp"
 
@@ -36,7 +36,7 @@ TEST(SphValidation, InteriorDensityRecoversTheRestDensity) {
     engine.initialize();
 
     cps::SphSolver solver(config, count);
-    solver.build_neighbours_and_density(engine.particles());
+    solver.build_neighbours_and_density(engine.particles(), engine.stream());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     std::vector<float> density(static_cast<std::size_t>(count));
@@ -48,7 +48,7 @@ TEST(SphValidation, InteriorDensityRecoversTheRestDensity) {
                           sorted_index.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
 
     const float h = solver.derived().smoothing_radius;
     std::vector<double> interior;
@@ -104,9 +104,8 @@ TEST(SphValidation, InteriorDensityRecoversTheRestDensity) {
     EXPECT_LT(max_deviation, 0.10);
 }
 
-// A hash based neighbour search that silently drops or double counts
-// neighbours is the single most likely defect in this solver, and the exact
-// cell key comparison is what prevents it. This checks the outcome directly:
+// A neighbour search that silently drops or double counts neighbours is the
+// single most likely defect in this solver. This checks the outcome directly:
 // the number of neighbours the search finds must match the number a brute
 // force scan finds, for every sampled particle.
 TEST(SphValidation, NeighbourSearchAgreesWithABruteForceScan) {
@@ -117,7 +116,7 @@ TEST(SphValidation, NeighbourSearchAgreesWithABruteForceScan) {
     engine.initialize();
 
     cps::SphSolver solver(config, count);
-    solver.build_neighbours_and_density(engine.particles());
+    solver.build_neighbours_and_density(engine.particles(), engine.stream());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     std::vector<float> density(static_cast<std::size_t>(count));
@@ -132,7 +131,7 @@ TEST(SphValidation, NeighbourSearchAgreesWithABruteForceScan) {
     // brute force sum and compare the sorted multisets of values, which is
     // invariant to any permutation.
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     const double h = solver.derived().smoothing_radius;
     const double mass = solver.derived().particle_mass;
 
@@ -180,7 +179,7 @@ TEST(SphValidation, AFluidRunConservesMassAndStaysInsideItsWalls) {
     engine.initialize();
 
     cps::HostParticleState before;
-    engine.particles().download(before);
+    engine.particles().download(before, engine.stream());
     double initial_mass = 0.0;
     for (float m : before.mass) {
         initial_mass += m;
@@ -192,7 +191,7 @@ TEST(SphValidation, AFluidRunConservesMassAndStaysInsideItsWalls) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     cps::HostParticleState after;
-    engine.particles().download(after);
+    engine.particles().download(after, engine.stream());
     ASSERT_EQ(after.size(), before.size());
 
     double final_mass = 0.0;
@@ -226,14 +225,14 @@ TEST(SphValidation, TheCellSortPermutationIsABijection) {
     engine.initialize();
 
     cps::HostParticleState before;
-    engine.particles().download(before);
+    engine.particles().download(before, engine.stream());
 
     cps::SphSolver solver(config, count);
-    solver.step(engine.particles(), config.dt);
+    solver.step(engine.particles(), engine.stream());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     cps::HostParticleState after;
-    engine.particles().download(after);
+    engine.particles().download(after, engine.stream());
 
     // Every particle keeps its mass through the permutation, and the sorted
     // multiset of masses is unchanged.

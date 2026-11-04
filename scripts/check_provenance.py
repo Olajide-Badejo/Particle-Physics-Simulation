@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that the committed results can be traced back to this repository.
 
-Three checks, all over the files in `experiments/results`:
+Four checks, all over the files in `experiments/results`:
 
 1. `validation_gates.csv` holds exactly the gates registered in
    `tests/validation/gates.txt`: every registered gate is present, and nothing
@@ -17,6 +17,12 @@ Three checks, all over the files in `experiments/results`:
    `protocol` value other than `full` fail. The files `bench_all` writes must
    have those columns, because a check that passes when the column is missing
    checks nothing.
+4. Profiler files carry their stamp. `sph_pipeline_split.csv` and
+   `profile_runs.csv` must have the columns saying what they measured, and every
+   `ncu_*.csv` export must be named in `profile_runs.csv`, and the other way round,
+   because the exports themselves are Nsight's format and hold no commit. A
+   `profile_summary.csv` with stall columns needs both that file and a commit. One
+   with neither is the older profile from `v1.1`, which recorded no commit.
 
 `--gates-only` runs the first check alone, which needs no git history and so
 works on a shallow clone. Each failure names the file, the row and the value.
@@ -40,6 +46,14 @@ BENCHMARK_FILES = {
     "benchmark_repeatability.csv",
     "tile_sweep.csv",
     "tile_sweep_trials.csv",
+}
+
+# What each profiler file has to record about itself.
+PROFILE_COLUMNS = {
+    "profile_runs.csv": ("file", "commit", "dirty", "variant", "num_particles", "tile_size",
+                         "block_size"),
+    "sph_pipeline_split.csv": ("commit", "dirty", "num_particles", "block_size", "warmup_steps",
+                               "measured_steps", "pass", "ms_per_step"),
 }
 
 
@@ -145,6 +159,46 @@ def check_commits(results: Path) -> list[str]:
     return failures
 
 
+def read_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return list(reader.fieldnames or []), list(reader)
+
+
+def check_profile(results: Path) -> list[str]:
+    failures: list[str] = []
+    for name, columns in PROFILE_COLUMNS.items():
+        path = results / name
+        if path.exists():
+            fields, rows = read_rows(path)
+            failures += [f"{relative(path)}: no '{column}' column in the header"
+                         for column in columns if column not in fields]
+            if not rows:
+                failures.append(f"{relative(path)}: the file has no rows")
+
+    runs_path = results / "profile_runs.csv"
+    if runs_path.exists():
+        fields, rows = read_rows(runs_path)
+        listed = {row.get("file", "") for row in rows}
+        present = {path.name for path in results.glob("ncu_*.csv")}
+        failures += [f"{relative(runs_path)}: names {name}, which does not exist"
+                     for name in sorted(listed - present)]
+        failures += [f"{relative(results / name)}: not named in profile_runs.csv, so nothing "
+                     "says which commit made it"
+                     for name in sorted(present - listed)]
+
+    summary = results / "profile_summary.csv"
+    if summary.exists():
+        fields, _ = read_rows(summary)
+        if any(field.startswith("stall_") for field in fields):
+            if not runs_path.exists():
+                failures.append(f"{relative(summary)}: has stall columns but "
+                                "profile_runs.csv does not exist")
+            failures += [f"{relative(summary)}: no '{column}' column in the header"
+                         for column in ("commit", "dirty") if column not in fields]
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--gates-only", action="store_true",
@@ -158,6 +212,7 @@ def main() -> int:
     if not args.gates_only:
         try:
             failures += check_commits(args.results)
+            failures += check_profile(args.results)
         except FileNotFoundError:
             failures.append("git is not on PATH, so no commit hash could be checked")
 

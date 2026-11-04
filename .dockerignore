@@ -1,0 +1,53 @@
+# Private working notes and agent configuration, as in .gitignore. An image must
+# never carry these. The ** patterns catch a copy at any depth.
+**/CLAUDE.md
+**/.claude
+**/GPU_Physics_Simulation_V*
+**/01_GPU_Physics_Simulation_README.md
+**/report_for_me
+**/BOARD.md
+**/tasks
+
+# The version stamp takes the commit as a build argument instead; see Dockerfile.
+.git
+.github
+.gitignore
+.gitattributes
+
+# Build directories and local presets.
+**/build
+**/build-*
+**/_deps
+**/CMakeUserPresets.json
+
+# Run artifacts. Only the committed results go in, the same list as .gitignore.
+snapshots
+vtk
+experiments/results/*
+!experiments/results/.gitkeep
+!experiments/results/benchmarks.csv
+!experiments/results/tile_sweep.csv
+!experiments/results/benchmark_trials.csv
+!experiments/results/tile_sweep_trials.csv
+!experiments/results/benchmark_repeatability.csv
+!experiments/results/device.json
+!experiments/results/validation_gates.csv
+!experiments/results/profile_summary.csv
+!experiments/results/ncu_naive.csv
+!experiments/results/ncu_tiled.csv
+!experiments/results/ncu_fused.csv
+!experiments/results/energy_drift_two_body.csv
+!experiments/results/momentum_drift_plummer.csv
+!experiments/results/plummer_radial_density.csv
+**/*.bin
+!tests/data/*.bin
+**/diagnostics*.csv
+
+# Compiled reports and editor and Python leftovers.
+report/main.pdf
+report_debug/debug_report.pdf
+**/__pycache__
+**/*.pyc
+**/.venv
+**/.vscode
+**/.idea

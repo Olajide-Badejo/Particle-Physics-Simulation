@@ -66,21 +66,74 @@ a launch, so updating in place would let a block that has finished its force
 sum overwrite a position another block is still reading. Costs 12N bytes and no
 bandwidth.
 
-### Spatial hashing rather than a dense grid or a k-d tree
+### A dense grid rather than a spatial hash or a k-d tree
 
-A dense grid needs storage proportional to the bounding volume; a dam break
-occupies a small and moving part of its domain, so most of it would be empty. A
-k-d tree is a poor fit for a full GPU rebuild every step.
+Every fluid domain here is bounded and has walls, so a cell can be named by where it sits in
+the grid: `ix + nx * (iy + ny * iz)`, with x varying fastest. That index does three things a hash
+could not. It is unique, so the neighbour search has no collisions to survive and no two visited
+cells can count a particle twice. It needs no modulus and no per candidate check. And sorting by
+it puts neighbouring cells close together in memory, with the cells of an x row contiguous, so the
+search reads nine ranges instead of visiting twenty seven cells. The radix sort still stops at the
+bits the index can use. Whether all that made the step faster was a prediction, tested against
+the rule that the grid stays only if it is not slower at 10,000, 50,000 or 100,000 particles.
+It held by a wide margin. Side by side against commit 1b5410e over the same steps, both binaries
+loaded from one filesystem, over 10 interleaved rounds with graphs on, a step took 0.396, 0.419 and
+0.402 of the hash's time at those sizes. That was a one-off comparison and is not recorded in
+`experiments/results`.
 
-### Exact cell keys in the neighbour scan
+A grid costs one thing: it is as large as the domain, whatever the particle count. So the solver
+derives its size from the domain and refuses, naming the dimensions and the memory, more than
+`2^31` cells. Only bounded domains can use it. A periodic axis would be a wrap of the index, which
+`axis_cell` leaves a place for and nothing implements. A k-d tree is a poor fit for a full GPU
+rebuild every step.
 
-Hashing is many to one, so two of the twenty seven visited cells can collide in
-the table and a naive scan counts those particles twice. Distance filtering does
-not help, because they genuinely are within the smoothing radius. An exact 64
-bit cell key compared per candidate rejects both foreign particles and double
-visits at one comparison each. Rejected deduplicating the twenty seven hashed
-buckets, which costs hundreds of comparisons per particle rather than one per
-candidate.
+**Corrected.** Until this change the search was a spatial hash, chosen because a dense grid
+needs storage proportional to the bounding volume and a dam break leaves most of that empty. That
+argument was wrong: the hash table was larger than the grid it avoided. The table had twice as many
+slots as particles, while the shipped dam break's domain comes to about 0.42 cells per particle. At
+50,000 particles, by derivation from the domain and the smoothing radius, that is
+41 x 26 x 21 = 22,386 cells against a table of 100,003 slots, and the table was two arrays, with
+an eight byte key per particle on top. A hash table keeps its collisions rare by being mostly empty,
+so counting the grid's empty cells and not the table's was never a fair comparison.
+
+### No cell key in the neighbour scan
+
+The scan used to compare an exact 64 bit cell key for every candidate. That was correct and
+necessary, because hashing is many to one and two of the twenty seven cells could land in one
+bucket, and it existed only because of the hash. With a unique index there is no key to compare.
+The property it protected is now structural, and the brute force gate that proved it still runs
+unchanged.
+
+### A prefix sum cell table, filled by binary search
+
+The cell table holds, for each cell, how many particles are in the cells before it. A row of cells
+is then two reads, and an empty cell is an entry equal to the next one, so no pass has to test for
+one and the table needs no clearing. The two arrays of the hash, with an empty marker, would have
+taken six reads per row, or a test per cell.
+
+Each entry is filled by its own binary search of the sorted keys. Each entry then has one writer,
+with no atomics, and every thread does about the same work. Writing the gaps from the particles'
+side is less work in total, but one thread writes each run of empty cells, and in a sparsely
+filled domain one run can be most of the table. A histogram and a scan would add launches.
+
+### A cell slightly wider than the support
+
+With a cell of exactly the smoothing radius, twenty seven cells cover the support only in exact
+arithmetic. Two particles just inside the support can come out two cells apart, because the
+coordinate is rounded, and the unit tests find such pairs. So a cell is wider than the support by
+`(widest + 2) * 2^-21` of it, where `widest` is the grid's longest axis in supports, which is more
+than all the rounding involved can add up to. That is about 2e-5 of a cell at 41 cells wide. The hash
+had this exposure too, without the margin. The kernels vanish at the edge of the support, so such
+a loss would never have shown in a result, which is why it has to be ruled out and not measured.
+
+### A reserved slot for non finite positions
+
+A NaN or Inf position has no cell. It gets the sort key `num_cells`, one past the last cell, and sets
+the device flag. All finite particles therefore sort ahead of it, the table's last entry closes the
+last real cell's range, and no search ever scans the slot, so it cannot contaminate a neighbour. A
+non finite particle searches nothing itself: that test is on the bits, so it does not depend on what
+a fast math build may assume about NaN. The sort's bit range counts the slot, because a grid
+of exactly `2^k` cells needs one more bit for it than for any real cell.
 
 ### Three smoothing kernels rather than one
 
@@ -191,7 +244,7 @@ derived from the arithmetic.
 
 ## Build and tooling
 
-### An `include/physics` directory beyond the planned tree
+### An `include/cps/physics` directory beyond the planned tree
 
 The first layout listed `core`, `solvers` and `utils`. A fourth
 directory holds the host and device shared formulas. Added because the sharing
@@ -239,12 +292,13 @@ check on a project whose output is trustworthy numbers is the wrong trade.
 ### The default tile width is <!-- num:BestTileWidth -->256<!-- /num -->
 
 **Changed by measurement.** `v1.0.0` defaulted to 32 and reported its sweep. A width of
-<!-- num:BestTileWidth -->256<!-- /num --> runs at <!-- num:BestTileMs -->11.487<!-- /num --> ms against <!-- num:TileThirtyTwoMs -->12.116<!-- /num --> at <!-- num:TileSweepParticles -->100,000<!-- /num --> particles, a
-paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9483<!-- /num --> with an IQR of <!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0028<!-- /num -->,
-far outside the session drift of <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent, so the default moved and the ladder
+<!-- num:BestTileWidth -->256<!-- /num --> runs at <!-- num:BestTileMs -->11.514<!-- /num --> ms against <!-- num:TileThirtyTwoMs -->12.144<!-- /num --> at <!-- num:TileSweepParticles -->100,000<!-- /num --> particles, a
+paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9486<!-- /num --> with an IQR of <!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0020<!-- /num -->,
+far outside the session drift of <!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent, so the default moved and the ladder
 was measured there. Two barriers are paid per tile, so a narrow tile pays them more often per unit of
-arithmetic, which fits the direction of the result; the barrier cost was not measured on its own. The
-width stays a compile time constant so the inner loop can be unrolled.
+arithmetic, which fits the direction of the result; the barrier cost was not measured on its own. Each
+width stays a compile time instantiation so the inner loop can be unrolled, and `nbody.tile_size` picks one
+when the run starts.
 
 ### Bibliography page ranges written with the word "to"
 
@@ -258,11 +312,11 @@ passes through untouched and matches how the prose is required to write ranges.
 ### Fusion was expected to be worth 10 to 20 percent
 
 **Measured at about 1 percent, and not resolved at the largest size.** Paired ratios of fused over
-tiled are <!-- num:FusedOverTiledRatioAtTenThousand -->0.9445<!-- /num --> at 10,000 particles and
-<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9909<!-- /num --> at 150,000, each outside its IQR and the session drift
-of <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is <!-- num:FusedOverTiledRatioAtMaxN -->0.9914<!-- /num --> with an IQR of
-<!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0276<!-- /num -->, because tiled trials are bimodal, near <!-- num:TiledLowModeMsAtMaxN -->43.1<!-- /num --> and
-<!-- num:TiledHighModeMsAtMaxN -->44.4<!-- /num --> ms, for a reason not yet understood.
+tiled are <!-- num:FusedOverTiledRatioAtTenThousand -->0.9624<!-- /num --> at 10,000 particles and
+<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9905<!-- /num --> at 150,000, each outside its IQR and the session drift
+of <!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is <!-- num:FusedOverTiledRatioAtMaxN -->0.9913<!-- /num --> with an IQR of
+<!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0097<!-- /num -->, because tiled trials are bimodal, near <!-- num:TiledLowModeMsAtMaxN -->43.2<!-- /num --> and
+<!-- num:TiledHighModeMsAtMaxN -->43.6<!-- /num --> ms, for a reason not yet understood.
 
 The all pairs sum is O(N^2) arithmetic over O(N) data, and device memory throughput is under one
 percent of peak, which is why 10 to 20 percent was too high. But the traffic does not explain the gain
@@ -280,10 +334,43 @@ resolved.
 ### Tiling was framed as a bandwidth optimisation
 
 **It is not one here.** Device memory throughput is <!-- num:NaiveDramPct -->0.34<!-- /num --> percent of peak before
-and <!-- num:TiledDramPct -->0.35<!-- /num --> percent after. Tiling delivers its factor of <!-- num:TilingSpeedupAtMaxN -->1.96<!-- /num --> by relieving the
+and <!-- num:TiledDramPct -->0.32<!-- /num --> percent after. Tiling delivers its factor of <!-- num:TilingSpeedupAtMaxN -->1.96<!-- /num --> by relieving the
 first level cache and load store pipeline: global load sectors fall <!-- num:SectorReduction -->63.9<!-- /num --> times,
-L1 throughput falls from a near saturated <!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent to <!-- num:TiledLoneTexPct -->45.4<!-- /num --> percent, and
-warp issue efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.7<!-- /num --> percent.
+L1 throughput falls from a near saturated <!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent to <!-- num:TiledLoneTexPct -->45.5<!-- /num --> percent, and
+warp issue efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.8<!-- /num --> percent.
+
+### Register blocking was built, measured and removed
+
+**It does not help this kernel.** Register blocking holds several target particles in each thread's
+registers against one staged source tile, which needs fewer loads per interaction. It was built with
+forces bit identical across blocking factors on both libraries, checked with racecheck, and measured
+at commit <!-- num:BlockingCommit -->bd9dcfc40fc9<!-- /num --> over
+<!-- num:BlockingRounds -->10<!-- /num --> interleaved rounds. Run time against the kernels before it,
+with the thread count held constant (lower is faster):
+
+| factor x block | tiled 10,000 | tiled 100,000 | tiled 200,000 | fused 10,000 | fused 100,000 | fused 200,000 |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 x 256 | <!-- num:BlockingTiledFactorOneTenK -->1.0055<!-- /num --> | <!-- num:BlockingTiledFactorOneHundredK -->1.0007<!-- /num --> | <!-- num:BlockingTiledFactorOneTwoHundredK -->1.0014<!-- /num --> | <!-- num:BlockingFusedFactorOneTenK -->1.0844<!-- /num --> | <!-- num:BlockingFusedFactorOneHundredK -->1.0127<!-- /num --> | <!-- num:BlockingFusedFactorOneTwoHundredK -->1.0120<!-- /num --> |
+| 2 x 128 | <!-- num:BlockingTiledFactorTwoTenK -->1.3007<!-- /num --> | <!-- num:BlockingTiledFactorTwoHundredK -->1.0037<!-- /num --> | <!-- num:BlockingTiledFactorTwoTwoHundredK -->0.9962<!-- /num --> | <!-- num:BlockingFusedFactorTwoTenK -->1.4137<!-- /num --> | <!-- num:BlockingFusedFactorTwoHundredK -->1.0342<!-- /num --> | <!-- num:BlockingFusedFactorTwoTwoHundredK -->1.0264<!-- /num --> |
+| 4 x 64 | <!-- num:BlockingTiledFactorFourTenK -->2.2646<!-- /num --> | <!-- num:BlockingTiledFactorFourHundredK -->1.1090<!-- /num --> | <!-- num:BlockingTiledFactorFourTwoHundredK -->1.0505<!-- /num --> | <!-- num:BlockingFusedFactorFourTenK -->2.4050<!-- /num --> | <!-- num:BlockingFusedFactorFourHundredK -->1.1288<!-- /num --> | <!-- num:BlockingFusedFactorFourTwoHundredK -->1.0674<!-- /num --> |
+| 8 x 32 | <!-- num:BlockingTiledFactorEightTenK -->6.0529<!-- /num --> | <!-- num:BlockingTiledFactorEightHundredK -->1.4249<!-- /num --> | <!-- num:BlockingTiledFactorEightTwoHundredK -->1.2501<!-- /num --> | <!-- num:BlockingFusedFactorEightTenK -->6.4478<!-- /num --> | <!-- num:BlockingFusedFactorEightHundredK -->1.4406<!-- /num --> | <!-- num:BlockingFusedFactorEightTwoHundredK -->1.2637<!-- /num --> |
+
+The one result under 1 is tiled at factor 2 and 200,000 particles, and it is still
+<!-- num:BlockingBestOverFusedAtMaxN -->1.0058<!-- /num --> of the existing fused kernel, the fastest
+option at every size.
+
+**Why.** The kernel is limited by arithmetic and not by loads: at 200,000 particles it runs
+<!-- num:TiledFmaPerLoadAtMaxN -->12.5<!-- /num --> FMA instructions per load and issues at
+<!-- num:TiledIssueActivePctTwoHundredK -->86.39<!-- /num --> percent of peak while active. Blocking
+removes a small share of the loads and pays for it in registers. In a scratch `ncu` run, not a
+measurement of record, registers per thread rose from 40 at factor 1 to 80 at factor 8, and the
+occupancy limit fell from 6 to 3 warps. Rewriting the kernels also changed how the compiler scheduled
+them, which is why fused is slower at factor 1. In the same scratch work the clean build took about
+twice as long and the six architecture binary grew from about 5 MB to about 18 MB.
+
+**Removed.** Code this costly with no gain does not stay in the tree. The data is in
+`experiments/results/blocking_sweep.csv`. To reproduce it, check out the commit above and run
+`scripts/blocking_sweep.py`, against a build of its parent, `018cc46b0114`.
 
 ### The runtime estimates were far too long
 

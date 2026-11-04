@@ -28,7 +28,7 @@ NUMBERS := report/numbers.tex
         reports docs check-style check-warnings run-demo probe all clean distclean
 
 help:
-	@echo "cuda_physics_sim: make targets"
+	@echo "cps: make targets"
 	@echo
 	@echo "  setup          configure the build (downloads GoogleTest and nlohmann_json)"
 	@echo "  setup-host-only  configure without CUDA, for a machine with no toolkit"
@@ -38,7 +38,7 @@ help:
 	@echo "  validate       run the physics gates (results go to the build tree)"
 	@echo "  record-results run the whole suite and record the gates in $(RESULTS)"
 	@echo "  bench          run the full benchmark sweep, resuming where it left off"
-	@echo "  profile        collect hardware counters with Nsight Compute"
+	@echo "  profile        collect hardware counters and the SPH split with Nsight"
 	@echo "  plots          draw the figures from the recorded results"
 	@echo "  assets         generate the LaTeX tables and macros"
 	@echo "  report         build report/main.pdf"
@@ -48,21 +48,16 @@ help:
 	@echo "  clean          remove build outputs but keep recorded results"
 	@echo "  distclean      also remove recorded results and snapshots"
 
+# Both setups are the presets of the same name in CMakePresets.json, which hold
+# the options. BUILD_DIR and BUILD_TYPE still override them from here.
 setup:
-	$(CMAKE) -S . -B $(BUILD_DIR) \
-		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DCPS_BUILD_TESTS=ON \
-		-DCPS_BUILD_BENCHMARKS=ON \
-		-DCPS_USE_FAST_MATH=ON
+	$(CMAKE) --preset dev -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
 # No CUDA toolkit required. Builds the configuration layer, the snapshot
 # format, the initial condition generators and the physics formulas, with the
 # unit tests that cover them.
 setup-host-only:
-	$(CMAKE) -S . -B $(BUILD_DIR) \
-		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DCPS_HOST_ONLY=ON \
-		-DCPS_BUILD_TESTS=ON
+	$(CMAKE) --preset host-only -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
 $(BUILD_DIR)/CMakeCache.txt:
 	@$(MAKE) setup
@@ -96,8 +91,12 @@ validate: build
 record-results: build
 	cd $(BUILD_DIR) && CPS_RECORD_GATES=1 $(CTEST) --output-on-failure
 
+# The sweep runs from a temporary copy of the binary, because where a binary loads
+# from moves its timings: byte identical copies differed by up to 0.7 percent between
+# a WSL mount of a Windows drive and tmpfs. The rows still go to experiments/results.
 bench: build
-	./$(BUILD_DIR)/bin/bench_all --tile-sweep
+	@tmp="$$(mktemp -d)"; cp $(BUILD_DIR)/bin/bench_all "$$tmp/"; \
+		"$$tmp/bench_all" --tile-sweep; rc=$$?; rm -rf "$$tmp"; exit $$rc
 
 # A smoke test of the driver, on whatever tree is checked out. Its rows go to the
 # temporary directory and are labelled as quick, so they can never pass for
@@ -105,13 +104,17 @@ bench: build
 bench-quick: build
 	./$(BUILD_DIR)/bin/bench_all --quick --allow-dirty
 
+# Both refuse a tree with uncommitted code, or a binary older than the checkout.
 profile: build
 	bash scripts/profile_kernels.sh
+	bash scripts/profile_sph_split.sh
 
 # The colours are checked first, against the white page the figures are drawn on.
 plots:
 	$(PYTHON) scripts/validate_palette.py "$$($(PYTHON) scripts/plot_results.py --print-palette)" \
 		--surface "#ffffff" --pairs all
+	$(PYTHON) scripts/validate_palette.py "$$($(PYTHON) scripts/plot_results.py --print-pass-palette)" \
+		--surface "#ffffff" --pairs adjacent
 	$(PYTHON) scripts/plot_results.py
 
 assets:
@@ -131,6 +134,7 @@ docs: assets
 
 check-style:
 	$(PYTHON) scripts/check_no_dashes.py .
+	$(PYTHON) scripts/check_no_local_paths.py
 
 # Warnings are already errors in the default configuration, so a successful
 # build is the gate. This target states that explicitly for anyone reading.
@@ -139,7 +143,7 @@ check-warnings:
 	@echo "build completed with -Wall -Wextra -Werror and the nvcc equivalents"
 
 run-demo: build
-	./$(BUILD_DIR)/bin/cuda_physics_sim --config configs/dam_break_50k.json --steps 2000
+	./$(BUILD_DIR)/bin/cps run dam_break_50k --steps 2000
 
 # The order matters: gates before benchmarks so a physics failure stops the
 # line before half an hour of timing runs, and the reports last because they

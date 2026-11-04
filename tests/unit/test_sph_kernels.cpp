@@ -3,7 +3,7 @@
 #include <cmath>
 #include <vector>
 
-#include "physics/sph_kernels.hpp"
+#include "cps/physics/sph_kernels.hpp"
 
 namespace {
 

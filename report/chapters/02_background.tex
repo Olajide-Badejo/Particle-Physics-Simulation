@@ -155,27 +155,23 @@ is the property the normalisation gate checks by quadrature.
 
 \subsection{Finding neighbours}
 
-The neighbour set changes every step and must be rebuilt every step. A dense
-uniform grid needs storage proportional to the bounding volume rather than to
-the particle count, and a dam break spends most of its life with the fluid
-occupying a small and moving part of the domain, so most of that grid is empty.
-A k-d tree is a poor fit for a full rebuild on a GPU every step.
-
-Spatial hashing \cite{teschner2003} maps the integer cell coordinate to a table
-sized by particle count:
+The neighbour set changes every step and must be rebuilt every step. Every fluid
+domain here is bounded and has walls, so the search uses a dense uniform grid, with cells at
+least as wide as the smoothing radius, and a neighbour can then only be in one of the
+twenty seven cells around a particle. Cell $(i,j,k)$ of an $n_x \times n_y \times n_z$ grid has
+the index
 
 \begin{equation}
-  \mathrm{hash}(i,j,k) = \left(i\,p_1 \oplus j\,p_2 \oplus k\,p_3\right) \bmod n,
+  c(i,j,k) = i + n_x \left(j + n_y\,k\right),
 \end{equation}
 
-with $p_1 = 73856093$, $p_2 = 19349663$, $p_3 = 83492791$ and $n$ prime.
+and particles are sorted by it. Two things follow. The index is unique, so two visited cells
+can never be the same slot, and no neighbour can be counted twice. And $x$ varies fastest, so
+the three cells of an $x$ row are contiguous in sorted order, and the twenty seven cells are nine
+ranges. Section~\ref{sec:sphresults} reports the measured agreement with a brute force sum,
+which is what proves it.
 
-Hashing is many to one, and that has a consequence which is easy to miss. Two
-different cells can land in the same bucket. The neighbour search visits the
-twenty seven cells surrounding a particle, and two of those cells can hash to
-the same bucket, in which case a naive scan counts the particles in it twice.
-Distance filtering does not save you: those particles are genuinely within the
-smoothing radius, they are just being counted more than once. The engine
-therefore stores an exact 64 bit cell key per particle and compares it during
-the scan. Section~\ref{sec:sphresults} reports the measured agreement with a
-brute force sum, which is what proves the defence works.
+Earlier versions used spatial hashing \cite{teschner2003} with a table of twice as many slots as
+particles, on the argument that a dense grid would waste its storage on empty cells. That
+argument was wrong, as Chapter~\ref{ch:corrections} records: on these domains the table was
+larger than the grid it avoided. A k-d tree is a poor fit for a full rebuild on a GPU every step.

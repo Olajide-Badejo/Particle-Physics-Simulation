@@ -1,12 +1,19 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <ostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "core/cli.hpp"
+#include "cps/core/cli.hpp"
+#include "cps/core/convert.hpp"
+#include "cps/core/presets.hpp"
+#include "cps/core/snapshot.hpp"
 
 namespace {
 
@@ -88,6 +95,24 @@ TEST(Cli, AllowUnstableDtSetsTheConfigFieldAndAbsenceLeavesItAlone) {
     EXPECT_TRUE(config.allow_unstable_dt);
 }
 
+TEST(Cli, GraphsOverridesTheFileEitherWayAndAbsenceLeavesItAlone) {
+    EXPECT_FALSE(parse({"--config", "c.json"}).use_graphs);
+    EXPECT_TRUE(*parse({"--graphs", "on"}).use_graphs);
+    EXPECT_FALSE(*parse({"--graphs", "off"}).use_graphs);
+
+    cps::Config config;
+    config.use_graphs = true;
+    cps::apply_cli_overrides(parse({"--config", "c.json"}), config);
+    EXPECT_TRUE(config.use_graphs);
+    cps::apply_cli_overrides(parse({"--graphs", "off"}), config);
+    EXPECT_FALSE(config.use_graphs);
+    cps::apply_cli_overrides(parse({"--graphs", "on"}), config);
+    EXPECT_TRUE(config.use_graphs);
+
+    EXPECT_THROW(parse({"--graphs", "yes"}), std::runtime_error);
+    EXPECT_THROW(parse({"--graphs"}), std::runtime_error);
+}
+
 // Forcing a resume past a physics mismatch only makes sense when resuming, so
 // the flag implies --resume rather than needing both.
 TEST(Cli, ForceResumeParsesAndImpliesResume) {
@@ -102,6 +127,34 @@ TEST(Cli, ForceResumeParsesAndImpliesResume) {
     const cps::CliOptions plain = parse({"--resume"});
     EXPECT_TRUE(plain.resume);
     EXPECT_FALSE(plain.force_resume);
+}
+
+TEST(Cli, VtkFlagsReachTheConfiguration) {
+    const cps::CliOptions options = parse({"--vtk-every", "25", "--vtk-dir", "frames"});
+    EXPECT_EQ(options.vtk_every, 25);
+    EXPECT_EQ(options.vtk_dir, "frames");
+    cps::Config config;
+    cps::apply_cli_overrides(options, config);
+    EXPECT_EQ(config.vtk_interval, 25);
+    EXPECT_EQ(config.vtk_dir, "frames");
+
+    // Absent flags leave the file's values alone, and 0 turns frames off.
+    cps::Config from_file;
+    from_file.vtk_interval = 7;
+    from_file.vtk_dir = "kept";
+    cps::apply_cli_overrides(parse({"--config", "c.json"}), from_file);
+    EXPECT_EQ(from_file.vtk_interval, 7);
+    EXPECT_EQ(from_file.vtk_dir, "kept");
+    cps::apply_cli_overrides(parse({"--vtk-every", "0"}), from_file);
+    EXPECT_EQ(from_file.vtk_interval, 0);
+}
+
+TEST(Cli, VtkFlagErrorsNameTheFlag) {
+    EXPECT_NE(error_of({"--vtk-every", "-1"}).find("--vtk-every"), std::string::npos);
+    EXPECT_NE(error_of({"--vtk-every", "often"}).find("--vtk-every"), std::string::npos);
+    EXPECT_NE(error_of({"--vtk-every"}).find("--vtk-every"), std::string::npos);
+    EXPECT_NE(error_of({"--vtk-dir"}).find("--vtk-dir"), std::string::npos);
+    EXPECT_NE(error_of({"--vtk-dir", ""}).find("--vtk-dir"), std::string::npos);
 }
 
 TEST(Cli, UsageListsForceResume) {
@@ -212,6 +265,185 @@ TEST(Cli, EmptyPathOverridesKeepTheirMeaning) {
     cps::apply_cli_overrides(parse({"--snapshot-dir", "", "--diagnostics", ""}), config);
     EXPECT_EQ(config.snapshot_dir, "from_file");
     EXPECT_EQ(config.diagnostics_path, "");
+}
+
+cps::CliOptions command(std::vector<std::string> args) {
+    args.insert(args.begin(), "cps");
+    std::vector<const char*> argv;
+    for (const std::string& arg : args) {
+        argv.push_back(arg.c_str());
+    }
+    return cps::parse_command_line(static_cast<int>(argv.size()), argv.data());
+}
+
+std::string command_error(std::vector<std::string> args) {
+    try {
+        command(std::move(args));
+    } catch (const std::runtime_error& error) {
+        return error.what();
+    }
+    return "";
+}
+
+TEST(CliCommand, NoArgumentsAskForUsage) {
+    EXPECT_EQ(command({}).command, cps::CliCommand::Usage);
+}
+
+TEST(CliCommand, RunTakesItsTargetAndEveryFlag) {
+    const cps::CliOptions options =
+        command({"run", "dam_break_50k", "--steps", "7", "--resume", "--diagnostics", ""});
+    EXPECT_EQ(options.command, cps::CliCommand::Run);
+    EXPECT_EQ(options.run_target, "dam_break_50k");
+    EXPECT_EQ(options.steps, 7);
+    EXPECT_TRUE(options.resume);
+    EXPECT_EQ(options.diagnostics_path, "");
+}
+
+TEST(CliCommand, RunTargetIsAPresetOnlyWithoutSeparatorOrJson) {
+    EXPECT_TRUE(cps::run_target_is_preset("two_body"));
+    EXPECT_FALSE(cps::run_target_is_preset("two_body.json"));
+    EXPECT_FALSE(cps::run_target_is_preset("./two_body"));
+    EXPECT_FALSE(cps::run_target_is_preset("presets/two_body"));
+    EXPECT_FALSE(cps::run_target_is_preset("presets\\two_body"));
+}
+
+TEST(CliCommand, EachSubcommandParses) {
+    EXPECT_EQ(command({"presets"}).command, cps::CliCommand::Presets);
+    EXPECT_EQ(command({"info"}).command, cps::CliCommand::Info);
+    const cps::CliOptions plain = command({"convert", "in", "out"});
+    EXPECT_EQ(plain.command, cps::CliCommand::Convert);
+    EXPECT_EQ(plain.convert_input, "in");
+    EXPECT_EQ(plain.convert_output, "out");
+    EXPECT_TRUE(plain.config_path.empty());
+    EXPECT_EQ(command({"convert", "--config", "c.json", "in", "out"}).config_path, "c.json");
+    EXPECT_EQ(command({"convert", "in", "out", "--config", "c.json"}).config_path, "c.json");
+}
+
+TEST(CliCommand, HelpIsPerSubcommand) {
+    for (const char* name : {"run", "presets", "info", "convert"}) {
+        const cps::CliOptions options = command({name, "--help"});
+        EXPECT_TRUE(options.show_help) << name;
+        EXPECT_NE(cps::cli_usage(options.command).find(std::string("usage: cps ") + name),
+                  std::string::npos)
+            << name;
+    }
+    EXPECT_TRUE(command({"run", "two_body", "--help"}).show_help);
+    EXPECT_EQ(cps::cli_usage(command({"--help"}).command), cps::cli_usage());
+    EXPECT_TRUE(command({"--version"}).show_version);
+}
+
+TEST(CliCommand, TheOldFormIsLegacyWithTheSameMeaning) {
+    const cps::CliOptions options = command({"--config", "x.json", "--steps", "3"});
+    EXPECT_EQ(options.command, cps::CliCommand::Legacy);
+    EXPECT_EQ(options.config_path, "x.json");
+    EXPECT_EQ(options.steps, 3);
+    EXPECT_TRUE(command({"--device-info"}).device_info);
+    EXPECT_TRUE(command({"--config", "x.json", "--print-config"}).print_config);
+    EXPECT_NE(cps::legacy_form_notice().find("next major version"), std::string::npos);
+    EXPECT_NE(cps::legacy_form_notice().find("cps run"), std::string::npos);
+    EXPECT_EQ(cps::legacy_form_notice().find('\n'), std::string::npos);
+}
+
+// main exits 2 on anything parsing throws.
+TEST(CliCommand, ErrorsNameWhatIsWrong) {
+    EXPECT_NE(command_error({"frobnicate"}).find("unknown subcommand 'frobnicate'"),
+              std::string::npos);
+    EXPECT_NE(command_error({"run"}).find("cps run needs"), std::string::npos);
+    EXPECT_NE(command_error({"run", "--steps", "5"}).find("cps run needs"), std::string::npos);
+    EXPECT_NE(command_error({"run", "x", "--steps", "abc"}).find("--steps"), std::string::npos);
+    EXPECT_NE(command_error({"run", "x", "--config", "y.json"}).find("--config"),
+              std::string::npos);
+    EXPECT_NE(command_error({"run", "x", "--nope"}).find("--nope"), std::string::npos);
+    EXPECT_NE(command_error({"presets", "extra"}).find("cps presets"), std::string::npos);
+    EXPECT_NE(command_error({"info", "extra"}).find("cps info"), std::string::npos);
+    EXPECT_NE(command_error({"convert", "in"}).find("cps convert"), std::string::npos);
+    EXPECT_NE(command_error({"convert", "a", "b", "c"}).find("cps convert"), std::string::npos);
+    EXPECT_NE(command_error({"convert", "a", "b", "--nope"}).find("--nope"), std::string::npos);
+    EXPECT_NE(command_error({"convert", "a", "b", "--config"}).find("--config"),
+              std::string::npos);
+}
+
+std::string read_file(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+TEST(CliPresets, EveryFileInThePresetDirectoryIsEmbeddedByteForByte) {
+    std::size_t files = 0;
+    const std::filesystem::path directory = std::filesystem::path(CPS_PROJECT_ROOT) / "presets";
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        const std::string name = entry.path().stem().string();
+        const cps::EmbeddedPreset* preset = cps::find_preset(name);
+        ASSERT_NE(preset, nullptr) << name;
+        EXPECT_EQ(preset->json, read_file(entry.path()));
+        EXPECT_NE(cps::preset_listing().find(name), std::string::npos);
+        ++files;
+    }
+    EXPECT_EQ(cps::embedded_presets().size(), files);
+    EXPECT_EQ(cps::find_preset("nonexistent"), nullptr);
+}
+
+class CliConvert : public ::testing::Test {
+protected:
+    void SetUp() override {
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        directory_ = std::filesystem::temp_directory_path() /
+                     (std::string("cps_cli_convert_") + info->name());
+        std::filesystem::remove_all(directory_);
+        std::filesystem::create_directories(directory_);
+    }
+    void TearDown() override { std::filesystem::remove_all(directory_); }
+
+    std::filesystem::path write(const char* name, const std::string& text) const {
+        std::ofstream(directory_ / name, std::ios::binary) << text;
+        return directory_ / name;
+    }
+
+    std::filesystem::path directory_;
+    std::filesystem::path root_{CPS_PROJECT_ROOT};
+};
+
+TEST_F(CliConvert, EachV1FixtureGivesItsPresetsBytes) {
+    const std::filesystem::path out = directory_ / "out.json";
+    for (const char* name : {"dam_break_50k", "plummer_10k", "two_body"}) {
+        const std::string file = std::string(name) + ".json";
+        cps::convert_file(root_ / "tests/data/configs_v1" / file, out, "");
+        EXPECT_EQ(read_file(out), read_file(root_ / "presets" / file)) << name;
+    }
+}
+
+TEST_F(CliConvert, Cps1NeedsAConfigAndGetsAFingerprintAndIds) {
+    const std::filesystem::path v1 = root_ / "tests/data/snapshot_v1_4p.bin";
+    const std::filesystem::path out = directory_ / "out.bin";
+    EXPECT_THROW(cps::convert_file(v1, out, ""), cps::ConvertInputError);
+    EXPECT_FALSE(std::filesystem::exists(out));
+
+    const auto matching = write("four.json", R"({"schema": 1, "num_particles": 4})");
+    cps::convert_file(v1, out, matching.string());
+    const cps::Snapshot before = cps::read_snapshot(v1);
+    const cps::Snapshot after = cps::read_snapshot(out);
+    EXPECT_EQ(after.format_version, cps::SNAPSHOT_VERSION);
+    EXPECT_NE(after.fingerprint, 0u);
+    EXPECT_FALSE(after.physics.empty());
+    EXPECT_EQ(after.step, before.step);
+    EXPECT_EQ(after.flags, before.flags);
+    EXPECT_EQ(after.state.x, before.state.x);
+    EXPECT_EQ(after.state.vz, before.state.vz);
+    EXPECT_EQ(after.state.id, (std::vector<uint32_t>{0, 1, 2, 3}));
+
+    const auto wrong_count = write("five.json", R"({"schema": 1, "num_particles": 5})");
+    EXPECT_THROW(cps::convert_file(v1, out, wrong_count.string()), cps::ConvertInputError);
+}
+
+TEST_F(CliConvert, RefusesWhatItCannotConvert) {
+    const std::filesystem::path out = directory_ / "out";
+    const auto text = write("notes.txt", "not a configuration");
+    EXPECT_THROW(cps::convert_file(text, out, ""), cps::ConvertInputError);
+    EXPECT_THROW(cps::convert_file(directory_ / "absent", out, ""), cps::ConvertInputError);
+    EXPECT_THROW(cps::convert_file(root_ / "tests/data/snapshot_v2_4p.bin", out, ""),
+                 cps::ConvertInputError);
+    const auto config = write("c.json", "{}");
+    EXPECT_THROW(cps::convert_file(config, out, config.string()), cps::ConvertInputError);
 }
 
 }  // namespace

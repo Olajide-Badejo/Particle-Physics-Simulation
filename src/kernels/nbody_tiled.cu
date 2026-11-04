@@ -1,9 +1,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "physics/gravity.hpp"
-#include "solvers/nbody_solver.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/physics/gravity.hpp"
+#include "cps/solvers/nbody_solver.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 namespace {
@@ -118,6 +118,7 @@ void compute_forces_tiled(const float* x, const float* y, const float* z, const 
                                      ", expected 32, 64, 128 or 256");
     }
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps

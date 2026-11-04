@@ -45,6 +45,19 @@ SERIES = {
     "tiled": {"color": "#eb6834", "marker": "s", "label": "tiled"},
     "fused": {"color": "#1baf7a", "marker": "^", "label": "fused"},
 }
+# The passes of the SPH step, in the order they run and so in the order they stack.
+# Slots from the same validated palette. Only neighbours in the stack have to be told
+# apart by colour, so `make plots` checks them with --pairs adjacent; the legend also
+# gives every pass its name and value.
+SPH_PASSES = {
+    "assign_cells": ("assign cells", "#2a78d6"),
+    "sort": ("sort", "#eb6834"),
+    "cell_bounds": ("cell bounds", "#1baf7a"),
+    "gather": ("gather", "#e87ba4"),
+    "density": ("density", "#008300"),
+    "force_and_integrate": ("force and integrate", "#6250d6"),
+    "between_kernels": ("between kernels", "#e34948"),
+}
 INK_PRIMARY = "#0b0b0b"
 INK_SECONDARY = "#52514e"
 INK_MUTED = "#898781"
@@ -435,6 +448,48 @@ def plot_plummer_density(path: Path, out_dir: Path) -> None:
     save(fig, out_dir, "fig_plummer_density")
 
 
+def plot_sph_split(path: Path, out_dir: Path) -> None:
+    """One stacked bar: where a fluid step goes, pass by pass."""
+    rows = read_csv(path)
+    if not rows:
+        return
+    by_pass = {row["pass"]: row for row in rows}
+    passes = SPH_PASSES
+    unknown = by_pass.keys() - passes.keys()
+    if unknown:
+        raise SystemExit(f"error: {path} holds a pass this figure does not know: {sorted(unknown)}")
+
+    fig, ax = plt.subplots(figsize=(7.0, 2.9))
+    left = 0.0
+    for name, (label, color) in passes.items():
+        if name not in by_pass:
+            continue
+        value = float(by_pass[name]["ms_per_step"])
+        percent = float(by_pass[name]["percent_of_step"])
+        # A 2 point surface gap between segments, drawn as a white edge.
+        ax.barh([0], [value], 0.55, left=left, color=color, edgecolor="white", linewidth=2,
+                label=f"{label}, {percent:.1f}%")
+        left += value
+
+    ax.set_xlim(0.0, left)
+    ax.set_yticks([])
+    ax.set_xlabel("time per step (milliseconds)")
+    ax.set_title(f"SPH step at {int(rows[0]['num_particles']):,} particles")
+    ax.grid(axis="y", visible=False)
+    strip_spines(ax)
+    legend = ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=4, frameon=True,
+                       facecolor=LEGEND_FACE, edgecolor=LEGEND_EDGE, fontsize=7.5)
+    legend.get_frame().set_linewidth(0.6)
+    fig.subplots_adjust(bottom=0.34)
+    caption(fig,
+            f"Mean of {int(rows[0]['measured_steps']):,} steps after "
+            f"{int(rows[0]['warmup_steps']):,} of warmup, from kernel records in Nsight Systems. "
+            f"The traced step costs {float(rows[0]['traced_step_ms']):.3f} ms against "
+            f"{float(rows[0]['untraced_step_ms']):.3f} ms with no tracer, so the between kernels "
+            "share includes the tracer's own cost.")
+    save(fig, out_dir, "fig_sph_split")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Draw the report figures.")
     root = Path(__file__).resolve().parent.parent
@@ -445,9 +500,14 @@ def main() -> int:
                              "other than experiments/results")
     parser.add_argument("--print-palette", action="store_true",
                         help="print the series colours for validate_palette.py, and draw nothing")
+    parser.add_argument("--print-pass-palette", action="store_true",
+                        help="print the SPH pass colours in stack order, and draw nothing")
     args = parser.parse_args()
     if args.print_palette:
         print(",".join(series["color"] for series in SERIES.values()))
+        return 0
+    if args.print_pass_palette:
+        print(",".join(color for _, color in SPH_PASSES.values()))
         return 0
     if args.out is None:
         scratch = args.results.resolve() != default_results.resolve()
@@ -468,6 +528,7 @@ def main() -> int:
         print("  no benchmarks.csv, skipping the performance figures")
 
     plot_tile_sweep(args.results / "tile_sweep.csv", args.out)
+    plot_sph_split(args.results / "sph_pipeline_split.csv", args.out)
     plot_energy_drift(args.results / "energy_drift_two_body.csv", args.out)
     plot_momentum_drift(args.results / "momentum_drift_plummer.csv", args.out)
     plot_plummer_density(args.results / "plummer_radial_density.csv", args.out)

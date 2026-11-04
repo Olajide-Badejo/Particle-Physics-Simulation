@@ -2,14 +2,23 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <ostream>
+#include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
-#include "core/config.hpp"
+#include "cps/core/config.hpp"
+#include "cps/core/physics_fingerprint.hpp"
 
 namespace {
 
@@ -362,7 +371,8 @@ std::string error_of(const std::string& text) {
 TEST(Config, RejectsMisspelledTopLevelKey) {
     const std::string message = error_of(R"({"num_particle": 100})");
     EXPECT_NE(message.find("'num_particle'"), std::string::npos) << message;
-    EXPECT_NE(message.find("did you mean 'num_particles'"), std::string::npos) << message;
+    EXPECT_NE(message.find("did you mean 'initial_condition.num_particles'"), std::string::npos)
+        << message;
 
     // A fluid key at the top level points at the fluid block.
     const std::string misplaced = error_of(R"({"viscocity": 1})");
@@ -377,15 +387,71 @@ TEST(Config, RejectsMisspelledKeyInsideTheFluidBlock) {
 }
 
 TEST(Config, RejectsUnexpectedNestedObject) {
-    const std::string top = error_of(R"({"nbody": {"dt": 0.1}})");
-    EXPECT_NE(top.find("unknown configuration key 'nbody'"), std::string::npos) << top;
+    const std::string top = error_of(R"({"gravity": {"dt": 0.1}})");
+    EXPECT_NE(top.find("unknown configuration key 'gravity'"), std::string::npos) << top;
 
     const std::string nested = error_of(R"({"sph": {"kernel": {"name": "wendland"}}})");
     EXPECT_NE(nested.find("unknown configuration key 'sph.kernel'"), std::string::npos) << nested;
 
     // An object where a number belongs is a type error naming the field.
     const std::string misplaced = error_of(R"({"dt": {"value": 0.1}})");
-    EXPECT_NE(misplaced.find("'dt'"), std::string::npos) << misplaced;
+    EXPECT_NE(misplaced.find("'run.dt'"), std::string::npos) << misplaced;
+}
+
+// An unknown key in the N-body block is named with its full path, and a tile
+// width left at the top level points at its home.
+TEST(Config, ReadsTheTileWidthFromTheNBodyBlock) {
+    EXPECT_EQ(cps::Config::from_json_string("{}").nbody.tile_size, cps::DEFAULT_TILE_SIZE);
+    for (const int width : {32, 64, 128, 256}) {
+        SCOPED_TRACE(width);
+        const std::string text = R"({"nbody": {"tile_size": )" + std::to_string(width) + "}}";
+        const cps::Config config = cps::Config::from_json_string(text);
+        EXPECT_EQ(config.nbody.tile_size, width);
+        EXPECT_EQ(cps::Config::from_json_string(config.to_json_string()).nbody.tile_size, width);
+    }
+}
+
+TEST(Config, RejectsATileWidthWithNoKernel) {
+    for (const char* width : {"0", "-32", "16", "100", "512"}) {
+        SCOPED_TRACE(width);
+        const std::string message =
+            error_of(R"({"nbody": {"tile_size": )" + std::string(width) + "}}");
+        EXPECT_NE(message.find("nbody.tile_size must be 32, 64, 128 or 256, got " +
+                               std::string(width)),
+                  std::string::npos)
+            << message;
+    }
+    const std::string fractional = error_of(R"({"nbody": {"tile_size": 64.5}})");
+    EXPECT_NE(fractional.find("'nbody.tile_size' must be an integer"), std::string::npos)
+        << fractional;
+}
+
+TEST(Config, RejectsAnNBodyBlockThatIsNotAnObject) {
+    const std::string message = error_of(R"({"nbody": 64})");
+    EXPECT_NE(message.find("configuration field 'nbody' must be an object"), std::string::npos)
+        << message;
+}
+
+TEST(Config, RejectsMisspelledKeyInsideTheNBodyBlock) {
+    const std::string message = error_of(R"({"nbody": {"tile_sise": 64}})");
+    EXPECT_NE(message.find("'nbody.tile_sise'"), std::string::npos) << message;
+    EXPECT_NE(message.find("did you mean 'tile_size'"), std::string::npos) << message;
+
+    const std::string misplaced = error_of(R"({"nbody": {"dt": 0.1}})");
+    EXPECT_NE(misplaced.find("unknown configuration key 'nbody.dt'"), std::string::npos)
+        << misplaced;
+}
+
+TEST(Config, ATileWidthAtTheTopLevelPointsAtTheNBodyBlock) {
+    const std::string message = error_of(R"({"tile_size": 64})");
+    EXPECT_NE(message.find("unknown configuration key 'tile_size'"), std::string::npos) << message;
+    EXPECT_NE(message.find("did you mean 'nbody.tile_size'"), std::string::npos) << message;
+}
+
+// A block nothing reads is still refused by its own name.
+TEST(Config, RejectsAnUnknownBlockAtTheTopLevel) {
+    const std::string message = error_of(R"({"gravity": {"dt": 0.1}})");
+    EXPECT_NE(message.find("unknown configuration key 'gravity'"), std::string::npos) << message;
 }
 
 TEST(Config, UnrelatedUnknownKeyGetsNoSuggestion) {
@@ -398,6 +464,16 @@ TEST(Config, AllowUnstableDtMustBeABoolean) {
     EXPECT_FALSE(cps::Config::from_json_string("{}").allow_unstable_dt);
     EXPECT_TRUE(cps::Config::from_json_string(R"({"allow_unstable_dt": true})").allow_unstable_dt);
     EXPECT_THROW(cps::Config::from_json_string(R"({"allow_unstable_dt": 1})"), std::runtime_error);
+    EXPECT_TRUE(cps::Config::from_json_string("{}").use_graphs);
+    EXPECT_THROW(cps::Config::from_json_string(R"({"schema": 2, "run": {"use_graphs": 1}})"),
+                 std::runtime_error);
+    // A schema 2 key does not start to work in a file that does not ask for schema 2.
+    EXPECT_THROW(cps::Config::from_json_string(R"({"use_graphs": true})"), std::runtime_error);
+    for (const bool value : {false, true}) {
+        cps::Config config;
+        config.use_graphs = value;
+        EXPECT_EQ(cps::Config::from_json_string(config.to_json_string()).use_graphs, value);
+    }
     EXPECT_THROW(cps::Config::from_json_string(R"({"allow_unstable_dt": "yes"})"),
                  std::runtime_error);
 }
@@ -428,6 +504,7 @@ void expect_same_vec3(const cps::Vec3& a, const cps::Vec3& b, const char* field)
 // fingerprint of a run, so nothing may be lost or rounded on the way through.
 void expect_same_config(const cps::Config& a, const cps::Config& b) {
     EXPECT_EQ(a.allow_unstable_dt, b.allow_unstable_dt);
+    EXPECT_EQ(a.use_graphs, b.use_graphs);
     EXPECT_EQ(a.name, b.name);
     EXPECT_EQ(a.solver, b.solver);
     EXPECT_EQ(a.variant, b.variant);
@@ -447,6 +524,9 @@ void expect_same_config(const cps::Config& a, const cps::Config& b) {
     EXPECT_EQ(a.snapshot_dir, b.snapshot_dir);
     EXPECT_EQ(a.diagnostics_interval, b.diagnostics_interval);
     EXPECT_EQ(a.diagnostics_path, b.diagnostics_path);
+    EXPECT_EQ(a.vtk_interval, b.vtk_interval);
+    EXPECT_EQ(a.vtk_dir, b.vtk_dir);
+    EXPECT_EQ(a.nbody.tile_size, b.nbody.tile_size);
     EXPECT_EQ(a.sph.smoothing_radius, b.sph.smoothing_radius);
     EXPECT_EQ(a.sph.rest_density, b.sph.rest_density);
     EXPECT_EQ(a.sph.gas_constant, b.sph.gas_constant);
@@ -472,6 +552,7 @@ TEST(Config, RoundTripsEveryFieldExactly) {
         "plummer_radius": 0.7, "two_body_separation": 2.2,
         "external_gravity": [0.1, -9.80665, 0.3], "snapshot_interval": 77,
         "snapshot_dir": "snaps/x", "diagnostics_interval": 13, "diagnostics_path": "d.csv",
+        "nbody": {"tile_size": 64},
         "sph": {
             "smoothing_radius": 0.0123, "rest_density": 998.2, "gas_constant": 1234.5,
             "viscosity": 0.31, "particle_mass": 0.0042, "boundary_damping": 0.9,
@@ -491,7 +572,7 @@ TEST(Config, ShippedConfigurationsRoundTrip) {
     const std::filesystem::path root(CPS_PROJECT_ROOT);
     for (const char* name : {"two_body.json", "plummer_10k.json", "dam_break_50k.json"}) {
         SCOPED_TRACE(name);
-        const cps::Config original = cps::Config::from_json_file(root / "configs" / name);
+        const cps::Config original = cps::Config::from_json_file(root / "presets" / name);
         const cps::Config restored = cps::Config::from_json_string(original.to_json_string());
         expect_same_config(original, restored);
         EXPECT_EQ(restored.to_json_string(), original.to_json_string());
@@ -503,10 +584,339 @@ TEST(Config, ShippedConfigurationsRoundTrip) {
 TEST(Config, ShippedConfigurationsParse) {
     const std::filesystem::path root(CPS_PROJECT_ROOT);
     for (const char* name : {"two_body.json", "plummer_10k.json", "dam_break_50k.json"}) {
-        const std::filesystem::path path = root / "configs" / name;
+        const std::filesystem::path path = root / "presets" / name;
         ASSERT_TRUE(std::filesystem::exists(path)) << path.string();
         EXPECT_NO_THROW(cps::Config::from_json_file(path)) << name;
     }
+}
+
+constexpr const char* kPresetNames[] = {"two_body.json", "plummer_10k.json", "dam_break_50k.json"};
+
+std::filesystem::path fixture_path(const char* name) {
+    return std::filesystem::path(CPS_PROJECT_ROOT) / "tests" / "data" / "configs_v1" / name;
+}
+
+std::filesystem::path preset_path(const char* name) {
+    return std::filesystem::path(CPS_PROJECT_ROOT) / "presets" / name;
+}
+
+std::string file_text(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    EXPECT_TRUE(stream) << path.string();
+    std::ostringstream buffer;
+    buffer << stream.rdbuf();
+    return buffer.str();
+}
+
+// The same run in either form, down to the fingerprint a snapshot records.
+TEST(Config, V1AndV2FormsHaveTheSameFingerprint) {
+    for (const char* name : kPresetNames) {
+        SCOPED_TRACE(name);
+        const cps::Config v1 = cps::Config::from_json_file(fixture_path(name));
+        const cps::Config v2 = cps::Config::from_json_file(preset_path(name));
+        expect_same_config(v1, v2);
+        EXPECT_EQ(cps::physics_fingerprint(v1), cps::physics_fingerprint(v2));
+        EXPECT_EQ(cps::physics_json(cps::physics_fields(v1)),
+                  cps::physics_json(cps::physics_fields(v2)));
+    }
+}
+
+TEST(Config, VtkOutputIsOffByDefaultAndRefusesBadValues) {
+    const cps::Config defaults = cps::Config::from_json_string("{\"schema\": 2}");
+    EXPECT_EQ(defaults.vtk_interval, 0);
+    EXPECT_EQ(defaults.vtk_dir, "vtk");
+
+    const cps::Config set = cps::Config::from_json_string(
+        R"({"schema": 2, "output": {"vtk_interval": 50, "vtk_dir": "frames"}})");
+    EXPECT_EQ(set.vtk_interval, 50);
+    EXPECT_EQ(set.vtk_dir, "frames");
+
+    const auto error_from = [](const char* text) -> std::string {
+        try {
+            cps::Config::from_json_string(text);
+        } catch (const std::runtime_error& error) {
+            return error.what();
+        }
+        return "";
+    };
+    EXPECT_NE(error_from(R"({"schema": 2, "output": {"vtk_interval": -1}})").find("vtk_interval"),
+              std::string::npos);
+    EXPECT_NE(error_from(R"({"schema": 2, "output": {"vtk_interval": 5, "vtk_dir": ""}})")
+                  .find("vtk_dir"),
+              std::string::npos);
+    // It only has a meaning once frames are on.
+    EXPECT_EQ(error_from(R"({"schema": 2, "output": {"vtk_dir": ""}})"), "");
+    // A schema 2 key does not start to work in a file that does not ask for schema 2.
+    EXPECT_NE(error_from(R"({"vtk_interval": 5})").find("vtk_interval"), std::string::npos);
+}
+
+// A preset is what the migration produces, not a second hand maintained copy.
+// The file ends in the newline --print-config adds.
+TEST(Config, PresetsAreExactlyTheMigratedFixtures) {
+    for (const char* name : kPresetNames) {
+        SCOPED_TRACE(name);
+        EXPECT_EQ(cps::Config::from_json_file(fixture_path(name)).to_json_string() + "\n",
+                  file_text(preset_path(name)));
+    }
+}
+
+TEST(Config, PrintingAPresetGivesBackItsBytes) {
+    for (const char* name : kPresetNames) {
+        SCOPED_TRACE(name);
+        const std::string text = file_text(preset_path(name));
+        EXPECT_EQ(cps::Config::from_json_string(text).to_json_string() + "\n", text);
+    }
+}
+
+TEST(Config, PrintsEverySectionInOrderWithNothingOmitted) {
+    const nlohmann::ordered_json root =
+        nlohmann::ordered_json::parse(cps::Config{}.to_json_string());
+    std::vector<std::string> keys;
+    for (const auto& item : root.items()) {
+        keys.push_back(item.key());
+    }
+    EXPECT_EQ(keys, (std::vector<std::string>{"schema", "name", "solver", "run",
+                                              "initial_condition", "nbody", "sph", "output"}));
+    EXPECT_EQ(root.at("schema"), 2);
+    EXPECT_EQ(root.at("run").size(), 5u);
+    EXPECT_EQ(root.at("initial_condition").size(), 6u);
+    EXPECT_EQ(root.at("nbody").size(), 4u);
+    EXPECT_EQ(root.at("sph").size(), 12u);
+    EXPECT_EQ(root.at("output").size(), 6u);
+}
+
+TEST(Config, PrintsAFloatAsItsShortestDecimal) {
+    cps::Config config;
+    config.dt = 1.0e-3f;
+    config.softening = 0.1f;
+    config.gravitational_constant = 1.0f;
+    const std::string text = config.to_json_string();
+    EXPECT_NE(text.find("\"dt\": 0.001,"), std::string::npos) << text;
+    EXPECT_NE(text.find("\"softening\": 0.1,"), std::string::npos) << text;
+    EXPECT_NE(text.find("\"gravitational_constant\": 1.0,"), std::string::npos) << text;
+    EXPECT_NE(text.find("\"external_gravity\": [0.0, -9.81, 0.0]"), std::string::npos) << text;
+    config.dt = 1.0e-4f;
+    EXPECT_NE(config.to_json_string().find("\"dt\": 0.0001,"), std::string::npos);
+}
+
+void expect_floats_round_trip(const std::vector<float>& values) {
+    for (const float value : values) {
+        // External gravity is the one field that takes any finite value.
+        cps::Config config;
+        config.external_gravity = {value, -value, value};
+        for (const int indent : {2, -1}) {
+            const cps::Config restored =
+                cps::Config::from_json_string(config.to_json_string(indent));
+            EXPECT_EQ(std::bit_cast<std::uint32_t>(restored.external_gravity.x),
+                      std::bit_cast<std::uint32_t>(value))
+                << value;
+            EXPECT_EQ(std::bit_cast<std::uint32_t>(restored.external_gravity.y),
+                      std::bit_cast<std::uint32_t>(-value))
+                << value;
+        }
+    }
+}
+
+TEST(Config, FloatsRoundTripBitForBit) {
+    using limits = std::numeric_limits<float>;
+    expect_floats_round_trip({
+        0.0f,
+        0.1f,
+        1.0e-3f,
+        1.0e-4f,
+        9.81f,
+        1.0f,
+        1000.0f,
+        1.0e10f,
+        16777216.0f,
+        limits::denorm_min(),
+        limits::denorm_min() * 3.0f,
+        limits::min(),
+        std::nextafter(limits::min(), 0.0f),
+        limits::max(),
+        std::nextafter(limits::max(), 0.0f),
+        // The largest float's shortest text is out of range as a double. This one's
+        // reads through a double to the neighbouring float.
+        std::bit_cast<float>(std::uint32_t{0x15ae43fd}),
+    });
+
+    // Uniform bit patterns are uniform in magnitude across the whole range, and
+    // a mask on the exponent adds denormals, which they otherwise rarely reach.
+    std::mt19937 generator(20260802u);
+    std::vector<float> sample;
+    while (sample.size() < 4000) {
+        std::uint32_t bits = generator();
+        if (sample.size() % 8 == 0) {
+            bits &= 0x807fffffu;
+        }
+        const float value = std::bit_cast<float>(bits);
+        if (std::isfinite(value)) {
+            sample.push_back(value);
+        }
+    }
+    expect_floats_round_trip(sample);
+}
+
+TEST(Config, AFlatKeyInSchema2PointsAtItsSection) {
+    const struct {
+        const char* key;
+        const char* value;
+        const char* home;
+    } cases[] = {
+        {"dt", "0.1", "run.dt"},
+        {"steps", "1", "run.steps"},
+        {"num_particles", "4", "initial_condition.num_particles"},
+        {"variant", "\"naive\"", "nbody.variant"},
+        {"tile_size", "64", "nbody.tile_size"},
+        {"external_gravity", "[0, 0, 0]", "sph.external_gravity"},
+        {"viscosity", "0.1", "sph.viscosity"},
+        {"snapshot_dir", "\"x\"", "output.snapshot_dir"},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.key);
+        const std::string message = error_of(std::string(R"({"schema": 2, ")") + c.key + "\": " +
+                                             c.value + "}");
+        EXPECT_NE(message.find("unknown configuration key '" + std::string(c.key) + "'"),
+                  std::string::npos)
+            << message;
+        EXPECT_NE(message.find("did you mean '" + std::string(c.home) + "'"), std::string::npos)
+            << message;
+    }
+}
+
+TEST(Config, AKeyInTheWrongSectionPointsAtItsSection) {
+    const std::string message = error_of(R"({"schema": 2, "sph": {"dt": 0.1}})");
+    EXPECT_NE(message.find("'sph.dt'"), std::string::npos) << message;
+    EXPECT_NE(message.find("did you mean 'run.dt'"), std::string::npos) << message;
+}
+
+TEST(Config, RejectsAMisspelledKeyInEachSection) {
+    const struct {
+        const char* json;
+        const char* key;
+        const char* suggestion;
+    } cases[] = {
+        {R"({"schema": 2, "run": {"step": 1}})", "'run.step'", "'steps'"},
+        {R"({"schema": 2, "initial_condition": {"sead": 1}})", "'initial_condition.sead'", "'seed'"},
+        {R"({"schema": 2, "nbody": {"varient": "naive"}})", "'nbody.varient'", "'variant'"},
+        {R"({"schema": 2, "sph": {"viscocity": 0.1}})", "'sph.viscocity'", "'viscosity'"},
+        {R"({"schema": 2, "output": {"snapshot_dri": "x"}})", "'output.snapshot_dri'",
+         "'snapshot_dir'"},
+        {R"({"schema": 2, "nam": "x"})", "'nam'", "'name'"},
+        {R"({"schema": 2, "runs": {}})", "'runs'", "'run'"},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.json);
+        const std::string message = error_of(c.json);
+        EXPECT_NE(message.find(c.key), std::string::npos) << message;
+        EXPECT_NE(message.find("did you mean " + std::string(c.suggestion)), std::string::npos)
+            << message;
+    }
+}
+
+TEST(Config, RejectsASectionThatIsNotAnObject) {
+    for (const char* section : {"run", "initial_condition", "nbody", "sph", "output"}) {
+        SCOPED_TRACE(section);
+        const std::string message =
+            error_of(std::string(R"({"schema": 2, ")") + section + R"(": 3})");
+        EXPECT_NE(message.find("configuration field '" + std::string(section) +
+                               "' must be an object"),
+                  std::string::npos)
+            << message;
+    }
+}
+
+TEST(Config, ReadsEverySectionOfSchema2) {
+    const cps::Config config = cps::Config::from_json_string(R"({
+        "schema": 2, "name": "sections", "solver": "sph",
+        "run": {"steps": 7, "dt": 0.002, "block_size": 64, "allow_unstable_dt": true},
+        "initial_condition": {"type": "dam_break", "num_particles": 8, "seed": 9,
+                              "total_mass": 2.0, "plummer_radius": 3.0, "two_body_separation": 4.0},
+        "nbody": {"variant": "naive", "softening": 0.5, "gravitational_constant": 6.0,
+                  "tile_size": 32},
+        "sph": {"viscosity": 0.3, "external_gravity": [1.0, 2.0, 3.0]},
+        "output": {"snapshot_interval": 10, "snapshot_dir": "s",
+                   "diagnostics_interval": 11, "diagnostics_path": "d"}
+    })");
+    EXPECT_EQ(config.name, "sections");
+    EXPECT_EQ(config.solver, cps::SolverType::Sph);
+    EXPECT_EQ(config.steps, 7);
+    EXPECT_EQ(config.dt, 0.002f);
+    EXPECT_EQ(config.block_size, 64);
+    EXPECT_TRUE(config.allow_unstable_dt);
+    EXPECT_EQ(config.initial_condition, cps::InitialCondition::DamBreak);
+    EXPECT_EQ(config.num_particles, 8);
+    EXPECT_EQ(config.seed, 9u);
+    EXPECT_EQ(config.total_mass, 2.0f);
+    EXPECT_EQ(config.plummer_radius, 3.0f);
+    EXPECT_EQ(config.two_body_separation, 4.0f);
+    EXPECT_EQ(config.variant, cps::NBodyVariant::Naive);
+    EXPECT_EQ(config.softening, 0.5f);
+    EXPECT_EQ(config.gravitational_constant, 6.0f);
+    EXPECT_EQ(config.nbody.tile_size, 32);
+    EXPECT_EQ(config.sph.viscosity, 0.3f);
+    EXPECT_EQ(config.external_gravity.z, 3.0f);
+    EXPECT_EQ(config.snapshot_interval, 10);
+    EXPECT_EQ(config.snapshot_dir, "s");
+    EXPECT_EQ(config.diagnostics_interval, 11);
+    EXPECT_EQ(config.diagnostics_path, "d");
+}
+
+TEST(Config, ASchema2FileWithNoSectionsIsTheDefaults) {
+    expect_same_config(cps::Config::from_json_string(R"({"schema": 2})"),
+                       cps::Config::from_json_string("{}"));
+}
+
+TEST(Config, Schema1IsAcceptedByNameAsAFlatFile) {
+    EXPECT_EQ(cps::Config::from_json_string(R"({"schema": 1, "dt": 0.002})").dt, 0.002f);
+}
+
+TEST(Config, RejectsAnUnsupportedSchemaListingWhatIsSupported) {
+    for (const char* value : {"0", "3", "-1", "99999999999"}) {
+        SCOPED_TRACE(value);
+        const std::string message = error_of(std::string(R"({"schema": )") + value + "}");
+        EXPECT_NE(message.find("unsupported configuration schema " + std::string(value)),
+                  std::string::npos)
+            << message;
+        EXPECT_NE(message.find("1 or 2 are supported"), std::string::npos) << message;
+    }
+}
+
+TEST(Config, RejectsASchemaThatIsNotAnInteger) {
+    for (const char* value : {"2.0", "\"2\"", "true", "null", "[2]"}) {
+        SCOPED_TRACE(value);
+        const std::string message = error_of(std::string(R"({"schema": )") + value + "}");
+        EXPECT_NE(message.find("'schema' must be an integer"), std::string::npos) << message;
+    }
+}
+
+// These were errors before schema 2 existed. Migration must not make them work
+// in a file that does not ask for schema 2.
+TEST(Config, ASchema1FileCannotUseKeysThatOnlySchema2Has) {
+    for (const char* text :
+         {R"({"run": {"dt": 0.1}})", R"({"output": {}})", R"({"schema": 1, "run": {}})",
+          R"({"nbody": {"softening": 0.5}})", R"({"variant": "naive", "nbody": {"variant": "fused"}})",
+          R"({"sph": {"external_gravity": [0, 0, 0]}})",
+          R"({"initial_condition": {"type": "plummer"}})"}) {
+        SCOPED_TRACE(text);
+        EXPECT_THROW(cps::Config::from_json_string(text), std::runtime_error);
+    }
+}
+
+TEST(Config, AV1FileWarnsOnceNamingItself) {
+    const std::filesystem::path path = fixture_path("dam_break_50k.json");
+    ::testing::internal::CaptureStderr();
+    cps::Config::from_json_file(path);
+    const std::string captured = ::testing::internal::GetCapturedStderr();
+    EXPECT_EQ(std::count(captured.begin(), captured.end(), '\n'), 1) << captured;
+    EXPECT_NE(captured.find(path.string()), std::string::npos) << captured;
+    EXPECT_NE(captured.find("--print-config"), std::string::npos) << captured;
+}
+
+TEST(Config, AV2FileDoesNotWarn) {
+    ::testing::internal::CaptureStderr();
+    cps::Config::from_json_file(preset_path("dam_break_50k.json"));
+    EXPECT_EQ(::testing::internal::GetCapturedStderr(), "");
 }
 
 }  // namespace

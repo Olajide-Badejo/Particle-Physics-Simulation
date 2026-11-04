@@ -11,7 +11,7 @@
 Two solvers sitting at opposite ends of the spectrum a GPU cares about:
 **direct all pairs gravitational N-body dynamics**, which is regular and
 arithmetic bound, and **weakly compressible smoothed particle hydrodynamics**
-with spatial hash neighbour search, which is irregular and has to rediscover
+with dense grid neighbour search, which is irregular and has to rediscover
 its own data dependencies every step.
 
 Author: **Olajide Badejo**
@@ -68,14 +68,14 @@ wrong; [CHANGELOG.md](CHANGELOG.md) lists each one under Corrections to v1.0.0.
 
 | | |
 |---|---|
-| **Shared memory tiling** | **<!-- num:TilingSpeedupAtMaxN -->1.96<!-- /num -->x faster** than the naive kernel at <!-- num:LadderMaxN -->200,000<!-- /num --> particles (paired ratio <!-- num:TiledOverNaiveRatioAtMaxN -->0.5110<!-- /num -->, IQR <!-- num:TiledOverNaiveRatioIqrAtMaxN -->0.0103<!-- /num -->) |
-| **Sustained throughput** | **<!-- num:TiledGigaInteractionsAtMaxN -->927<!-- /num --> billion interactions per second**, which is <!-- num:TiledTflopsAtMaxN -->18.54<!-- /num --> TFLOP/s at the conventional <!-- num:ConventionalFlopsPerInteraction -->20<!-- /num --> flops per interaction and <!-- num:TiledTflopsAtMeasuredFlops -->16.72<!-- /num --> at the <!-- num:MeasuredFlopsPerInteraction -->18.0<!-- /num --> the counters report |
-| **Fluid solver** | **50,000 particles at <!-- num:SphMsAtFiftyThousand -->0.345<!-- /num --> ms/step**, about <!-- num:SphInteractiveMargin -->48<!-- /num -->x inside a 60 frame per second budget |
+| **Shared memory tiling** | **<!-- num:TilingSpeedupAtMaxN -->1.96<!-- /num -->x faster** than the naive kernel at <!-- num:LadderMaxN -->200,000<!-- /num --> particles (paired ratio <!-- num:TiledOverNaiveRatioAtMaxN -->0.5112<!-- /num -->, IQR <!-- num:TiledOverNaiveRatioIqrAtMaxN -->0.0039<!-- /num -->) |
+| **Sustained throughput** | **<!-- num:TiledGigaInteractionsAtMaxN -->926<!-- /num --> billion interactions per second**, which is <!-- num:TiledTflopsAtMaxN -->18.52<!-- /num --> TFLOP/s at the conventional <!-- num:ConventionalFlopsPerInteraction -->20<!-- /num --> flops per interaction and <!-- num:TiledTflopsAtMeasuredFlops -->16.70<!-- /num --> at the <!-- num:MeasuredFlopsPerInteraction -->18.0<!-- /num --> the counters report |
+| **Fluid solver** | **50,000 particles at <!-- num:SphMsAtFiftyThousand -->0.114<!-- /num --> ms/step**, about <!-- num:SphInteractiveMargin -->147<!-- /num -->x inside a 60 frame per second budget |
 | **Physics gates** | **<!-- num:GateCount -->14<!-- /num --> of <!-- num:GateCount -->14<!-- /num --> pass**; [the validation document](docs/physics_validation.md) says what each one is evidence of |
 | **Two body energy error** | **<!-- num:EnergyDriftMeasured -->1.33e-5<!-- /num -->** over 10,000 steps against a 1e-03 limit. This is single precision rounding, so the integrator's order is gated separately in double precision |
 | **Snapshot and resume** | **bit identical**, proven for all four solver paths |
 
-Measured at commit `<!-- num:BenchCommit -->a27a69ed5ec4<!-- /num -->` with session drift of <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent.
+Measured at commit <!-- num:BenchCommit -->6823f76a56af<!-- /num --> with session drift of <!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent.
 
 ---
 
@@ -96,12 +96,12 @@ TFLOP/s.
 
 | particles | naive (ms) | tiled (ms) | fused (ms) | tiled speedup | fused / tiled (IQR) | tiled interactions/s (billions) |
 |---:|---:|---:|---:|---:|---:|---:|
-| 10,000 | <!-- num:NaiveMsAtTenThousand -->0.471<!-- /num --> | <!-- num:TiledMsAtTenThousand -->0.156<!-- /num --> | <!-- num:FusedMsAtTenThousand -->0.148<!-- /num --> | <!-- num:TilingSpeedupAtTenThousand -->3.01<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTenThousand -->0.9445<!-- /num --> (<!-- num:FusedOverTiledIqrAtTenThousand -->0.0075<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTenThousand -->639<!-- /num --> |
-| 20,000 | <!-- num:NaiveMsAtTwentyThousand -->1.069<!-- /num --> | <!-- num:TiledMsAtTwentyThousand -->0.540<!-- /num --> | <!-- num:FusedMsAtTwentyThousand -->0.527<!-- /num --> | <!-- num:TilingSpeedupAtTwentyThousand -->1.98<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTwentyThousand -->0.9764<!-- /num --> (<!-- num:FusedOverTiledIqrAtTwentyThousand -->0.0021<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTwentyThousand -->741<!-- /num --> |
-| 50,000 | <!-- num:NaiveMsAtFiftyThousand -->6.635<!-- /num --> | <!-- num:TiledMsAtFiftyThousand -->3.206<!-- /num --> | <!-- num:FusedMsAtFiftyThousand -->3.166<!-- /num --> | <!-- num:TilingSpeedupAtFiftyThousand -->2.07<!-- /num -->x | <!-- num:FusedOverTiledRatioAtFiftyThousand -->0.9875<!-- /num --> (<!-- num:FusedOverTiledIqrAtFiftyThousand -->0.0062<!-- /num -->) | <!-- num:TiledGigaInteractionsAtFiftyThousand -->780<!-- /num --> |
-| 100,000 | <!-- num:NaiveMsAtHundredThousand -->22.826<!-- /num --> | <!-- num:TiledMsAtHundredThousand -->11.441<!-- /num --> | <!-- num:FusedMsAtHundredThousand -->11.349<!-- /num --> | <!-- num:TilingSpeedupAtHundredThousand -->2.00<!-- /num -->x | <!-- num:FusedOverTiledRatioAtHundredThousand -->0.9892<!-- /num --> (<!-- num:FusedOverTiledIqrAtHundredThousand -->0.0075<!-- /num -->) | <!-- num:TiledGigaInteractionsAtHundredThousand -->874<!-- /num --> |
-| 150,000 | <!-- num:NaiveMsAtHundredFiftyThousand -->48.783<!-- /num --> | <!-- num:TiledMsAtHundredFiftyThousand -->24.755<!-- /num --> | <!-- num:FusedMsAtHundredFiftyThousand -->24.534<!-- /num --> | <!-- num:TilingSpeedupAtHundredFiftyThousand -->1.97<!-- /num -->x | <!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9909<!-- /num --> (<!-- num:FusedOverTiledIqrAtHundredFiftyThousand -->0.0013<!-- /num -->) | <!-- num:TiledGigaInteractionsAtHundredFiftyThousand -->909<!-- /num --> |
-| 200,000 | <!-- num:NaiveMsAtTwoHundredThousand -->84.725<!-- /num --> | <!-- num:TiledMsAtTwoHundredThousand -->43.156<!-- /num --> | <!-- num:FusedMsAtTwoHundredThousand -->43.186<!-- /num --> | <!-- num:TilingSpeedupAtTwoHundredThousand -->1.96<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTwoHundredThousand -->0.9914<!-- /num --> (<!-- num:FusedOverTiledIqrAtTwoHundredThousand -->0.0276<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTwoHundredThousand -->927<!-- /num --> |
+| 10,000 | <!-- num:NaiveMsAtTenThousand -->0.467<!-- /num --> | <!-- num:TiledMsAtTenThousand -->0.154<!-- /num --> | <!-- num:FusedMsAtTenThousand -->0.148<!-- /num --> | <!-- num:TilingSpeedupAtTenThousand -->3.04<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTenThousand -->0.9624<!-- /num --> (<!-- num:FusedOverTiledIqrAtTenThousand -->0.0043<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTenThousand -->651<!-- /num --> |
+| 20,000 | <!-- num:NaiveMsAtTwentyThousand -->1.066<!-- /num --> | <!-- num:TiledMsAtTwentyThousand -->0.535<!-- /num --> | <!-- num:FusedMsAtTwentyThousand -->0.527<!-- /num --> | <!-- num:TilingSpeedupAtTwentyThousand -->1.99<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTwentyThousand -->0.9848<!-- /num --> (<!-- num:FusedOverTiledIqrAtTwentyThousand -->0.0017<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTwentyThousand -->747<!-- /num --> |
+| 50,000 | <!-- num:NaiveMsAtFiftyThousand -->6.638<!-- /num --> | <!-- num:TiledMsAtFiftyThousand -->3.211<!-- /num --> | <!-- num:FusedMsAtFiftyThousand -->3.199<!-- /num --> | <!-- num:TilingSpeedupAtFiftyThousand -->2.07<!-- /num -->x | <!-- num:FusedOverTiledRatioAtFiftyThousand -->0.9922<!-- /num --> (<!-- num:FusedOverTiledIqrAtFiftyThousand -->0.0065<!-- /num -->) | <!-- num:TiledGigaInteractionsAtFiftyThousand -->779<!-- /num --> |
+| 100,000 | <!-- num:NaiveMsAtHundredThousand -->22.851<!-- /num --> | <!-- num:TiledMsAtHundredThousand -->11.488<!-- /num --> | <!-- num:FusedMsAtHundredThousand -->11.384<!-- /num --> | <!-- num:TilingSpeedupAtHundredThousand -->1.99<!-- /num -->x | <!-- num:FusedOverTiledRatioAtHundredThousand -->0.9919<!-- /num --> (<!-- num:FusedOverTiledIqrAtHundredThousand -->0.0032<!-- /num -->) | <!-- num:TiledGigaInteractionsAtHundredThousand -->871<!-- /num --> |
+| 150,000 | <!-- num:NaiveMsAtHundredFiftyThousand -->48.797<!-- /num --> | <!-- num:TiledMsAtHundredFiftyThousand -->24.783<!-- /num --> | <!-- num:FusedMsAtHundredFiftyThousand -->24.568<!-- /num --> | <!-- num:TilingSpeedupAtHundredFiftyThousand -->1.97<!-- /num -->x | <!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9905<!-- /num --> (<!-- num:FusedOverTiledIqrAtHundredFiftyThousand -->0.0012<!-- /num -->) | <!-- num:TiledGigaInteractionsAtHundredFiftyThousand -->908<!-- /num --> |
+| 200,000 | <!-- num:NaiveMsAtTwoHundredThousand -->84.499<!-- /num --> | <!-- num:TiledMsAtTwoHundredThousand -->43.208<!-- /num --> | <!-- num:FusedMsAtTwoHundredThousand -->43.206<!-- /num --> | <!-- num:TilingSpeedupAtTwoHundredThousand -->1.96<!-- /num -->x | <!-- num:FusedOverTiledRatioAtTwoHundredThousand -->0.9913<!-- /num --> (<!-- num:FusedOverTiledIqrAtTwoHundredThousand -->0.0097<!-- /num -->) | <!-- num:TiledGigaInteractionsAtTwoHundredThousand -->926<!-- /num --> |
 
 ![N-body step cost against particle count](report/figures/fig_nbody_time.png)
 
@@ -117,21 +117,25 @@ This is the part of the project I would keep if I could keep only one.
 
 The paired ratios in the table above are the result. From 10,000 to 150,000
 particles fused beats tiled by more than the ratio's IQR and the session drift of
-<!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent: <!-- num:FusedOverTiledRatioAtTenThousand -->0.9445<!-- /num --> at 10,000 and
-<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9909<!-- /num --> at 150,000. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is not
-resolved: <!-- num:FusedOverTiledRatioAtMaxN -->0.9914<!-- /num --> with an IQR of <!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0276<!-- /num -->.
-The tiled trials there are bimodal, <!-- num:TiledHighModeRoundsAtMaxN -->4<!-- /num --> of <!-- num:PairedRoundsAtMaxN -->10<!-- /num -->
-near <!-- num:TiledHighModeMsAtMaxN -->44.4<!-- /num --> ms and the rest near <!-- num:TiledLowModeMsAtMaxN -->43.1<!-- /num --> ms, for a
+<!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent: <!-- num:FusedOverTiledRatioAtTenThousand -->0.9624<!-- /num --> at 10,000 and
+<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9905<!-- /num --> at 150,000. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is not
+resolved: <!-- num:FusedOverTiledRatioAtMaxN -->0.9913<!-- /num --> with an IQR of <!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0097<!-- /num -->.
+The tiled trials there are bimodal, <!-- num:TiledHighModeRoundsAtMaxN -->3<!-- /num --> of <!-- num:PairedRoundsAtMaxN -->10<!-- /num -->
+near <!-- num:TiledHighModeMsAtMaxN -->43.6<!-- /num --> ms and the rest near <!-- num:TiledLowModeMsAtMaxN -->43.2<!-- /num --> ms, for a
 reason not yet understood.
 
-What fusion removes, from the code: the split path takes three launches, and both
-integrator launches read the acceleration array, 24N bytes per step. The fused path
-takes one launch and reads that array in neither. It still writes it, 12N bytes, though
+What fusion removes, from the code: the split path runs three kernels, and both
+integrator kernels read the acceleration array, 24N bytes per step. The fused path
+runs one kernel and reads that array in neither. It still writes it, 12N bytes, though
 the engine no longer reads that write, because the diagnostics and the velocity
-conversions recompute the force first. Counting each array once per launch, and leaving
+conversions recompute the force first. Counting each array once per kernel, and leaving
 out the force sum's repeated source reads, which both paths share and which dominate, the
 split path touches <!-- num:ModelBytesPerParticleSplit -->124<!-- /num -->N bytes per step and the fused path
 <!-- num:ModelBytesPerParticleFused -->64<!-- /num -->N.
+
+The split path in this table launches as a captured CUDA graph, which removes time between its
+kernels and so takes away some of what fusion had to offer. Fused runs one kernel and is not
+captured. With no graphs, the ratio at 10,000 particles was 0.9445.
 
 Why 10 to 20 percent was too high: an all pairs sum is O(N^2) arithmetic over O(N) data,
 and hardware counters put device memory throughput **below one percent of peak** for
@@ -140,7 +144,7 @@ every variant.
 Why that does not explain the gain either: at the measured streaming bandwidth of
 <!-- num:GpuMeasuredBandwidth -->575.1<!-- /num --> GB/s, those <!-- num:ModelBytesPerParticleSaved -->60<!-- /num -->N bytes take
 <!-- num:ModelSavingMsAtMaxN -->0.0209<!-- /num --> ms at <!-- num:LadderMaxN -->200,000<!-- /num --> particles, <!-- num:ModelSavingPercentAtMaxN -->0.048<!-- /num --> percent
-of a step, and <!-- num:ModelSavingPercentAtMinN -->0.67<!-- /num --> percent at 10,000. The measured gains are
+of a step, and <!-- num:ModelSavingPercentAtMinN -->0.68<!-- /num --> percent at 10,000. The measured gains are
 several times larger. `v1.0.0` called a figure of this kind an absolute ceiling on what
 fusion could deliver, and that was wrong: it prices one resource, not the whole step. The
 source of the gain has not been measured.
@@ -157,13 +161,13 @@ counters say so. These are for one launch at <!-- num:ProfileParticles -->200,00
 
 | variant | SM | L1 and load store | L2 | device memory | global load sectors | warp issue |
 |---|---:|---:|---:|---:|---:|---:|
-| naive | <!-- num:NaiveSmPct -->87.98<!-- /num -->% | **<!-- num:NaiveLoneTexCellPct -->87.98<!-- /num -->%** | <!-- num:NaiveLtwoPct -->1.62<!-- /num -->% | <!-- num:NaiveDramCellPct -->0.34<!-- /num -->% | <!-- num:NaiveSectorsMillions -->5,000.1<!-- /num -->M | **<!-- num:NaiveIssueCellPct -->54.99<!-- /num -->%** |
-| tiled | <!-- num:TiledSmPct -->82.68<!-- /num -->% | **<!-- num:TiledLoneTexCellPct -->45.41<!-- /num -->%** | <!-- num:TiledLtwoPct -->1.61<!-- /num -->% | <!-- num:TiledDramCellPct -->0.35<!-- /num -->% | <!-- num:TiledSectorsMillions -->78.3<!-- /num -->M | **<!-- num:TiledIssueCellPct -->82.68<!-- /num -->%** |
-| fused | <!-- num:FusedSmPct -->83.59<!-- /num -->% | <!-- num:FusedLoneTexCellPct -->45.90<!-- /num -->% | <!-- num:FusedLtwoPct -->1.64<!-- /num -->% | <!-- num:FusedDramCellPct -->0.31<!-- /num -->% | <!-- num:FusedSectorsMillions -->78.3<!-- /num -->M | <!-- num:FusedIssueCellPct -->83.59<!-- /num -->% |
+| naive | <!-- num:NaiveSmPct -->87.96<!-- /num -->% | **<!-- num:NaiveLoneTexCellPct -->87.96<!-- /num -->%** | <!-- num:NaiveLtwoPct -->1.70<!-- /num -->% | <!-- num:NaiveDramCellPct -->0.34<!-- /num -->% | <!-- num:NaiveSectorsMillions -->5,000.1<!-- /num -->M | **<!-- num:NaiveIssueCellPct -->54.98<!-- /num -->%** |
+| tiled | <!-- num:TiledSmPct -->82.84<!-- /num -->% | **<!-- num:TiledLoneTexCellPct -->45.50<!-- /num -->%** | <!-- num:TiledLtwoPct -->1.75<!-- /num -->% | <!-- num:TiledDramCellPct -->0.32<!-- /num -->% | <!-- num:TiledSectorsMillions -->78.3<!-- /num -->M | **<!-- num:TiledIssueCellPct -->82.84<!-- /num -->%** |
+| fused | <!-- num:FusedSmPct -->83.49<!-- /num -->% | <!-- num:FusedLoneTexCellPct -->45.85<!-- /num -->% | <!-- num:FusedLtwoPct -->1.71<!-- /num -->% | <!-- num:FusedDramCellPct -->0.35<!-- /num -->% | <!-- num:FusedSectorsMillions -->78.3<!-- /num -->M | <!-- num:FusedIssueCellPct -->83.49<!-- /num -->% |
 
 Tiling cuts global load sectors by **<!-- num:SectorReduction -->63.9<!-- /num -->x**, taking first level cache
-throughput from a near saturated <!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent down to <!-- num:TiledLoneTexPct -->45.4<!-- /num --> percent.
-Warp issue efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.7<!-- /num --> percent. Arithmetic
+throughput from a near saturated <!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent down to <!-- num:TiledLoneTexPct -->45.5<!-- /num --> percent.
+Warp issue efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.8<!-- /num --> percent. Arithmetic
 instruction counts are equal across all three variants to within a fraction of a percent,
 which is what licenses attributing the difference to data movement.
 
@@ -226,35 +230,38 @@ Full derivations, and what each gate is designed to catch, are in
 
 ## The fluid solver
 
-Weakly compressible SPH with a three prime spatial hash, CUB radix sort, and a
+Weakly compressible SPH with a dense grid neighbour search, CUB radix sort, and a
 fused force and integration pass.
 
 | particles | ms per step | steps per second |
 |---:|---:|---:|
-| 10,000 | <!-- num:SphStepMsAtTenThousand -->0.2483<!-- /num --> | <!-- num:SphStepsPerSecondAtTenThousand -->4,028<!-- /num --> |
-| 25,000 | <!-- num:SphStepMsAtTwentyFiveThousand -->0.2934<!-- /num --> | <!-- num:SphStepsPerSecondAtTwentyFiveThousand -->3,408<!-- /num --> |
-| 50,000 | <!-- num:SphStepMsAtFiftyThousand -->0.3450<!-- /num --> | <!-- num:SphStepsPerSecondAtFiftyThousand -->2,899<!-- /num --> |
-| 75,000 | <!-- num:SphStepMsAtSeventyFiveThousand -->0.5505<!-- /num --> | <!-- num:SphStepsPerSecondAtSeventyFiveThousand -->1,817<!-- /num --> |
-| 100,000 | <!-- num:SphStepMsAtHundredThousand -->0.5928<!-- /num --> | <!-- num:SphStepsPerSecondAtHundredThousand -->1,687<!-- /num --> |
+| 10,000 | <!-- num:SphStepMsAtTenThousand -->0.0830<!-- /num --> | <!-- num:SphStepsPerSecondAtTenThousand -->12,049<!-- /num --> |
+| 25,000 | <!-- num:SphStepMsAtTwentyFiveThousand -->0.0969<!-- /num --> | <!-- num:SphStepsPerSecondAtTwentyFiveThousand -->10,324<!-- /num --> |
+| 50,000 | <!-- num:SphStepMsAtFiftyThousand -->0.1137<!-- /num --> | <!-- num:SphStepsPerSecondAtFiftyThousand -->8,794<!-- /num --> |
+| 75,000 | <!-- num:SphStepMsAtSeventyFiveThousand -->0.1537<!-- /num --> | <!-- num:SphStepsPerSecondAtSeventyFiveThousand -->6,507<!-- /num --> |
+| 100,000 | <!-- num:SphStepMsAtHundredThousand -->0.1873<!-- /num --> | <!-- num:SphStepsPerSecondAtHundredThousand -->5,338<!-- /num --> |
 
-The interquartile range of these trials is <!-- num:SphIqrLeastPercent -->3.2<!-- /num --> to <!-- num:SphIqrMostPercent -->9.7<!-- /num -->
+The interquartile range of these trials is <!-- num:SphIqrLeastPercent -->11.5<!-- /num --> to <!-- num:SphIqrMostPercent -->17.3<!-- /num -->
 percent of the median. That is the flow rather than noise: the fluid keeps moving through
 the measurement, and per round times trace a smooth curve. These numbers are not
 comparable with `v1.0.0`, because the particle mass changed and the fluid behaves
-differently.
+differently. Nor can they be divided by another version's: the length of a trial depends on what
+a step costs, so a faster build times a later and cheaper stretch of the flow. Comparing versions
+takes a side by side run over the same steps.
 
 The fluid update is a kick drift leapfrog with no initial offset, and its viscous term is
 first order. The defaults are not water: see [Configuration](#configuration).
 
 ![Fluid step cost against particle count](report/figures/fig_sph_scaling.png)
 
-One design point is worth calling out, because it is the subtlest correctness
-issue in the project. Hashing is many to one, so two of the twenty seven cells
-the neighbour search visits can land in the same bucket, and a naive scan would
-then **count those neighbours twice**. Filtering by distance does not save you:
-those particles genuinely are within the smoothing radius. The engine stores an
-exact 64 bit cell key per particle and compares it during the scan, and a gate
-verifies the resulting density field against a brute force O(N²) sum, agreeing to
+One design point is worth calling out, because a wrong neighbour search still
+looks like a fluid. Every domain is bounded, so each cell gets a unique linear index,
+with x varying fastest. No two visited cells can share a slot, so **no neighbour can be
+counted twice**, and once sorted the three cells of an x row are contiguous, so the search
+reads nine ranges instead of twenty seven cells. An earlier version used a spatial hash, to
+avoid the storage of a dense grid, and that argument was wrong: the hash table was larger
+than the grid it avoided. A gate verifies the resulting density field against a brute force
+O(N²) sum, agreeing to
 <!-- num:NeighbourSearchError -->2.85e-7<!-- /num -->.
 
 ---
@@ -266,14 +273,15 @@ flowchart TD
     CLI[main.cpp: CLI and overrides] --> ENGINE[SimulationEngine]
     CONFIG[Config: JSON parsing and validation] --> ENGINE
     ENGINE --> PS[ParticleSystem: device resident structure of arrays]
-    ENGINE --> NB[N-body launchers]
-    ENGINE --> SPH[SphSolver]
+    ENGINE --> SOLVER[Solver interface]
+    SOLVER --> NB[NBodySolver]
+    SOLVER --> SPH[SphSolver]
     ENGINE --> DIAG[DiagnosticsReducer: double precision, deterministic]
     ENGINE --> SNAP[Snapshot: atomic write, bit identical resume]
     NB --> KNAIVE[compute_forces_naive]
     NB --> KTILED[compute_forces_tiled]
     NB --> KFUSED[nbody_fused_step]
-    SPH --> KHASH[spatial hash, sort, cell bounds, gather]
+    SPH --> KGRID[cell index, sort, cell bounds, gather]
     SPH --> KSPH[density, pressure, viscosity, integrate]
     PHYS[physics headers: compile as host and device] --> KNAIVE
     PHYS --> KTILED
@@ -282,7 +290,7 @@ flowchart TD
     PHYS --> HOSTTESTS[host only unit tests, no GPU needed]
 ```
 
-The force law, smoothing kernels and spatial hash live in headers that compile
+The force law, smoothing kernels and uniform grid live in headers that compile
 both as device code and as ordinary host C++. The kernels and the tests
 therefore cannot drift apart, and the formula level tests run in continuous
 integration on a machine with no GPU. The one place this sharing is
@@ -326,7 +334,8 @@ whose small gain was easy to accept.
 
 - [experiments/results/benchmarks.csv](experiments/results/benchmarks.csv), every timing with full provenance
 - [experiments/results/validation_gates.csv](experiments/results/validation_gates.csv), every gate value
-- [experiments/results/profile_summary.csv](experiments/results/profile_summary.csv), the hardware counters
+- [experiments/results/profile_summary.csv](experiments/results/profile_summary.csv), the hardware counters and stall reasons, with [profile_runs.csv](experiments/results/profile_runs.csv) saying which commit made each export
+- [experiments/results/sph_pipeline_split.csv](experiments/results/sph_pipeline_split.csv), where a fluid step goes, pass by pass
 - [report/figures/](report/figures/), every chart as both PDF and PNG
 
 ---
@@ -339,19 +348,62 @@ profiler. It is **not** needed to build the project or run the host test suite.
 ```bash
 git clone https://github.com/Olajide-Badejo/Particle-Physics-Simulation.git
 cd Particle-Physics-Simulation
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
+```
+
+The presets are in `CMakePresets.json`:
+
+| Preset | Build directory | What it is |
+|---|---|---|
+| `dev` | `build` | `sm_120` with fast math; the benchmarks are measured in this one |
+| `release-fat` | `build-fat` | `physics_core` for every release architecture |
+| `host-only` | `build-host` | no CUDA at all: the host library and its tests |
+| `ci` | `build-ci` | the fat build with warnings as errors, as continuous integration runs it |
+
+Each has a configure, a build and a test preset of the same name. The build presets use 8
+jobs; add `-j` to change that. nlohmann/json and GoogleTest come from an installed copy at the
+pinned version or newer, and are fetched at the pinned tag otherwise.
+
+To reproduce everything, including the benchmarks and both reports:
+
+```bash
 make setup
 make all
 ```
 
-`make all` builds everything, runs the style gate, runs the full test suite while recording
+`make setup` is the `dev` preset. `make all` builds everything, runs the style gate, runs the full test suite while recording
 the gates, probes the device, runs the benchmark sweep and the profiler, regenerates every
 figure and table, and compiles both reports.
 
 No GPU or CUDA toolkit at hand:
 
 ```bash
-make setup-host-only   # configures without CUDA entirely
-make test              # the host tests: formulas, parsing, snapshots, the number checker
+cmake --preset host-only          # configures without CUDA entirely
+cmake --build --preset host-only
+ctest --preset host-only          # the host tests: formulas, parsing, snapshots, the number checker
+```
+
+To use the engine from another CMake project, install it and use `find_package`:
+
+```bash
+cmake --install build --prefix /tmp/cps-inst
+cmake -S tests/install_consumer -B /tmp/cps-cons -DCMAKE_PREFIX_PATH=/tmp/cps-inst
+cmake --build /tmp/cps-cons
+/tmp/cps-cons/cps_consumer
+```
+
+That consumer is a small example: `find_package(cps REQUIRED)`, then link `cps::physics_core`.
+The comments in `cmake/cpsConfig.cmake.in` say what a consumer must provide.
+
+In Docker, on the same image continuous integration uses, with the NVIDIA runtime for the GPU:
+
+```bash
+docker build -t cps:dev --build-arg CPS_GIT_COMMIT="$(git rev-parse --short=12 HEAD)" .
+docker run --rm cps:dev ctest --preset release-fat               # device tests read Skipped
+docker run --rm --gpus all cps:dev ctest --preset release-fat    # the whole suite
+docker run --rm --gpus all cps:dev cps run two_body
 ```
 
 Individual targets:
@@ -364,7 +416,7 @@ make validate        # the physics gates; results go to the build tree
 make record-results  # the whole suite, recording the gates in experiments/results
 make bench           # the benchmark sweep and tile sweep; refuses a dirty tree
 make bench-quick     # a smoke test of the driver; its rows go to a temporary directory
-make profile         # hardware counters through Nsight Compute
+make profile         # hardware counters and the SPH split through Nsight; refuses a dirty tree
 make reports         # both PDFs
 make check-style     # the style gate
 ```
@@ -372,12 +424,20 @@ make check-style     # the style gate
 Run a simulation directly:
 
 ```bash
-./build/bin/cuda_physics_sim --config configs/dam_break_50k.json
-./build/bin/cuda_physics_sim --config configs/plummer_10k.json --variant fused
-./build/bin/cuda_physics_sim --config configs/plummer_10k.json --resume
-./build/bin/cuda_physics_sim --device-info
-./build/bin/cuda_physics_sim --version
+./build/bin/cps run dam_break_50k
+./build/bin/cps run plummer_10k --variant fused
+./build/bin/cps run plummer_10k --resume
+./build/bin/cps run my_config.json --steps 500
+./build/bin/cps presets
+./build/bin/cps info
+./build/bin/cps --version
+./build/bin/cps convert old_config.json new_config.json
+./build/bin/cps convert old_snapshot.bin new_snapshot.bin --config my_config.json
 ```
+
+A bare name is a preset compiled into the binary, and a path or a `.json` name is a file. The old
+form, `--config <file>` with no subcommand, and the old name `cuda_physics_sim` still work for one
+major version, with a one line notice on stderr.
 
 Flags worth knowing:
 
@@ -387,36 +447,94 @@ Flags worth knowing:
 - `--allow-unstable-dt` turns the fluid solver's refusal of a time step above its stability
   limits into a warning. At the shipped `dt`, `--particles` above about 190,000 is refused,
   because the acoustic limit shrinks with the smoothing radius.
-- `--print-config` prints the resolved configuration as JSON.
+- `--print-config` prints the resolved configuration as JSON, in schema 2 form with every field.
 
 A CLI parse error exits 2, and zero or negative `--dt`, `--particles` and `--steps` are
 refused. Misspelled or out of range configuration keys abort, zero softening is refused for
 N-body, and non finite state stops a run. Run `--help` for the rest.
 
+### From clone to a ParaView dam break
+
+With `--vtk-every`, a run writes VTK frames and a series file that ParaView opens as they are:
+
+```bash
+git clone https://github.com/Olajide-Badejo/Particle-Physics-Simulation.git
+cd Particle-Physics-Simulation
+cmake --preset dev
+cmake --build --preset dev --target cps
+./build/bin/cps run dam_break_50k --vtk-every 50 --vtk-dir vtk/dam_break --snapshot-every 0 --diagnostics ""
+```
+
+Or in Docker, with the image from the section above:
+
+```bash
+mkdir -p vtk
+docker run --rm --gpus all --user "$(id -u):$(id -g)" -v "$PWD/vtk:/src/vtk" cps:dev cps run dam_break_50k --vtk-every 50 --vtk-dir vtk/dam_break --snapshot-every 0 --diagnostics ""
+```
+
+Then open `vtk/dam_break/series.pvd` in ParaView and press Apply. The points show with no filter,
+and the time slider follows the simulated time. Color by `velocity` to see the front.
+
+What a frame holds, with the layout in `include/cps/io/vtk.hpp`:
+
+- **Points**, and at each point `velocity`, `mass` and `id`, all as the state holds them.
+- **`id`** names the particle. The fluid solver sorts its particles every step, so point number
+  `k` is a different particle from one frame to the next. Follow `id` instead, which runs from 0 to
+  N-1 in the initial order.
+- **`TimeValue`, `Step` and `VelocityConvention`** in the field data.
+- **The velocity is not adjusted.** The fused N-body kernel and the fluid solver carry a velocity
+  half a step behind the positions, so a frame from either holds that half step velocity, and its
+  `VelocityConvention` reads `half_step`. The naive and tiled kernels read `synchronised`.
+
+Density and pressure are not in a frame.
+
+Frames fall on multiples of the cadence and on step 0, so a last step off the cadence gets none.
+Frames and the series file are each written to a temporary file and renamed, so a killed run leaves
+a valid series. A `--resume` keeps the frames up to the snapshot's step, drops any past it, and
+carries on, the same as the diagnostics file. A fresh run replaces the series in its directory.
+
+`python/cps_io` reads all of this with NumPy alone, for use from a script:
+
+```bash
+python3 -I python/cps_io/check_vtp.py vtk/dam_break/series.pvd
+```
+
+It checks the XML, the array sizes against the appended block, and that every frame holds the same
+ids. To import it, put `python/` on the path: `from cps_io import read_snapshot, read_vtp, read_pvd`.
+
 ### Configuration
 
-Every key is optional and has a default; `configs/` has complete examples.
+A configuration file starts with `"schema": 2` and groups its keys into the sections `run`,
+`initial_condition`, `nbody`, `sph` and `output`. Every key and section is optional and has a
+default, so `{"schema": 2}` is valid; `presets/` has complete examples.
+
+A file with no `schema` key, or with `"schema": 1`, is the older flat layout. It still works: it
+is migrated when read, with one warning line, and `--print-config` prints its schema 2 form.
 
 | key | default | meaning |
 |---|---:|---|
-| `solver`, `variant` | `nbody`, `tiled` | which solver and which N-body kernel |
-| `num_particles`, `steps`, `dt` | 10000, 1000, 1e-3 | size and length of the run |
-| `softening` | 0.01 | Plummer softening length. In a 10,000 particle sphere of scale radius 1 this is about 7.5 times below the mean separation, so that run is mildly collisional; softening keeps it stable and does not make it collisionless |
-| `diagnostics_interval` | 100 | steps per diagnostics row. Each row costs an all pairs potential pass, so 1 is expensive. `v1.0.0` defaulted to 1 |
-| `snapshot_interval` | 1000 | steps per snapshot |
-| `allow_unstable_dt` | false | see `--allow-unstable-dt` |
+| `solver`, `nbody.variant` | `nbody`, `tiled` | which solver and which N-body kernel |
+| `initial_condition.num_particles`, `run.steps`, `run.dt` | 10000, 1000, 1e-3 | size and length of the run |
+| `nbody.softening` | 0.01 | Plummer softening length. In a 10,000 particle sphere of scale radius 1 this is about 7.5 times below the mean separation, so that run is mildly collisional; softening keeps it stable and does not make it collisionless |
+| `output.diagnostics_interval` | 100 | steps per diagnostics row. Each row costs an all pairs potential pass, so 1 is expensive. `v1.0.0` defaulted to 1 |
+| `output.snapshot_interval` | 1000 | steps per snapshot |
+| `output.vtk_interval`, `output.vtk_dir` | 0, `vtk` | steps per VTK frame, where 0 means none, and the directory for the frames and `series.pvd`. See `--vtk-every` and `--vtk-dir` |
+| `run.allow_unstable_dt` | false | see `--allow-unstable-dt` |
+| `run.use_graphs` | true | launch the naive, tiled and fluid steps as a captured CUDA graph, or override it with `--graphs on\|off`. The same kernels run in the same order, so it moves the timing and not the physics, and a resume may change it. The fused variant launches a single kernel, so there is nothing to remove, and it stays on the stream |
+| `nbody.tile_size` | 256 | tile width of the tiled force kernel: 32, 64, 128 or 256. It moves the timing and not the physics, so a resume may change it |
 | `sph.viscosity` | 0.2 | dynamic viscosity in Pa s. At the default rest density that is 2e-4 m^2/s kinematic, about 200 times water |
 | `sph.boundary_damping` | 0.4 | fraction of the normal velocity kept at a wall, so each impact keeps 16 percent of the normal kinetic energy |
 | `sph.rest_density`, `sph.gas_constant` | 1000, 1000 | equation of state `p = k (rho - rho_0)` |
 | `sph.smoothing_radius`, `sph.particle_mass` | 0 | 0 derives it: the radius from the fluid volume and count, the mass from a kernel sum over the lattice laid out |
+| `sph.external_gravity` | `[0, -9.81, 0]` | uniform acceleration on the fluid. The N-body solver does not read it |
 
 These fluid defaults are documented rather than changed in this release, because changing them
 would change every fluid number.
 
-The default tile width of <!-- num:BestTileWidth -->256<!-- /num --> is a compile time constant, not a configuration key.
+The default tile width of <!-- num:BestTileWidth -->256<!-- /num --> comes from the sweep.
 At <!-- num:TileSweepParticles -->100,000<!-- /num --> particles it is <!-- num:TileWidthGainPercent -->5.2<!-- /num --> percent faster than the width of
-32 that `v1.0.0` defaulted to, a paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9483<!-- /num --> with an IQR of
-<!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0028<!-- /num -->.
+32 that `v1.0.0` defaulted to, a paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9486<!-- /num --> with an IQR of
+<!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0020<!-- /num -->.
 
 ---
 
@@ -437,6 +555,14 @@ The default build targets `sm_120` only. `-DCPS_FAT_BINARY=ON` builds `physics_c
 The bandwidth comparisons here use the **measured** figure, never the theoretical peak.
 The device memory percentages in the counter table are percent of peak as Nsight Compute
 reports them.
+
+`scripts/profile_kernels.sh` profiles naive, tiled and fused at three particle counts through
+Nsight Compute, which serialises the launches, so it describes each kernel and nothing between
+them. `scripts/profile_sph_split.sh` times the passes of a fluid step from the kernel records in
+Nsight Systems, which does not, and states its warmup and measured steps in the file. The engine and
+the fluid solver mark the step, each pass, diagnostics, snapshots and frames with NVTX ranges. Both
+scripts take `--out` for a scratch directory and, only with that, `--allow-dirty`. A missing profiler
+is a failure unless `CPS_ALLOW_NO_NCU=1` or `CPS_ALLOW_NO_NSYS=1` says otherwise.
 
 ---
 
@@ -465,17 +591,23 @@ Values no CSV records, typed here and labelled: the double precision truncation 
 ## Repository layout
 
 ```text
-include/physics/   force law, SPH kernels, spatial hash (host and device)
-include/core/      configuration, particle state, engine, snapshots, diagnostics
-src/kernels/       every CUDA kernel
-src/core/          engine, parsing, snapshots, initial conditions
-tests/             unit (host and device), integration, validation
-benchmarks/        the sweep driver
-scripts/           style gate, plotting, report assets, profiling, number and provenance checks
-configs/           the three shipped configurations
-experiments/       recorded results
-report/            main report sources and figures
-report_debug/      debug report sources
+include/cps/physics/ force law, SPH kernels, uniform grid (host and device)
+include/cps/core/    configuration, particle state, engine, snapshots, diagnostics
+include/cps/solvers/ the N-body and fluid solver interfaces
+include/cps/io/      the VTK frame and series writer
+include/cps/utils/   CUDA helpers and the progress bar
+src/kernels/         every CUDA kernel
+src/core/            engine, parsing, snapshots, initial conditions
+src/io/              the VTK frame and series writer
+python/cps_io/       NumPy readers for snapshots and frames, and the frame checker
+tests/               unit (host and device), integration, validation, install consumer
+benchmarks/          the sweep driver
+scripts/             style gate, plotting, report assets, profiling, number, provenance and path checks
+cmake/               version stamp and the find_package configuration
+presets/             the three shipped configurations
+experiments/         recorded results
+report/              main report sources and figures
+report_debug/        debug report sources
 ```
 
 ---

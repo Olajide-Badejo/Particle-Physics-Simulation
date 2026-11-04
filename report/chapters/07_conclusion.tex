@@ -21,9 +21,9 @@ reason not yet understood. The traffic it removes is too small to explain the ga
 what does explain it has not been measured.
 
 The parts of the design that held up did so because they were chosen against a specific
-failure. The exact cell key comparison in the neighbour search was added because hashing
-is many to one and a bucket scan would otherwise count some neighbours twice, and the
-brute force comparison agrees to \NeighbourSearchError{}. Double precision diagnostic
+failure. The brute force comparison of the neighbour search was added because a dropped or
+double counted neighbour still looks like a fluid, and it held unchanged through a
+complete replacement of the search, agreeing to \NeighbourSearchError{}. Double precision diagnostic
 accumulators were chosen because a single precision reduction would have measured itself
 rather than the integrator. Velocity Verlet's order is now confirmed by double precision
 gates; the single precision energy figure could not show it.

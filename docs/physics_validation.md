@@ -209,22 +209,26 @@ restoring force exactly where the fluid needs one, and particles clump.
 
 ## Neighbour search against brute force
 
-**Theory.** A hashed neighbour search must find exactly the neighbours a brute
-force scan finds, no more and no fewer.
+**Theory.** The grid search must find exactly the neighbours a brute force scan
+finds, no more and no fewer.
 
-**What it catches.** The central risk in the fluid solver. Hashing is many to
-one, so two of the twenty seven visited cells can land in the same bucket and a
-naive scan counts those particles twice. Distance filtering does not help,
-because they genuinely are within the smoothing radius. The defence is an exact
-64 bit cell key compared during the scan, and this gate is what proves it works.
+**What it catches.** The central risk in the fluid solver. A row of cells that is cut
+wrongly at a wall or that runs on into the next row, or a cell narrower than the support,
+drops neighbours or pulls in the wrong ones, and the fluid still looks like a fluid. A cell
+has one index, so a neighbour cannot be counted twice by two visited cells sharing a slot.
+This gate is what proves the search as a whole, and it stayed unchanged when the search was
+rebuilt from a spatial hash.
 
 **Measured.** Worst relative density difference against an O(N^2) host sum over
 identical positions is 2.85e-07, which is single precision rounding. A single
 dropped or double counted neighbour would move a density by several percent.
 
-**Supporting checks.** A separate health check confirms bucket collisions
-actually occur at a small rate, so this gate is exercising the defence rather
-than a table so sparse nothing collides.
+**Supporting checks.** A block of fluid never reaches the places a dense grid can go
+wrong, so `NeighbourSearch.*` compares density and force, particle by particle, with a host
+sum over every pair, for particles on every wall and corner, across cell boundaries, in one
+cell wide domains, past the walls and in an almost empty grid. `SolverSmoke.EveryCellRunHoldsOnlyThatCellsParticles`
+confirms that no sorted run holds a particle from another cell. And a unit test finds pairs that
+a cell of exactly the smoothing radius would lose, and confirms the grid's margin loses none.
 
 ## Interior density
 
@@ -273,7 +277,7 @@ mass.
 
 **Effect on the dam break.** The equation of state turns excess density directly
 into pressure, so the v1 mass started the interior near `k * 76 = 76 kPa`, against
-a hydrostatic base pressure of `rho g H = 3.9 kPa`. For `configs/dam_break_50k.json`
+a hydrostatic base pressure of `rho g H = 3.9 kPa`. For `presets/dam_break_50k.json`
 the maximum particle speed after 100 steps fell from 3.695 m/s to 0.625 m/s with the
 calibrated mass. Free fall alone would give 0.098 m/s, so the start is still not
 quiet. There is no gate on this here; a hydrostatic test is planned for a later release.
@@ -284,7 +288,7 @@ The fluid solver computes three limits when it is constructed, prints them at
 start up, and refuses a `dt` above the smallest, naming the limit, its value and
 `dt`.
 
-| limit | formula | `configs/dam_break_50k.json` |
+| limit | formula | `presets/dam_break_50k.json` |
 |---|---|---:|
 | acoustic | `0.25 h / sqrt(gas_constant)`, since `c = sqrt(k)` for this equation of state | 1.56e-04 |
 | viscous | `0.125 h^2 rest_density / viscosity`, skipped when the viscosity is zero | 0.243 |
@@ -298,6 +302,22 @@ every position, so a fluid run at `dt` from 0.002 up to 1e4 stays finite and giv
 meaningless results with no other error. `--allow-unstable-dt`, or
 `allow_unstable_dt` in the configuration, downgrades the refusal to a warning. That
 field is run control, so it stays out of the physics fingerprint.
+
+## The dam break is chaotic at the particle level
+
+**Measured, in a one-off control and not a registered gate.** Moving `dt` by a single floating point
+step, in either version of the neighbour search, moves the median particle by about 5 smoothing radii
+by step 2,000 of the 50,000 particle dam break, and the most displaced by about 30. Replacing the
+hash with the dense grid gives the same: median 5.2, maximum 32.7. Below about 200 steps that
+comparison is meaningful, at 6e-5 smoothing radii for the grid against the hash; by step 1,000 it no
+longer is.
+
+**What this means.** Bit identical resume is still exact, because within one build the arithmetic
+repeats. Across builds, comparing particles after a few hundred steps measures the chaos and not the
+code. Bulk quantities hold better, though not perfectly: in the same control the centre of mass moved
+by at most 0.054 smoothing radii and the kinetic energy differed by up to 2.4 percent. Any
+quantitative comparison of this flow, against an earlier version or against experiment, needs an
+ensemble and a stated spread, not one run.
 
 ## Mass conservation and the sort permutation
 

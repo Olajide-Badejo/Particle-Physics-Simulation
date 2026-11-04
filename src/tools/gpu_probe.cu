@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "utils/cuda_helpers.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace {
 
@@ -46,11 +46,11 @@ double measure_stream_bandwidth(const cps::DeviceInfo& info) {
 
     const int repeats = 20;
     cps::CudaTimer timer;
-    timer.start();
+    timer.start(nullptr);
     for (int i = 0; i < repeats; ++i) {
         stream_copy_kernel<<<grid, block>>>(source.get(), target.get(), vector_count);
     }
-    const float elapsed_ms = timer.stop();
+    const float elapsed_ms = timer.stop(nullptr);
     CUDA_CHECK(cudaGetLastError());
 
     const double moved_bytes = 2.0 * static_cast<double>(bytes_per_array) * repeats;

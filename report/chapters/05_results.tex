@@ -96,17 +96,20 @@ At \LadderMaxN{} particles the difference is not resolved. The ratio is
 \TiledHighModeMsAtMaxN{} milliseconds and the rest near \TiledLowModeMsAtMaxN{}. I do
 not yet understand why. One hundred and fifty thousand particles shows no such split.
 
-What fusion removes is known from the code. The split path takes three launches: half
-kick and drift, force, closing half kick. Both integrator launches read the
+What fusion removes is known from the code. The split path runs three kernels: half
+kick and drift, force, closing half kick. Both integrator kernels read the
 acceleration array, $24N$ bytes per step, and the velocities are read and written
-twice. The fused path takes one launch and does not read the acceleration array at
+twice. The fused path runs one kernel and does not read the acceleration array at
 all. It still writes it, $12N$ bytes, although the engine never reads that write,
 because the diagnostics and the velocity conversions recompute the force first.
-Counting each array once per launch, and leaving out the repeated source reads of the
+Counting each array once per kernel, and leaving out the repeated source reads of the
 force sum, which both paths share and which dominate, the split path touches
 \ModelBytesPerParticleSplit{} bytes per particle per step and the fused path
 \ModelBytesPerParticleFused{}, so fusion removes \ModelBytesPerParticleSaved{}$N$ bytes
-and two launches.
+and two kernels. The split path in these tables launches as a captured CUDA graph, which
+removes time between its kernels and so takes away some of what fusion had to offer, while
+the fused kernel is not captured. With no graphs, the ratio at ten thousand particles was
+0.9445.
 
 That traffic does not explain the gain. At the measured streaming bandwidth of
 \GpuMeasuredBandwidth{} GB/s, \ModelBytesPerParticleSaved{}$N$ bytes take
@@ -212,17 +215,21 @@ At fifty thousand particles, the size of the shipped dam break, a step costs
 which is \SphInteractiveMargin{} times inside a sixty frame per second budget. At
 \SphMaxN{} particles it costs \SphMsAtMaxN{} milliseconds, \SphFpsAtMaxN{} steps per
 second. These results are not comparable with \texttt{v1.0.0}, because the particle mass
-changed and the fluid behaves differently.
+changed and the fluid behaves differently. Nor can they be divided by another version's:
+the length of a trial depends on what a step costs, so a faster build times a later and
+cheaper stretch of the flow. Comparing versions takes a side by side run over the same steps.
 
 The interquartile range of the fluid trials is \SphIqrLeastPercent{} to
 \SphIqrMostPercent{} percent of the median, far above the session drift. That is the
 flow rather than noise: each engine stays alive across its trials, so a size advances
-through \SphTimedStepsLeast{} to \SphTimedStepsMost{} timed steps, and the per round
+through \SphTimedStepsRange{} timed steps, and the per round
 times trace a smooth curve as the fluid moves and its neighbour lists change.
 
 Scaling is sublinear at the small end: \SphCountRatio{} times the particles cost
-\SphTimeRatio{} times the time. A step takes six launches whatever its size, and their
-fixed cost is a plausible reason, but I have not profiled the fluid step.
+\SphTimeRatio{} times the time. The kernels of a step have a fixed cost whatever its size,
+which is a plausible reason, but the step has only been split pass by pass at one hundred
+thousand particles, where with graphs off \SphSplitBetweenKernelsPct{} percent of it is
+time between kernels.
 
 \section{Physics gates}
 \label{sec:gates}
@@ -288,7 +295,7 @@ scale radius is ten percent wrong returns a p value below $10^{-6}$, which is wh
 establishes that the test can reject at all.
 
 For the fluid solver, the poly6 kernel integrates to one with an error of
-\PolySixNormalisationError{}, and the density field from the hashed neighbour search
+\PolySixNormalisationError{}, and the density field from the neighbour search
 agrees with a brute force $O(N^2)$ sum over the same positions to \NeighbourSearchError{}.
 
 The particle mass now comes from a kernel sum over the lattice actually laid out, so that

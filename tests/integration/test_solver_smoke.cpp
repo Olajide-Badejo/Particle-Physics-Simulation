@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
-#include "solvers/sph_solver.hpp"
+#include "cps/core/simulation_engine.hpp"
+#include "cps/solvers/sph_solver.hpp"
 #include "test_support_gpu.hpp"
 
 namespace {
@@ -73,7 +73,7 @@ TEST(SolverSmoke, EveryNBodyVariantRunsAHundredStepsCleanly) {
         ASSERT_EQ(cudaGetLastError(), cudaSuccess) << label;
 
         cps::HostParticleState state;
-        engine.particles().download(state);
+        engine.particles().download(state, engine.stream());
         expect_all_finite(state, label);
         EXPECT_EQ(engine.current_step(), 100);
     }
@@ -90,7 +90,7 @@ TEST(SolverSmoke, TheFluidSolverRunsAHundredStepsCleanly) {
     ASSERT_EQ(cudaGetLastError(), cudaSuccess);
 
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     expect_all_finite(state, "sph");
 }
 
@@ -108,7 +108,7 @@ TEST(SolverSmoke, TheFluidStaysInsideItsDomain) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     for (std::size_t i = 0; i < state.size(); ++i) {
         EXPECT_GE(state.x[i], config.sph.domain_min.x) << "index " << i;
         EXPECT_LE(state.x[i], config.sph.domain_max.x) << "index " << i;
@@ -128,7 +128,7 @@ TEST(SolverSmoke, TheDamBreakColumnCollapsesAndSpreads) {
     engine.initialize();
 
     cps::HostParticleState before;
-    engine.particles().download(before);
+    engine.particles().download(before, engine.stream());
     float initial_reach = 0.0f;
     float initial_height = 0.0f;
     for (std::size_t i = 0; i < before.size(); ++i) {
@@ -142,7 +142,7 @@ TEST(SolverSmoke, TheDamBreakColumnCollapsesAndSpreads) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     cps::HostParticleState after;
-    engine.particles().download(after);
+    engine.particles().download(after, engine.stream());
     float final_reach = 0.0f;
     double mean_height = 0.0;
     double initial_mean_height = 0.0;
@@ -170,7 +170,7 @@ TEST(SolverSmoke, InteriorDensityRecoversTheRestDensity) {
     engine.initialize();
 
     cps::SphSolver solver(config, config.num_particles);
-    solver.build_neighbours_and_density(engine.particles());
+    solver.build_neighbours_and_density(engine.particles(), engine.stream());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     std::vector<float> density(static_cast<std::size_t>(config.num_particles));
@@ -184,7 +184,7 @@ TEST(SolverSmoke, InteriorDensityRecoversTheRestDensity) {
                           sorted_index.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
 
     const float h = solver.derived().smoothing_radius;
     double sum = 0.0;
@@ -212,20 +212,70 @@ TEST(SolverSmoke, InteriorDensityRecoversTheRestDensity) {
         << config.sph.rest_density;
 }
 
-// The hash is meant to spread cells across the table. This records what the
-// collision rate actually is on the shipped configuration rather than assuming
-// it is small.
-TEST(SolverSmoke, TheHashTableCollisionRateIsSmall) {
+// A cell has one index, so a run of the sorted array should hold that cell's
+// particles and no others. This checks what the rate of foreign particles actually
+// is on the shipped configuration rather than assuming it is zero.
+TEST(SolverSmoke, EveryCellRunHoldsOnlyThatCellsParticles) {
     SKIP_WITHOUT_GPU();
     cps::Config config = sph_config(30000, 0);
     cps::SimulationEngine engine(config);
     engine.initialize();
 
     cps::SphSolver solver(config, config.num_particles);
-    const int collisions = solver.count_bucket_collisions(engine.particles());
-    const double rate = static_cast<double>(collisions) / config.num_particles;
-    EXPECT_LT(rate, 0.05) << collisions << " of " << config.num_particles
-                          << " particles sit next to a foreign cell in their bucket";
+    solver.build_neighbours_and_density(engine.particles(), engine.stream());
+    CUDA_CHECK(cudaStreamSynchronize(engine.stream()));
+
+    const cps::UniformGrid& grid = solver.grid();
+    std::vector<uint32_t> cell_start(cps::cell_table_entries(grid.num_cells));
+    CUDA_CHECK(cudaMemcpy(cell_start.data(), solver.cell_start(),
+                          cell_start.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+    std::vector<uint32_t> sorted_index(static_cast<std::size_t>(config.num_particles));
+    CUDA_CHECK(cudaMemcpy(sorted_index.data(), solver.sorted_index(),
+                          sorted_index.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+    cps::HostParticleState state;
+    engine.particles().download(state, engine.stream());
+
+    EXPECT_EQ(cell_start.front(), 0u);
+    EXPECT_EQ(cell_start.back(), static_cast<uint32_t>(config.num_particles));
+    int foreign = 0;
+    for (std::size_t k = 0; k < sorted_index.size(); ++k) {
+        const std::size_t i = sorted_index[k];
+        const uint32_t cell = cps::cell_index(grid, state.x[i], state.y[i], state.z[i]);
+        if (k < cell_start[cell] || k >= cell_start[cell + 1u]) {
+            ++foreign;
+        }
+    }
+    EXPECT_EQ(foreign, 0) << foreign << " of " << config.num_particles
+                          << " particles sit outside the run of their own cell";
+}
+
+// The contract in simulation_engine.hpp: the arrays are safe to read directly
+// after initialize() and again after synchronize(), and step() leaves them to
+// the device until then. The fused variant swaps its position buffers, so this
+// also checks that x() names the right one once the host has caught up.
+TEST(SolverSmoke, TheArraysAreSafeToReadWhereTheEngineSaysTheyAre) {
+    SKIP_WITHOUT_GPU();
+    const cps::Config config = nbody_config(cps::NBodyVariant::Fused, 2048, 25);
+    cps::SimulationEngine engine(config);
+    ASSERT_NE(engine.stream(), nullptr);
+    engine.initialize();
+
+    const cps::HostParticleState initial = cps::make_initial_state(config);
+    std::vector<float> direct(initial.size());
+    CUDA_CHECK(cudaMemcpy(direct.data(), engine.particles().x(), direct.size() * sizeof(float),
+                          cudaMemcpyDeviceToHost));
+    EXPECT_EQ(direct, initial.x);
+
+    for (long long i = 0; i < config.steps; ++i) {
+        engine.step();
+    }
+    engine.synchronize();
+    CUDA_CHECK(cudaMemcpy(direct.data(), engine.particles().x(), direct.size() * sizeof(float),
+                          cudaMemcpyDeviceToHost));
+    cps::HostParticleState state;
+    engine.particles().download(state, engine.stream());
+    EXPECT_EQ(direct, state.x);
+    EXPECT_NE(direct, initial.x);
 }
 
 TEST(SolverSmoke, TheEngineRefusesToStepBeforeInitialisation) {

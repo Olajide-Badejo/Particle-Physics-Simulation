@@ -1,9 +1,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "physics/gravity.hpp"
-#include "solvers/nbody_solver.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/physics/gravity.hpp"
+#include "cps/solvers/nbody_solver.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 namespace {
@@ -146,6 +146,7 @@ void nbody_fused_step(const float* x_in, const float* y_in, const float* z_in, f
 #undef CPS_LAUNCH_FUSED
 
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps

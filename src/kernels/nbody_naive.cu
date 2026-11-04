@@ -1,6 +1,6 @@
-#include "physics/gravity.hpp"
-#include "solvers/nbody_solver.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/physics/gravity.hpp"
+#include "cps/solvers/nbody_solver.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 namespace {
@@ -56,6 +56,7 @@ void compute_forces_naive(const float* x, const float* y, const float* z, const 
     compute_forces_naive_kernel<<<grid, block_size, 0, stream>>>(
         x, y, z, mass, ax, ay, az, count, softening * softening, gravitational_constant);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps

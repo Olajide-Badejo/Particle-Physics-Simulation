@@ -3,5 +3,6 @@
 # those files as modified, and the build would stamp a false -dirty on results.
 * text=auto eol=lf
 *.bin binary
+*.vtp binary
 *.pdf binary
 *.png binary

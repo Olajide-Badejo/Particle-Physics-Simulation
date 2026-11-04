@@ -21,6 +21,7 @@ import csv
 import json
 import math
 import re
+import statistics
 from pathlib import Path
 
 try:
@@ -28,6 +29,22 @@ try:
 except ImportError:  # pragma: no cover
     def tqdm(iterable, **kwargs):
         return iterable
+
+
+# The stall columns of profile_summary.csv and the word each takes in a macro name,
+# and the sizes a macro can name. A macro name is letters only.
+STALL_COLUMNS = {
+    "stall_wait": "Wait",
+    "stall_not_selected": "NotSelected",
+    "stall_short_scoreboard": "ShortScoreboard",
+    "stall_long_scoreboard": "LongScoreboard",
+    "stall_math_pipe_throttle": "MathPipeThrottle",
+    "stall_mio_throttle": "MioThrottle",
+    "stall_lg_throttle": "LgThrottle",
+    "stall_barrier": "Barrier",
+    "stall_no_instruction": "NoInstruction",
+}
+PROFILE_SIZE_NAMES = {200000: "TwoHundredK", 100000: "HundredK", 10000: "TenK"}
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -76,7 +93,7 @@ def require_benchmark_inputs(results: Path) -> None:
 
 
 def quantile(values: list[float], fraction: float) -> float:
-    """Linear interpolation on the sorted sample, as in include/core/bench_rows.hpp."""
+    """Linear interpolation on the sorted sample, as in include/cps/core/bench_rows.hpp."""
     ordered = sorted(values)
     position = fraction * (len(ordered) - 1)
     below = math.floor(position)
@@ -462,8 +479,8 @@ class Assets:
         self.macro("SphIqrLeastPercent", f"{min(spreads):.1f}")
         self.macro("SphIqrMostPercent", f"{max(spreads):.1f}")
         timed = [int(r["timed_steps"]) * int(r["trials"]) for r in fluid]
-        self.macro("SphTimedStepsLeast", f"{min(timed):,}")
-        self.macro("SphTimedStepsMost", f"{max(timed):,}")
+        self.macro("SphTimedStepsRange", f"{min(timed):,}" if min(timed) == max(timed)
+                   else f"{min(timed):,} to {max(timed):,}")
         largest = points[-1]
         self.macro("SphMaxN", f"{largest[0]:,}")
         self.macro("SphMsAtMaxN", f"{largest[1]:.3f}")
@@ -516,6 +533,49 @@ class Assets:
                                                trials_by_round(trials, "tiled", count, 32))
             self.macro("BestTileOverTileThirtyTwoRatio", f"{ratio:.4f}")
             self.macro("BestTileOverTileThirtyTwoRatioIqr", f"{ratio_iqr:.4f}")
+
+    # -- register blocking, measured and removed --------------------------
+    def blocking_sweep(self) -> None:
+        # The kernels this measured are gone, at a commit that stays reachable,
+        # so these numbers only ever describe that one sweep.
+        rows = read_csv(self.results / "blocking_sweep.csv")
+        if not rows:
+            raise SystemExit("error: blocking_sweep.csv is missing or empty")
+        factors = {1: "One", 2: "Two", 4: "Four", 8: "Eight"}
+        sizes = {10000: "TenK", 100000: "HundredK", 200000: "TwoHundredK"}
+        self.macro("BlockingCommit", next(r["commit"] for r in rows if r["kernels"] == "blocking"))
+        self.macro("BlockingRounds", str(max(int(r["round"]) for r in rows)))
+
+        def trials(kernels: str, variant: str, count: int, factor: int, block: int) -> dict[int, float]:
+            return {int(r["round"]): float(r["ms_per_step"]) for r in rows
+                    if r["kernels"] == kernels and r["variant"] == variant
+                    and int(r["num_particles"]) == count and int(r["blocking_factor"]) == factor
+                    and int(r["block_size"]) == block}
+
+        best_ms = None
+        for count, size in sizes.items():
+            for variant in ("tiled", "fused"):
+                before = trials("before", variant, count, 1, 256)
+                # Blocks multiplied by threads per block held constant, then the
+                # one fixed block case, which shows what starving the machine costs.
+                for factor, block, tag in ((1, 256, ""), (2, 128, ""), (4, 64, ""), (8, 32, ""),
+                                           (2, 256, "FixedBlock")):
+                    after = trials("blocking", variant, count, factor, block)
+                    ratio = statistics.median(after[k] / before[k] for k in after)
+                    self.macro(f"Blocking{variant.capitalize()}{tag}Factor{factors[factor]}{size}",
+                               f"{ratio:.4f}")
+                    if count == max(sizes):
+                        median = statistics.median(after.values())
+                        best_ms = median if best_ms is None else min(best_ms, median)
+        fused = statistics.median(trials("before", "fused", max(sizes), 1, 256).values())
+        self.macro("BlockingBestOverFusedAtMaxN", f"{best_ms / fused:.4f}")
+
+        # Why it could not pay: the instruction mix of the kernel it would replace.
+        self.source = "profile_summary.csv"
+        tiled = [r for r in read_csv(self.results / "profile_summary.csv")
+                 if r["variant"] == "tiled" and int(r["num_particles"]) == max(sizes)][0]
+        self.macro("TiledFmaPerLoadAtMaxN",
+                   f"{float(tiled['fma_instructions']) / float(tiled['lsu_instructions']):.1f}")
 
     # -- validation gates -------------------------------------------------
     def gates(self) -> None:
@@ -615,11 +675,17 @@ class Assets:
 
     # -- hardware counters ------------------------------------------------
     def profile(self) -> None:
-        rows = read_csv(self.results / "profile_summary.csv")
-        if not rows:
+        all_rows = read_csv(self.results / "profile_summary.csv")
+        if not all_rows:
             return
         order = {"naive": 0, "tiled": 1, "fused": 2}
-        rows.sort(key=lambda r: order.get(r["variant"], 9))
+        all_rows.sort(key=lambda r: order.get(r["variant"], 9))
+        self.profile_stalls(all_rows)
+        # The counter table and its macros are for the largest size profiled. An
+        # older summary holds one size, and one written before the column existed
+        # was profiled at 100,000.
+        headline = max(int(r.get("num_particles") or 100000) for r in all_rows)
+        rows = [r for r in all_rows if int(r.get("num_particles") or 100000) == headline]
 
         lines = [
             r"\begin{tabular}{l rrrr rr}",
@@ -683,6 +749,56 @@ class Assets:
                 self.macro("TiledTflopsAtMeasuredFlops",
                            f"{interactions_per_second * measured_flops / 1.0e12:.2f}")
 
+    def profile_stalls(self, rows: list[dict[str, str]]) -> None:
+        """The stall breakdown, for each variant at each size, once it has been profiled."""
+        if not rows or "stall_wait" not in rows[0]:
+            return
+        ordered = sorted(rows, key=lambda r: -int(r["num_particles"]))
+        lines = [
+            r"\begin{tabular}{r l rrrrrrrrr rr}",
+            r"\toprule",
+            r"& & \multicolumn{9}{c}{warps stalled per cycle with an issue active} "
+            r"& \multicolumn{2}{c}{L1, L2 hit} \\",
+            r"\cmidrule(lr){3-11}\cmidrule(lr){12-13}",
+            r"particles & variant & wait & not sel. & short sb. & long sb. & math & MIO & LG "
+            r"& barrier & no inst. & percent & percent \\",
+            r"\midrule",
+        ]
+        for row in ordered:
+            cells = " & ".join(f"{float(row[column]):.2f}" for column in STALL_COLUMNS)
+            lines.append(f"{int(row['num_particles']):,} & {row['variant']} & {cells} & "
+                         f"{float(row['l1_global_load_hit_pct']):.2f} & "
+                         f"{float(row['l2_hit_pct']):.2f} \\\\")
+        lines += [r"\bottomrule", r"\end{tabular}"]
+        self.write_table("profile_stalls", "\n".join(lines) + "\n")
+
+        for row in ordered:
+            size = PROFILE_SIZE_NAMES.get(int(row["num_particles"]))
+            if size is None:
+                continue
+            variant = row["variant"].capitalize()
+            for column, word in STALL_COLUMNS.items():
+                self.macro(f"{variant}Stall{word}{size}", f"{float(row[column]):.2f}")
+            self.macro(f"{variant}RegistersPerThread{size}",
+                       f"{float(row['registers_per_thread']):.0f}")
+            self.macro(f"{variant}WavesPerMultiprocessor{size}",
+                       f"{float(row['waves_per_multiprocessor']):.2f}")
+            self.macro(f"{variant}IssueActivePct{size}", f"{float(row['issue_pct_active']):.2f}")
+
+    def sph_split(self) -> None:
+        rows = read_csv(self.results / "sph_pipeline_split.csv")
+        if not rows:
+            return
+        self.macro("SphSplitParticles", f"{int(rows[0]['num_particles']):,}")
+        self.macro("SphSplitWarmupSteps", f"{int(rows[0]['warmup_steps']):,}")
+        self.macro("SphSplitMeasuredSteps", f"{int(rows[0]['measured_steps']):,}")
+        self.macro("SphSplitTracedStepMs", f"{float(rows[0]['traced_step_ms']):.3f}")
+        self.macro("SphSplitUntracedStepMs", f"{float(rows[0]['untraced_step_ms']):.3f}")
+        for row in rows:
+            word = "".join(part.capitalize() for part in row["pass"].split("_"))
+            self.macro(f"SphSplit{word}Pct", f"{float(row['percent_of_step']):.1f}")
+            self.macro(f"SphSplit{word}Ms", f"{float(row['ms_per_step']):.4f}")
+
     # -- debug report -----------------------------------------------------
     def debug_entries(self, sections: Path) -> None:
         """How many entries the debug report holds, so prose cannot miscount them."""
@@ -730,7 +846,7 @@ class Assets:
             "Generated by `scripts/gen_report_assets.py`. Do not edit by hand.",
             "",
             "To quote one of these in a Markdown file, mark it with the metric's name, as in",
-            "`<!-- num:RepeatabilitySpread -->1.2<!-- /num -->`. `scripts/check_doc_numbers.py`",
+            "`<!-- num:SomeMetric -->1.2<!-- /num -->`. `scripts/check_doc_numbers.py`",
             "fails when a marked value disagrees with this table, and `--fix` rewrites it.",
             "",
             "| Metric | Value | Source |",
@@ -778,6 +894,8 @@ def main() -> int:
         ("tile_sweep.csv", lambda: assets.tile_sweep()),
         ("validation_gates.csv", lambda: assets.gates()),
         ("profile_summary.csv", lambda: assets.profile()),
+        ("sph_pipeline_split.csv", lambda: assets.sph_split()),
+        ("blocking_sweep.csv", lambda: assets.blocking_sweep()),
         ("report_debug/sections", lambda: assets.debug_entries(root / "report_debug" / "sections")),
         ("benchmarks.csv", lambda: assets.provenance(benchmarks)),
     ]

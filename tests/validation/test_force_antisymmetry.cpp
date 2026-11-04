@@ -3,9 +3,9 @@
 #include <cmath>
 #include <vector>
 
-#include "core/particle_system.hpp"
-#include "physics/gravity.hpp"
-#include "solvers/nbody_solver.hpp"
+#include "cps/core/particle_system.hpp"
+#include "cps/physics/gravity.hpp"
+#include "cps/solvers/nbody_solver.hpp"
 #include "test_support_gpu.hpp"
 
 namespace {
@@ -36,10 +36,10 @@ TEST(ForceAntisymmetry, DeviceForcesMatchTheHostReferenceOnAHundredParticles) {
     const cps::HostParticleState state = random_cloud(count, 20260802u);
 
     cps::ParticleSystem particles(count);
-    particles.upload(state);
+    particles.upload(state, nullptr);
     cps::compute_forces_tiled(particles.x(), particles.y(), particles.z(), particles.mass(),
                               particles.ax(), particles.ay(), particles.az(), count, SOFTENING,
-                              GRAVITY, 128);
+                              GRAVITY, 128, cps::DEFAULT_TILE_SIZE, nullptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     std::vector<float> ax(static_cast<std::size_t>(count));

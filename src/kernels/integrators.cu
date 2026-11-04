@@ -1,5 +1,5 @@
-#include "solvers/nbody_solver.hpp"
-#include "utils/cuda_helpers.hpp"
+#include "cps/solvers/nbody_solver.hpp"
+#include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
 namespace {
@@ -62,6 +62,7 @@ void integrate_verlet_position(float* x, float* y, float* z, float* vx, float* v
     verlet_position_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
         x, y, z, vx, vy, vz, ax, ay, az, count, dt);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 void integrate_verlet_velocity(float* vx, float* vy, float* vz, const float* ax, const float* ay,
@@ -73,6 +74,7 @@ void integrate_verlet_velocity(float* vx, float* vy, float* vz, const float* ax,
     verlet_velocity_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
         vx, vy, vz, ax, ay, az, count, dt);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 // Shifts the velocity by a half step. Called with a negative dt to enter the
@@ -88,6 +90,7 @@ void offset_velocity_half_step(float* vx, float* vy, float* vz, const float* ax,
     verlet_velocity_kernel<<<grid_for(count, block_size), block_size, 0, stream>>>(
         vx, vy, vz, ax, ay, az, count, dt);
     CUDA_CHECK(cudaGetLastError());
+    CPS_SYNC_POINT(stream);
 }
 
 }  // namespace cps

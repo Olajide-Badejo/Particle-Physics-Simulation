@@ -3,8 +3,8 @@
 #include <cmath>
 #include <cstdio>
 
-#include "core/initial_conditions.hpp"
-#include "physics/sph_kernels.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/physics/sph_kernels.hpp"
 #include "test_support_host.hpp"
 #include "validation/sph_fluid_config.hpp"
 

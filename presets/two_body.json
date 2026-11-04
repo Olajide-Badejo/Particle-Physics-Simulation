@@ -1,0 +1,48 @@
+{
+  "schema": 2,
+  "name": "two_body_circular_orbit",
+  "solver": "nbody",
+  "run": {
+    "steps": 10000,
+    "dt": 0.001,
+    "block_size": 32,
+    "allow_unstable_dt": false,
+    "use_graphs": true
+  },
+  "initial_condition": {
+    "type": "two_body",
+    "num_particles": 2,
+    "seed": 20260802,
+    "total_mass": 2.0,
+    "plummer_radius": 1.0,
+    "two_body_separation": 1.0
+  },
+  "nbody": {
+    "variant": "tiled",
+    "softening": 0.01,
+    "gravitational_constant": 1.0,
+    "tile_size": 256
+  },
+  "sph": {
+    "smoothing_radius": 0.0,
+    "rest_density": 1000.0,
+    "gas_constant": 1000.0,
+    "viscosity": 0.2,
+    "particle_mass": 0.0,
+    "boundary_damping": 0.4,
+    "jitter": 0.05,
+    "domain_min": [0.0, 0.0, 0.0],
+    "domain_max": [1.0, 1.0, 1.0],
+    "fluid_min": [0.0, 0.0, 0.0],
+    "fluid_max": [0.4, 0.8, 1.0],
+    "external_gravity": [0.0, -9.81, 0.0]
+  },
+  "output": {
+    "snapshot_interval": 0,
+    "snapshot_dir": "snapshots/two_body",
+    "diagnostics_interval": 10,
+    "diagnostics_path": "experiments/results/two_body_diagnostics.csv",
+    "vtk_interval": 0,
+    "vtk_dir": "vtk"
+  }
+}

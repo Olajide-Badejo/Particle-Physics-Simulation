@@ -6,20 +6,18 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <memory>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "core/bench_rows.hpp"
-#include "core/initial_conditions.hpp"
-#include "core/simulation_engine.hpp"
-#include "cps_version.hpp"
-#include "solvers/nbody_solver.hpp"
-#include "utils/cuda_helpers.hpp"
-#include "utils/progress.hpp"
+#include "cps/core/bench_rows.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/core/simulation_engine.hpp"
+#include "cps/version.hpp"
+#include "cps/utils/cuda_helpers.hpp"
+#include "cps/utils/progress.hpp"
 
 namespace {
 
@@ -46,7 +44,10 @@ namespace bench = cps::bench;
 //
 // A group is the set of configurations compared this way: the three variants at
 // one particle count, the fluid sizes, or the tile widths. Rows are written when
-// a group finishes, so an interrupted sweep restarts at the group it lost.
+// a group finishes, so an interrupted sweep restarts at the group it lost. With
+// --graphs on,off every configuration of a group is measured both ways, in the same
+// rounds, and the graphs column says which setting a row asked for. The fused variant
+// is not captured, so its two rows both measure the stream path.
 //
 // The row reports the median of the trials, which a single interrupted trial
 // cannot move, with the dispersion alongside so a reader can tell a difference
@@ -91,6 +92,7 @@ struct BenchmarkRow {
     double model_gb_s = 0.0;
     double model_bandwidth_fraction = 0.0;
     int fast_math = 0;
+    int graphs = 0;
     uint32_t seed = 0;
     std::string gpu_name;
     int cuda_runtime = 0;
@@ -104,11 +106,12 @@ struct BenchmarkRow {
 const char* CSV_HEADER =
     "solver,variant,num_particles,block_size,tile_size,timed_steps,ms_per_step,trials,ms_min,"
     "ms_median,ms_mean,ms_stddev,ms_iqr,steps_per_second,interactions_per_second,gflops,"
-    "model_bytes_per_step,model_gb_s,model_bandwidth_fraction,fast_math,seed,gpu_name,"
+    "model_bytes_per_step,model_gb_s,model_bandwidth_fraction,fast_math,graphs,seed,gpu_name,"
     "cuda_runtime,cuda_driver,commit,dirty,protocol,timestamp";
 
 const char* TRIALS_HEADER =
-    "solver,variant,num_particles,block_size,tile_size,fast_math,round,timed_steps,ms_per_step,"
+    "solver,variant,num_particles,block_size,tile_size,fast_math,graphs,round,timed_steps,"
+    "ms_per_step,"
     "commit,dirty,protocol,timestamp";
 
 // A tree the hash cannot describe is treated the same as one with local edits.
@@ -180,20 +183,19 @@ std::string variant_name(const cps::Config& config) {
                                                    : std::string("na");
 }
 
-int default_tile_size(const cps::Config& config) {
+// What a row's tile_size column says: 0 where the kernel has no tiles.
+int tile_size_column(const cps::Config& config) {
     if (config.solver == cps::SolverType::Sph || config.variant == cps::NBodyVariant::Naive) {
         return 0;
     }
-    return cps::DEFAULT_TILE_SIZE;
+    return config.nbody.tile_size;
 }
 
 // One configuration under measurement, with the engine that stays alive across
 // its rounds.
 struct Contender {
     cps::Config config;
-    int tile_size = 0;
     std::unique_ptr<cps::SimulationEngine> engine;
-    std::function<void()> step;
     double single_step_ms = 0.0;
     int timed_steps = 0;
     std::vector<double> trial_ms;
@@ -202,11 +204,8 @@ struct Contender {
 Contender make_contender(const cps::Config& config) {
     Contender contender;
     contender.config = config;
-    contender.tile_size = default_tile_size(config);
     contender.engine = std::make_unique<cps::SimulationEngine>(config);
     contender.engine->initialize();
-    cps::SimulationEngine* engine = contender.engine.get();
-    contender.step = [engine]() { engine->step(); };
     return contender;
 }
 
@@ -224,14 +223,15 @@ int steps_per_trial(double step_ms, const Protocol& protocol) {
 
 void warm_up_and_calibrate(Contender& contender, const Protocol& protocol) {
     for (int i = 0; i < protocol.warmup_steps; ++i) {
-        contender.step();
+        contender.engine->step();
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    contender.engine->synchronize();
 
+    const cudaStream_t stream = contender.engine->stream();
     cps::CudaTimer probe;
-    probe.start();
-    contender.step();
-    contender.single_step_ms = static_cast<double>(probe.stop());
+    probe.start(stream);
+    contender.engine->step();
+    contender.single_step_ms = static_cast<double>(probe.stop(stream));
     contender.timed_steps = steps_per_trial(contender.single_step_ms, protocol);
 }
 
@@ -244,18 +244,19 @@ void measure_group(std::vector<Contender>& group, const Protocol& protocol) {
     for (int round = 0; round < protocol.trials; ++round) {
         for (std::size_t position = 0; position < size; ++position) {
             Contender& contender = group[(position + static_cast<std::size_t>(round)) % size];
+            const cudaStream_t stream = contender.engine->stream();
             cps::CudaTimer timer;
-            timer.start();
+            timer.start(stream);
             for (int step = 0; step < contender.timed_steps; ++step) {
-                contender.step();
+                contender.engine->step();
             }
-            const double elapsed = static_cast<double>(timer.stop());
+            const double elapsed = static_cast<double>(timer.stop(stream));
             contender.trial_ms.push_back(elapsed / static_cast<double>(contender.timed_steps));
         }
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
     // A timing of a blown-up fluid would still look like a timing.
     for (Contender& contender : group) {
+        contender.engine->synchronize();
         contender.engine->check_device_errors();
     }
 }
@@ -270,7 +271,7 @@ BenchmarkRow make_row(const Contender& contender, const cps::DeviceInfo& info,
     row.variant = variant_name(config);
     row.num_particles = config.num_particles;
     row.block_size = config.block_size;
-    row.tile_size = contender.tile_size;
+    row.tile_size = tile_size_column(config);
     row.timed_steps = contender.timed_steps;
 
     row.trials = static_cast<int>(trials.size());
@@ -293,6 +294,7 @@ BenchmarkRow make_row(const Contender& contender, const cps::DeviceInfo& info,
         bench::model_bandwidth_fraction(row.model_gb_s, info.peak_bandwidth_gb_s);
 
     row.fast_math = CPS_FAST_MATH;
+    row.graphs = config.use_graphs ? 1 : 0;
     row.seed = config.seed;
     row.gpu_name = info.name;
     row.cuda_runtime = info.runtime_version;
@@ -305,16 +307,17 @@ BenchmarkRow make_row(const Contender& contender, const cps::DeviceInfo& info,
 }
 
 std::string row_key(const std::string& solver, const std::string& variant, int count,
-                    int block_size, int tile_size, int fast_math) {
+                    int block_size, int tile_size, int fast_math, int graphs) {
     std::ostringstream out;
     out << solver << '|' << variant << '|' << count << '|' << block_size << '|' << tile_size << '|'
-        << fast_math;
+        << fast_math << '|' << graphs;
     return out.str();
 }
 
 std::string config_key(const cps::Config& config) {
     return row_key(cps::to_string(config.solver), variant_name(config), config.num_particles,
-                   config.block_size, default_tile_size(config), CPS_FAST_MATH);
+                   config.block_size, tile_size_column(config), CPS_FAST_MATH,
+                   config.use_graphs ? 1 : 0);
 }
 
 // Splits one CSV line. The driver never writes a quoted field.
@@ -368,6 +371,7 @@ ExistingRows read_existing_rows(const fs::path& path, const Protocol& protocol) 
     const int block_size = column_index(header, "block_size");
     const int tile_size = column_index(header, "tile_size");
     const int fast_math = column_index(header, "fast_math");
+    const int graphs = column_index(header, "graphs");
     while (std::getline(stream, line)) {
         if (line.empty()) {
             continue;
@@ -388,7 +392,7 @@ ExistingRows read_existing_rows(const fs::path& path, const Protocol& protocol) 
         }
         existing.keys.insert(row_key(fields[solver], fields[variant], std::stoi(fields[num_particles]),
                                      std::stoi(fields[block_size]), std::stoi(fields[tile_size]),
-                                     std::stoi(fields[fast_math])));
+                                     std::stoi(fields[fast_math]), std::stoi(fields[graphs])));
     }
     return existing;
 }
@@ -427,8 +431,8 @@ void write_row_fields(std::ostream& stream, const BenchmarkRow& row) {
            << row.ms_stddev << ',' << row.ms_iqr << ',' << row.steps_per_second << ','
            << row.interactions_per_second << ',' << row.gflops << ',' << row.model_bytes_per_step
            << ',' << row.model_gb_s << ',' << row.model_bandwidth_fraction << ',' << row.fast_math
-           << ',' << row.seed << ',' << row.gpu_name << ',' << row.cuda_runtime << ','
-           << row.cuda_driver << ',' << row.commit << ',' << row.dirty << ',' << row.protocol << ','
+           << ',' << row.graphs << ',' << row.seed << ',' << row.gpu_name << ','
+           << row.cuda_runtime << ',' << row.cuda_driver << ',' << row.commit << ',' << row.dirty << ',' << row.protocol << ','
            << row.timestamp;
 }
 
@@ -459,7 +463,8 @@ void append_trials(const fs::path& path, const std::vector<Contender>& group,
             const cps::Config& config = contender.config;
             stream << cps::to_string(config.solver) << ',' << variant_name(config) << ','
                    << config.num_particles << ',' << config.block_size << ','
-                   << contender.tile_size << ',' << CPS_FAST_MATH << ',' << (round + 1) << ','
+                   << tile_size_column(config) << ',' << CPS_FAST_MATH << ','
+                   << (config.use_graphs ? 1 : 0) << ',' << (round + 1) << ','
                    << contender.timed_steps << ',' << contender.trial_ms[round] << ','
                    << CPS_GIT_STAMP << ',' << (tree_is_dirty() ? 1 : 0) << ',' << protocol.name
                    << ',' << timestamp << "\n";
@@ -478,7 +483,11 @@ struct PlannedGroup {
     std::vector<PlannedConfig> configs;
 };
 
-std::vector<PlannedGroup> plan_ladder(bool quick) {
+std::vector<PlannedGroup> plan_ladder(bool quick, const std::vector<bool>& graph_settings) {
+    const auto with_graphs = [](cps::Config config, bool graphs) {
+        config.use_graphs = graphs;
+        return config;
+    };
     const std::vector<int> nbody_counts =
         quick ? std::vector<int>{4096, 8192}
               : std::vector<int>{10000, 20000, 50000, 100000, 150000, 200000};
@@ -491,8 +500,10 @@ std::vector<PlannedGroup> plan_ladder(bool quick) {
         group.label = "nbody N=" + std::to_string(count);
         for (cps::NBodyVariant variant :
              {cps::NBodyVariant::Naive, cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
-            group.configs.push_back(
-                {nbody_config(variant, count), static_cast<double>(count) * count});
+            for (const bool graphs : graph_settings) {
+                group.configs.push_back({with_graphs(nbody_config(variant, count), graphs),
+                                         static_cast<double>(count) * count});
+            }
         }
         plan.push_back(std::move(group));
     }
@@ -501,7 +512,10 @@ std::vector<PlannedGroup> plan_ladder(bool quick) {
     for (int count : sph_counts) {
         // The fluid step is close to linear in the particle count, and far
         // cheaper per particle than the all pairs sum.
-        fluid.configs.push_back({sph_config(count), static_cast<double>(count) * 3000.0});
+        for (const bool graphs : graph_settings) {
+            fluid.configs.push_back(
+                {with_graphs(sph_config(count), graphs), static_cast<double>(count) * 3000.0});
+        }
     }
     plan.push_back(std::move(fluid));
     return plan;
@@ -511,43 +525,17 @@ std::vector<PlannedGroup> plan_ladder(bool quick) {
 // width is the best choice on this card is an empirical question, and the
 // answer belongs in the debug report with numbers behind it.
 //
-// The engine uses the default tile width, so the sweep drives the kernels
-// directly rather than through engine.step(). It keeps the engine for its state.
-// Both variants time a whole step, the sequence engine.step() runs, so a width
-// can be compared across variants as well as within one.
-std::vector<Contender> make_tile_sweep_group(int count) {
+// Every width runs through the engine with nbody.tile_size, so both variants time
+// a whole step, exactly what a run at that width pays, and a width can be compared
+// across variants as well as within one.
+std::vector<Contender> make_tile_sweep_group(int count, bool graphs) {
     std::vector<Contender> group;
     for (int tile : {32, 64, 128, 256}) {
         for (cps::NBodyVariant variant : {cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
-            Contender contender = make_contender(nbody_config(variant, count));
-            contender.tile_size = tile;
-            cps::ParticleSystem* particles = &contender.engine->particles();
-            const cps::Config config = contender.config;
-            contender.step = [particles, config, variant, count, tile]() {
-                if (variant == cps::NBodyVariant::Tiled) {
-                    cps::integrate_verlet_position(
-                        particles->x(), particles->y(), particles->z(), particles->vx(),
-                        particles->vy(), particles->vz(), particles->ax(), particles->ay(),
-                        particles->az(), count, config.dt, config.block_size);
-                    cps::compute_forces_tiled(particles->x(), particles->y(), particles->z(),
-                                              particles->mass(), particles->ax(), particles->ay(),
-                                              particles->az(), count, config.softening,
-                                              config.gravitational_constant, config.block_size,
-                                              tile);
-                    cps::integrate_verlet_velocity(particles->vx(), particles->vy(), particles->vz(),
-                                                   particles->ax(), particles->ay(), particles->az(),
-                                                   count, config.dt, config.block_size);
-                } else {
-                    cps::nbody_fused_step(
-                        particles->x(), particles->y(), particles->z(), particles->x_next(),
-                        particles->y_next(), particles->z_next(), particles->vx(), particles->vy(),
-                        particles->vz(), particles->ax(), particles->ay(), particles->az(),
-                        particles->mass(), count, config.softening, config.gravitational_constant,
-                        config.dt, config.block_size, tile);
-                    particles->swap_position_buffers();
-                }
-            };
-            group.push_back(std::move(contender));
+            cps::Config config = nbody_config(variant, count);
+            config.nbody.tile_size = tile;
+            config.use_graphs = graphs;
+            group.push_back(make_contender(config));
         }
     }
     return group;
@@ -578,9 +566,10 @@ void check_plan(const std::vector<PlannedGroup>& plan, bool print) {
 }
 
 void print_row(const BenchmarkRow& row) {
-    std::printf("  %-5s %-6s N=%-7d tile %-3d %9.4f ms/step  iqr %7.4f  %8.1f steps/s",
+    std::printf("  %-5s %-6s N=%-7d tile %-3d graphs %-3s %9.4f ms/step  iqr %7.4f  %8.1f steps/s",
                 row.solver.c_str(), row.variant.c_str(), row.num_particles, row.tile_size,
-                row.ms_per_step, row.ms_iqr, row.steps_per_second);
+                row.graphs != 0 ? "on" : "off", row.ms_per_step, row.ms_iqr,
+                row.steps_per_second);
     if (row.solver == "nbody") {
         std::printf("  %8.1f GFLOP/s", row.gflops);
     } else {
@@ -588,6 +577,23 @@ void print_row(const BenchmarkRow& row) {
     }
     std::printf("\n");
     std::fflush(stdout);
+}
+
+// on, off, or both with a comma, in the order given.
+std::vector<bool> parse_graph_settings(const std::string& text) {
+    if (text == "on") {
+        return {true};
+    }
+    if (text == "off") {
+        return {false};
+    }
+    if (text == "on,off") {
+        return {true, false};
+    }
+    if (text == "off,on") {
+        return {false, true};
+    }
+    throw std::runtime_error("--graphs expects on, off or on,off, got '" + text + "'");
 }
 
 void print_usage() {
@@ -607,6 +613,11 @@ void print_usage() {
         "                    directory unless --output says otherwise\n"
         "  --tile-sweep      also sweep the tile width, to tile_sweep.csv and\n"
         "                    tile_sweep_trials.csv next to the output\n"
+        "  --graphs <list>   on, off or on,off: whether the ladder launches the step as a\n"
+        "                    captured graph, which fused never is. Both records both, in the\n"
+        "                    same rounds, and is refused for experiments/results, whose readers\n"
+        "                    take one row per point. Default: the configuration default. The\n"
+        "                    repeatability check and the tile sweep use the first setting listed\n"
         "  --allow-dirty     write rows from a tree with uncommitted code changes, or an\n"
         "                    unknown one, stamped dirty=1\n"
         "  --dry-run         check every planned configuration against the solver, print\n"
@@ -626,6 +637,7 @@ int main(int argc, char** argv) {
         bool tile_sweep = false;
         bool allow_dirty = false;
         bool dry_run = false;
+        std::vector<bool> graph_settings{cps::Config{}.use_graphs};
 
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
@@ -637,6 +649,8 @@ int main(int argc, char** argv) {
                 quick = true;
             } else if (arg == "--tile-sweep") {
                 tile_sweep = true;
+            } else if (arg == "--graphs" && i + 1 < argc) {
+                graph_settings = parse_graph_settings(argv[++i]);
             } else if (arg == "--allow-dirty") {
                 allow_dirty = true;
             } else if (arg == "--dry-run") {
@@ -669,6 +683,13 @@ int main(int argc, char** argv) {
                          results_dir.string().c_str());
             return 1;
         }
+        if (graph_settings.size() > 1 && fs::equivalent(output_dir, results_dir)) {
+            std::fprintf(stderr,
+                         "error: --graphs with both settings does not write into %s, because "
+                         "what reads it takes one row per point. Pass --output\n",
+                         results_dir.string().c_str());
+            return 1;
+        }
         if (tree_is_dirty() && !allow_dirty && !dry_run) {
             std::fprintf(stderr,
                          "error: this build is %s, so its rows could not be reproduced from "
@@ -681,7 +702,8 @@ int main(int argc, char** argv) {
         const Protocol& protocol = quick ? QUICK_PROTOCOL : FULL_PROTOCOL;
         const int tile_count = quick ? 8192 : 100000;
         const int repeat_count = quick ? 8192 : 100000;
-        const cps::Config repeat_config = nbody_config(cps::NBodyVariant::Tiled, repeat_count);
+        cps::Config repeat_config = nbody_config(cps::NBodyVariant::Tiled, repeat_count);
+        repeat_config.use_graphs = graph_settings.front();
 
         const fs::path trials_path = output_dir / "benchmark_trials.csv";
         const fs::path repeat_path = output_dir / "benchmark_repeatability.csv";
@@ -702,7 +724,7 @@ int main(int argc, char** argv) {
             std::printf("DIRTY TREE: every row is stamped dirty=1\n");
         }
 
-        const std::vector<PlannedGroup> plan = plan_ladder(quick);
+        const std::vector<PlannedGroup> plan = plan_ladder(quick, graph_settings);
         check_plan(plan, dry_run);
         if (dry_run) {
             for (const PlannedGroup& group : plan) {
@@ -843,7 +865,8 @@ int main(int argc, char** argv) {
                 fs::remove(path);
             }
             std::printf("\ntile width sweep at %d particles\n", tile_count);
-            std::vector<Contender> group = make_tile_sweep_group(tile_count);
+            std::vector<Contender> group =
+                make_tile_sweep_group(tile_count, graph_settings.front());
             measure_group(group, protocol);
             append_trials(tile_trials_path, group, protocol);
             for (const Contender& contender : group) {

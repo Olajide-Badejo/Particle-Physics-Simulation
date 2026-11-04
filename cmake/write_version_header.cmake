@@ -1,4 +1,4 @@
-# Writes cps_version.hpp from the state of the tree at build time. Run by the
+# Writes cps/version.hpp from the state of the tree at build time. Run by the
 # always-run cps_version target in CMakeLists.txt, so a commit or an edit shows
 # up without reconfiguring. The file is only written when its contents change:
 # its timestamp is what the compiler dependencies see, so an unchanged tree
@@ -6,6 +6,11 @@
 #
 # Expects PROJECT_VERSION, SOURCE_DIR and OUTPUT, and GIT_EXECUTABLE if git was
 # found.
+#
+# A tree with no repository, such as a Docker build, which leaves .git out, has
+# nothing to ask. The CPS_GIT_COMMIT environment variable then says which commit
+# it is, as a hash with an optional -dirty suffix. It is only a fallback: where
+# git can answer, git decides. With neither, the hash reads "unknown".
 
 set(hash "unknown")
 set(dirty 0)
@@ -44,6 +49,14 @@ if(GIT_EXECUTABLE)
       set(hash "${head}")
       set(dirty 1)
     endif()
+  endif()
+endif()
+
+if(hash STREQUAL "unknown" AND NOT "$ENV{CPS_GIT_COMMIT}" STREQUAL "")
+  set(hash "$ENV{CPS_GIT_COMMIT}")
+  if(hash MATCHES "^(.*)-dirty$")
+    set(hash "${CMAKE_MATCH_1}")
+    set(dirty 1)
   endif()
 endif()
 

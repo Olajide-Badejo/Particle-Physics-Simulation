@@ -12,10 +12,10 @@
 #include <string>
 #include <vector>
 
-#include "core/config.hpp"
-#include "core/initial_conditions.hpp"
-#include "core/physics_fingerprint.hpp"
-#include "core/snapshot.hpp"
+#include "cps/core/config.hpp"
+#include "cps/core/initial_conditions.hpp"
+#include "cps/core/physics_fingerprint.hpp"
+#include "cps/core/snapshot.hpp"
 
 namespace fs = std::filesystem;
 
@@ -89,18 +89,22 @@ Bytes cps1_bytes(const cps::HostParticleState& state, uint32_t step, uint32_t fl
 
 // Golden fixtures.
 //
-// tests/data/snapshot_v1_4p.bin and tests/data/snapshot_v2_4p.bin hold
+// tests/data/snapshot_v1_4p.bin and tests/data/snapshot_v2_4p_id.bin hold
 // fixture_state() at step 42. The CPS1 file is cps1_bytes(fixture_state(),
 // 42, 0); the CPS2 file is write_snapshot(fixture_snapshot()), whose physics
-// record comes from nbody_reference(). Every value is exactly representable,
-// one velocity is negative zero, and nothing depends on a random generator or
-// libm, so both files are the same on every platform. To regenerate them
-// after a deliberate format change, run
+// record comes from nbody_reference(), and whose ids are a shuffled permutation.
+// Every value is exactly representable, one velocity is negative zero, and
+// nothing depends on a random generator or libm, so both files are the same on
+// every platform. To regenerate them after a deliberate format change, run
 //
 //   unit_tests_host --gtest_also_run_disabled_tests
 //                   --gtest_filter='SnapshotFixtures.DISABLED_Regenerate'
 //
 // and say in the commit why the bytes moved.
+//
+// tests/data/snapshot_v2_4p.bin is the same snapshot from before CPS2 had an id
+// array. No writer produces that layout now, so it is frozen and nothing
+// regenerates it: it stands for every such file in the world.
 fs::path fixture_path(const char* name) {
     return fs::path(CPS_PROJECT_ROOT) / "tests" / "data" / name;
 }
@@ -114,6 +118,7 @@ cps::HostParticleState fixture_state() {
     state.vy = {0.0f, 0.0f, 0.375f, -0.375f};
     state.vz = {-0.0f, 0.0625f, 0.0f, -0.0625f};
     state.mass = {0.25f, 0.25f, 0.25f, 0.25f};
+    state.id = {0u, 1u, 2u, 3u};
     return state;
 }
 
@@ -171,6 +176,7 @@ cps::Snapshot fixture_snapshot() {
     snapshot.time = 42.0 * static_cast<double>(config.dt);
     snapshot.flags = cps::SNAPSHOT_FLAG_HALF_STEP_VELOCITY;
     snapshot.state = fixture_state();
+    snapshot.state.id = {2u, 0u, 3u, 1u};
     snapshot.fingerprint = cps::physics_fingerprint(fields);
     snapshot.fingerprint_version = cps::PHYSICS_FINGERPRINT_VERSION;
     snapshot.physics = cps::physics_json(fields);
@@ -197,6 +203,7 @@ void expect_same_state(const cps::HostParticleState& a, const cps::HostParticleS
     EXPECT_TRUE(same_bits(a.vy, b.vy));
     EXPECT_TRUE(same_bits(a.vz, b.vz));
     EXPECT_TRUE(same_bits(a.mass, b.mass));
+    EXPECT_EQ(a.id, b.id);
 }
 
 class SnapshotTest : public ::testing::Test {
@@ -311,8 +318,9 @@ TEST_F(SnapshotTest, FileLengthFollowsFromTheLayout) {
 
         auto padded = [](std::uintmax_t bytes) { return (bytes + 7u) / 8u * 8u; };
         const std::uintmax_t expected =
-            sizeof(cps::SnapshotHeader) + 8 * sizeof(cps::SnapshotArrayEntry) +
-            cps::SNAPSHOT_ARRAY_COUNT * padded(count * sizeof(float)) + padded(5);
+            sizeof(cps::SnapshotHeader) + 9 * sizeof(cps::SnapshotArrayEntry) +
+            cps::SNAPSHOT_ARRAY_COUNT * padded(count * sizeof(float)) +
+            padded(count * sizeof(uint32_t)) + padded(5);
         EXPECT_EQ(fs::file_size(path), expected) << count << " particles";
     }
 }
@@ -444,7 +452,7 @@ TEST_F(SnapshotTest, RejectsADuplicateArrayName) {
     EXPECT_NE(read_error(bytes).find("'x' more than once"), std::string::npos);
 }
 
-// A newer writer adds arrays this reader has never heard of, such as id.
+// A newer writer adds arrays this reader has never heard of, such as tracer.
 // They must be skipped, not rejected, or every addition would be a format
 // break.
 TEST_F(SnapshotTest, SkipsAnUnknownExtraArray) {
@@ -453,7 +461,7 @@ TEST_F(SnapshotTest, SkipsAnUnknownExtraArray) {
     const std::size_t old_table_end = entry_offset(header.array_count);
     const std::size_t shift = sizeof(cps::SnapshotArrayEntry);
 
-    // Rebuild the file with one more table entry, pointing at four u32 ids
+    // Rebuild the file with one more table entry, pointing at four u32 values
     // appended after the existing payload.
     Bytes extended(valid.begin(), valid.begin() + static_cast<std::ptrdiff_t>(old_table_end));
     for (std::size_t i = 0; i < header.array_count; ++i) {
@@ -461,18 +469,18 @@ TEST_F(SnapshotTest, SkipsAnUnknownExtraArray) {
         entry.offset += shift;
         store(extended, entry_offset(i), entry);
     }
-    cps::SnapshotArrayEntry id;
-    std::memcpy(id.name, "id", 2);
-    id.dtype = static_cast<uint32_t>(cps::SnapshotDtype::U32);
-    id.element_count = 4;
-    id.offset = valid.size() + shift;
+    cps::SnapshotArrayEntry extra;
+    std::memcpy(extra.name, "tracer", 6);
+    extra.dtype = static_cast<uint32_t>(cps::SnapshotDtype::U32);
+    extra.element_count = 4;
+    extra.offset = valid.size() + shift;
     extended.resize(extended.size() + shift);
-    store(extended, old_table_end, id);
+    store(extended, old_table_end, extra);
     extended.insert(extended.end(), valid.begin() + static_cast<std::ptrdiff_t>(old_table_end),
                     valid.end());
-    const uint32_t ids[4] = {3, 1, 0, 2};
-    const auto* id_bytes = reinterpret_cast<const unsigned char*>(ids);
-    extended.insert(extended.end(), id_bytes, id_bytes + sizeof(ids));
+    const uint32_t values[4] = {3, 1, 0, 2};
+    const auto* value_bytes = reinterpret_cast<const unsigned char*>(values);
+    extended.insert(extended.end(), value_bytes, value_bytes + sizeof(values));
 
     auto new_header = header;
     new_header.array_count = header.array_count + 1;
@@ -485,7 +493,7 @@ TEST_F(SnapshotTest, SkipsAnUnknownExtraArray) {
     write_all(path, extended);
     cps::Snapshot restored;
     ASSERT_NO_THROW(restored = cps::read_snapshot(path));
-    expect_same_state(restored.state, fixture_state());
+    expect_same_state(restored.state, fixture_snapshot().state);
     EXPECT_EQ(restored.physics, fixture_snapshot().physics);
 }
 
@@ -557,6 +565,90 @@ TEST_F(SnapshotTest, RejectsInconsistentArrayLengths) {
     cps::Snapshot broken = make_random_snapshot(10, 1u, 0u);
     broken.state.vz.pop_back();
     EXPECT_THROW(cps::write_snapshot(directory_ / "bad.bin", broken), std::runtime_error);
+
+    cps::Snapshot too_few_ids = make_random_snapshot(10, 1u, 0u);
+    too_few_ids.state.id.pop_back();
+    EXPECT_THROW(cps::write_snapshot(directory_ / "bad.bin", too_few_ids), std::runtime_error);
+}
+
+// ---------------------------------------------------------------------------
+// The id array
+// ---------------------------------------------------------------------------
+
+TEST(HostParticleState, ResizeNumbersTheParticlesInOrder) {
+    cps::HostParticleState state;
+    state.resize(4);
+    EXPECT_EQ(state.id, (std::vector<uint32_t>{0u, 1u, 2u, 3u}));
+}
+
+TEST_F(SnapshotTest, TheWriterEmitsIdAsU32WithOneElementPerParticle) {
+    const Bytes bytes = valid_bytes();
+    const auto entry = load<cps::SnapshotArrayEntry>(bytes, entry_offset(find_entry(bytes, "id")));
+    EXPECT_EQ(entry.dtype, static_cast<uint32_t>(cps::SnapshotDtype::U32));
+    EXPECT_EQ(entry.element_count, 4u);
+    EXPECT_EQ(load<uint32_t>(bytes, static_cast<std::size_t>(entry.offset)), 2u);
+    EXPECT_EQ(load<uint32_t>(bytes, static_cast<std::size_t>(entry.offset) + 12), 1u);
+}
+
+// With the entry renamed, this is what a file from before the id array reads as.
+TEST_F(SnapshotTest, AFileWithNoIdArrayGetsIdsInFileOrder) {
+    Bytes bytes = valid_bytes();
+    rename_entry(bytes, find_entry(bytes, "id"), "not_id");
+    const fs::path path = directory_ / "no_id.bin";
+    write_all(path, bytes);
+    EXPECT_EQ(cps::read_snapshot(path).state.id, (std::vector<uint32_t>{0u, 1u, 2u, 3u}));
+}
+
+TEST_F(SnapshotTest, RejectsAnIdArrayOfTheWrongDtypeOrLength) {
+    Bytes dtype = valid_bytes();
+    const std::size_t at = entry_offset(find_entry(dtype, "id"));
+    store<uint32_t>(dtype, at + offsetof(cps::SnapshotArrayEntry, dtype),
+                    static_cast<uint32_t>(cps::SnapshotDtype::I32));
+    EXPECT_NE(read_error(dtype).find("'id' must be u32 with 4 elements"), std::string::npos);
+
+    Bytes length = valid_bytes();
+    store<uint64_t>(length, at + offsetof(cps::SnapshotArrayEntry, element_count), 3);
+    EXPECT_NE(read_error(length).find("'id' must be u32 with 4 elements"), std::string::npos);
+}
+
+// Rewrites the ids and the checksum over them, the way a writer with a bug would
+// produce a file that is intact but wrong.
+class BadIdArray : public SnapshotTest {
+   protected:
+    std::string error_with_ids(const std::vector<uint32_t>& ids) {
+        Bytes bytes = valid_bytes();
+        const auto header = load<cps::SnapshotHeader>(bytes, 0);
+        const auto entry =
+            load<cps::SnapshotArrayEntry>(bytes, entry_offset(find_entry(bytes, "id")));
+        std::memcpy(bytes.data() + entry.offset, ids.data(), ids.size() * sizeof(uint32_t));
+        const std::size_t payload = entry_offset(header.array_count);
+        auto updated = header;
+        updated.payload_checksum = cps::fnv1a_64(bytes.data() + payload, bytes.size() - payload);
+        store(bytes, 0, updated);
+        return read_error(bytes);
+    }
+};
+
+TEST_F(BadIdArray, RejectsAValueNotBelowTheCount) {
+    const std::string message = error_with_ids({0u, 1u, 2u, 4u});
+    EXPECT_NE(message.find("'id' holds 4 at index 3"), std::string::npos) << message;
+    EXPECT_NE(message.find("particle count 4"), std::string::npos) << message;
+    EXPECT_NE(message.find("damaged.bin"), std::string::npos) << message;
+}
+
+TEST_F(BadIdArray, RejectsADuplicate) {
+    const std::string message = error_with_ids({1u, 0u, 1u, 3u});
+    EXPECT_NE(message.find("'id' holds 1 more than once"), std::string::npos) << message;
+    EXPECT_NE(message.find("index 2"), std::string::npos) << message;
+}
+
+TEST_F(BadIdArray, AcceptsAnyPermutation) { EXPECT_EQ(error_with_ids({3u, 2u, 1u, 0u}), ""); }
+
+TEST_F(SnapshotTest, TheChecksumCoversTheIdArray) {
+    Bytes bytes = valid_bytes();
+    const auto entry = load<cps::SnapshotArrayEntry>(bytes, entry_offset(find_entry(bytes, "id")));
+    bytes[static_cast<std::size_t>(entry.offset)] ^= 0x01u;
+    EXPECT_NE(read_error(bytes).find("checksum"), std::string::npos);
 }
 
 // ---------------------------------------------------------------------------
@@ -614,7 +706,7 @@ TEST_F(SnapshotTest, RejectsUnknownFlagBitsInACps1File) {
 // difference. If the change is deliberate, regenerate the fixtures (see the
 // comment on fixture_path) and say so.
 TEST_F(SnapshotTest, WriterReproducesTheCps2FixtureByteForByte) {
-    const fs::path golden = fixture_path("snapshot_v2_4p.bin");
+    const fs::path golden = fixture_path("snapshot_v2_4p_id.bin");
     ASSERT_TRUE(fs::exists(golden)) << golden;
     const fs::path path = directory_ / "fresh.bin";
     cps::write_snapshot(path, fixture_snapshot());
@@ -626,6 +718,16 @@ TEST_F(SnapshotTest, WriterReproducesTheCps2FixtureByteForByte) {
     }
 }
 
+TEST_F(SnapshotTest, ReadsTheCps2FixtureWithIds) {
+    const cps::Snapshot snapshot = cps::read_snapshot(fixture_path("snapshot_v2_4p_id.bin"));
+    const cps::Snapshot expected = fixture_snapshot();
+    EXPECT_EQ(snapshot.step, 42u);
+    EXPECT_EQ(snapshot.physics, expected.physics);
+    expect_same_state(snapshot.state, expected.state);
+}
+
+// A file from before the id array. fixture_state() numbers its particles in file
+// order, which is what this file has to come back with.
 TEST_F(SnapshotTest, ReadsTheCps2GoldenFixture) {
     const cps::Snapshot snapshot = cps::read_snapshot(fixture_path("snapshot_v2_4p.bin"));
     const cps::Snapshot expected = fixture_snapshot();
@@ -643,7 +745,7 @@ TEST(SnapshotFixtures, DISABLED_Regenerate) {
     const fs::path directory = fixture_path("snapshot_v1_4p.bin").parent_path();
     fs::create_directories(directory);
     write_all(directory / "snapshot_v1_4p.bin", cps1_bytes(fixture_state(), 42u, 0u));
-    cps::write_snapshot(directory / "snapshot_v2_4p.bin", fixture_snapshot());
+    cps::write_snapshot(directory / "snapshot_v2_4p_id.bin", fixture_snapshot());
 }
 
 // ---------------------------------------------------------------------------
@@ -833,12 +935,24 @@ INSTANTIATE_TEST_SUITE_P(
                         [](cps::Config& c) { c.diagnostics_interval = 3; }, false},
         FingerprintCase{"diagnostics_path", Base::NBody,
                         [](cps::Config& c) { c.diagnostics_path = "other.csv"; }, false},
+        FingerprintCase{"vtk_interval", Base::NBody,
+                        [](cps::Config& c) { c.vtk_interval = 3; }, false},
+        FingerprintCase{"vtk_dir", Base::NBody, [](cps::Config& c) { c.vtk_dir = "elsewhere"; },
+                        false},
         FingerprintCase{"name", Base::NBody, [](cps::Config& c) { c.name = "renamed"; }, false},
         FingerprintCase{"block_size", Base::NBody, [](cps::Config& c) { c.block_size = 64; },
                         false},
         FingerprintCase{"allow_unstable_dt", Base::Sph,
                         [](cps::Config& c) { c.allow_unstable_dt = true; }, false},
+        FingerprintCase{"use_graphs", Base::NBody,
+                        [](cps::Config& c) { c.use_graphs = !c.use_graphs; }, false},
+        FingerprintCase{"sph_use_graphs", Base::Sph,
+                        [](cps::Config& c) { c.use_graphs = !c.use_graphs; }, false},
         FingerprintCase{"sph_block_size", Base::Sph, [](cps::Config& c) { c.block_size = 64; },
+                        false},
+        FingerprintCase{"tile_size", Base::NBody, [](cps::Config& c) { c.nbody.tile_size = 64; },
+                        false},
+        FingerprintCase{"sph_tile_size", Base::Sph, [](cps::Config& c) { c.nbody.tile_size = 64; },
                         false},
         // Excluded: initial state only.
         FingerprintCase{"seed", Base::NBody, [](cps::Config& c) { c.seed = 1u; }, false},

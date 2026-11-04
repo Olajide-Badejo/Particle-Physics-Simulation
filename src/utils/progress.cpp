@@ -1,4 +1,4 @@
-#include "utils/progress.hpp"
+#include "cps/utils/progress.hpp"
 
 #include <algorithm>
 #include <cmath>

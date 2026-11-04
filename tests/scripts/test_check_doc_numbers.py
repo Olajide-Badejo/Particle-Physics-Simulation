@@ -93,6 +93,12 @@ class CheckDocNumbers(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("0 marked value", result.stdout)
 
+    def test_a_real_metric_inside_a_code_span_fails(self) -> None:
+        result = self.check("Title\n\nAt `<!-- num:Spread -->9.99<!-- /num -->` here.\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("doc.md:3: Spread", result.stderr)
+        self.assertIn("code span", result.stderr)
+
     def test_no_marks_pass_without_a_table(self) -> None:
         self.table.unlink()
         self.assertEqual(self.check("Nothing marked here.\n").returncode, 0)

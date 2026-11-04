@@ -3,6 +3,173 @@
 All notable changes to this project are recorded here. The format follows Keep
 a Changelog, and the project uses semantic versioning.
 
+## [Unreleased]
+
+### Measured and rejected
+
+- Register blocking was built, measured and removed. No setting beat the existing fused kernel at
+  any size, and the rewrite slowed fused and doubled build times. The evidence and how to reproduce
+  it are in `docs/DESIGN_DECISIONS.md` and `experiments/results/blocking_sweep.csv`.
+
+### Added
+
+- CUDA graphs, on by default: `run.use_graphs` and `--graphs on|off` launch the naive, tiled and fluid
+  steps as a graph captured after `initialize()` or `resume()`, with the same kernels in the same order,
+  so a run gives the same bits either way. CUB's sort is captured with the rest. The fused variant is
+  not captured: it launches a single kernel, so there is nothing to remove, and it runs on the stream
+  under either setting. The setting is run control and is not in the physics fingerprint.
+  `docs/architecture.md` has the details. `Solver` gains `graph_capturable`, false by default, so a
+  solver that does not use it runs on the stream as before.
+- `bench_all --graphs on,off` measures every point of the ladder both ways in the same rounds. The
+  benchmark CSVs gain a `graphs` column holding the setting asked for, so a sweep in an older file
+  starts afresh.
+- NVTX ranges around the step, each SPH pass, diagnostics, snapshots and frames, in the device
+  libraries only. `CUDA::nvtx3` is linked privately, so an installed consumer never sees it.
+- `scripts/profile_sph_split.sh`, which writes `sph_pipeline_split.csv` from the kernel records in
+  Nsight Systems, with CUB's kernels and memsets under the sort and a figure in `plot_results.py`.
+  It fails rather than record a pass that is absent or a kernel it cannot attribute.
+- `scripts/check_no_local_paths.py`, run in the host job of continuous integration and by
+  `make check-style`, which fails on an absolute home or drive path in a tracked text file or PDF.
+- The `cps` command: `cps run <preset-or-path>`, `cps presets`, `cps info` and
+  `cps convert <input> <output>`, which turns a v1 configuration into schema 2 and, with
+  `--config <file>`, a CPS1 snapshot into CPS2. Help is on `cps --help` and `cps <subcommand> --help`.
+- The files in `presets/` are compiled in, so an installed `cps` runs them by name with no files
+  beside it.
+
+### Changed
+
+- **The fluid's neighbour search is now a dense uniform grid and not a spatial hash.** A step
+  takes 0.40 to 0.42 of the hash's time at 10,000 to 100,000 particles, side by side over the same
+  steps. Which neighbours are found and what is computed with them are unchanged, and the brute force gate runs as
+  it did. SPH trajectories differ from `v1.1`, because the neighbours sum in a new order. The difference
+  starts at the rounding level and does not stay there: the dam break is chaotic at the particle
+  level, so individual particles diverge after a few hundred steps, as they do for any rounding change.
+  See `docs/physics_validation.md`. Snapshots still resume.
+- The solver now refuses a domain whose grid would pass `2^31` cells, naming the dimensions and the
+  memory, and a failed allocation of the cell table names the grid. `check_sph_domain_cell_range`
+  and `SPH_DOMAIN_CELL_LIMIT` give way to `make_sph_grid` and `SPH_GRID_AXIS_LIMIT`. An axis limit
+  now counts the width as well as the bounds, and sits at `2^20`.
+- **Breaking:** `cps/physics/spatial_hash.hpp` is now `cps/physics/uniform_grid.hpp`, with no
+  forwarding header. `spatial_hash`, `cell_key`, `next_prime`, `sph_hash_particles`,
+  `sph_sort_by_bucket`, `sph_clear_cell_bounds`, `sph_count_bucket_collisions` and
+  `SphSolver::count_bucket_collisions` are gone, the passes take a `UniformGrid` in place of a cell
+  size and table size, and `SphSolver::table_size` gives way to `SphSolver::grid`.
+- `sph_pipeline_split.csv` names its passes `assign_cells`, `sort`, `cell_bounds`, `gather`,
+  `density`, `force_and_integrate` and `between_kernels`. There is no longer a clear pass.
+- `model_bytes_per_step` counts 54 arrays per fluid particle and not 44, counted from the launchers.
+- `make bench` runs from a temporary copy of `bench_all`, because the filesystem a binary loads from
+  moves its timings by up to 0.7 percent.
+- `scripts/check_doc_numbers.py` fails on a mark inside a code span that names a real metric, which
+  it would otherwise never compare. The commit quoted in the README had been one.
+- The presets print `run.use_graphs`, regenerated through the migration fixtures.
+- `scripts/profile_kernels.sh` and `scripts/profile_sph_split.sh` run with `--graphs off`, because
+  they report per kernel and per launch.
+- `ResumeTest.*` runs every test with graphs on and off, so a single test is now named
+  `ResumeTest.<name>/graphs_on` or `/graphs_off`.
+- `scripts/profile_kernels.sh` profiles at three particle counts and adds the stall reasons, issue
+  and pipe figures over active cycles, hit rates and launch figures. `profile_runs.csv` records the
+  commit, dirty flag, particle count, tile width and block size of each export, and
+  `check_provenance.py` checks it. The script refuses a dirty tree or a stale binary, takes `--out` and
+  writes nothing until every run has worked. `profile_summary.csv` gains a row per size and these
+  columns, and the existing columns and report macros stay, quoting the largest size. New macros
+  give the stall figures.
+- **Breaking:** the program and its CMake target are now `cps`, and the project is `cps`. The name
+  `cuda_physics_sim` stays for one major version as a symbolic link to it in the build and install
+  trees. The form with flags and no subcommand still works under both names, and prints one line
+  to stderr saying it goes away in the next major version. The exported `cps::cuda_physics_sim`
+  target is now `cps::cps`.
+- **Breaking:** `sph_gather_sorted` and `sph_forces_and_integrate` take the id arrays, and a
+  `HostParticleState` given to `ParticleSystem::upload` or `write_snapshot` must have one id per
+  particle. `HostParticleState::resize` numbers them for you.
+- The presets print the two new `output` keys, regenerated through `--print-config`.
+- **Breaking:** the public headers moved under `cps/`, from `include/core`, `include/physics`,
+  `include/solvers` and `include/utils` to `include/cps/core` and so on. Include them as
+  `#include "cps/core/config.hpp"`. The old paths have no forwarding headers.
+- **Breaking:** the generated version header is now `cps/version.hpp`, not `cps_version.hpp`.
+- Each CUDA compile now has one `-std`. The seed that gets the compiler probe through no longer
+  stays in `CMAKE_CUDA_FLAGS` next to the standard CMake adds, which ends the `nvcc` warning about
+  redefining the option on every file. The effective standard does not change. A second configure
+  now also produces the same flags as the first, so it no longer rebuilds everything.
+- `make setup` and `make setup-host-only` delegate to the `dev` and `host-only` presets.
+- Continuous integration uses the presets, and the reports job installs from `requirements.txt`
+  on Python 3.12 rather than the distribution's packages.
+- **Breaking:** all of the engine's device work now runs on one non-blocking stream it owns,
+  instead of the legacy default stream. `step()` no longer waits for anything. Code that reads
+  the device arrays after stepping must call the new `SimulationEngine::synchronize()` first, and
+  `SimulationEngine::stream()` is what to order other work with. `simulation_engine.hpp` says what
+  is safe when.
+- **Breaking:** the launchers in `nbody_solver.hpp` and `sph_passes.hpp`, the `DiagnosticsReducer`
+  methods, `SphSolver` and `CudaTimer` take their stream with no default, so a caller has to name
+  one. `tile_size` and `half_dt` lose their defaults where they sat before it.
+- **Breaking:** `ParticleSystem::upload` and `download` take a stream and go through pinned
+  staging, in place of their synchronous copies. Both return with that stream drained.
+- `DeviceBuffer::zero` now waits for the bytes to be written, because a non-blocking stream is not
+  ordered against the `cudaMemset` it issues on the default stream.
+- `SimulationEngine` no longer branches on the solver. It holds a `Solver` from the new
+  `cps/solvers/solver.hpp` and runs the loop, the diagnostics, snapshots and resume through it.
+  The launches, their order and the trajectories do not change.
+- **Breaking:** `SphSolver::step` takes no `dt`; the solver uses the one in its configuration.
+- `DEFAULT_TILE_SIZE` moved to `cps/core/config.hpp`, which `nbody_solver.hpp` includes, because the
+  configuration layer now names it. `offset_velocity_half_step` moved to `solver.hpp`, also included.
+- The tile sweep in `bench_all` runs through the engine with `nbody.tile_size` instead of calling the
+  kernels itself. Its protocol and its columns do not change.
+- A fluid configuration the solver refuses now fails before the derived resolution and the time step
+  limits are printed, because the solver prints them. The refusal names the limits itself.
+- **Breaking:** configuration files are now schema 2, with `"schema": 2` and the sections `run`,
+  `initial_condition`, `nbody`, `sph` and `output`. Migration is automatic: a file with no `schema`
+  key, or with `"schema": 1`, still runs, with one warning line, and gives the same simulation.
+  `--print-config` prints its schema 2 form. Any other `schema` value is refused.
+- **Breaking:** `Config::to_json_string` and `--print-config` print schema 2, sections in a fixed
+  order, and floats as the shortest decimal that reads back to the same bits, so `dt` prints as
+  `0.001`. The `Config` struct itself does not change.
+- `external_gravity` lives in the `sph` section, since only the fluid solver reads it.
+- A misplaced key's error names the section it belongs in, from any section: a flat `dt` in a
+  schema 2 file suggests `run.dt`. Type errors from the reader name the full path.
+- **Breaking:** `configs/` is now `presets/`, in schema 2 form. The old files are kept as migration
+  fixtures in `tests/data/configs_v1/`.
+
+### Fixed
+
+- The Nsight Compute exports no longer carry a local path. The `ncu_*.csv` files in the published
+  `v1.1.0` contain a line naming the program by its full path on the author's machine, because the
+  script captured the profiler's `==PROF==` output. The script now drops those lines, the line is gone
+  from the three committed files with no other change, and the new check keeps it from coming back.
+  The tag itself is unchanged, so that release still contains them.
+
+### Removed
+
+- `DiagnosticsReducer`'s unused `result_` buffer.
+
+### Added
+
+- Particle ids. `ParticleSystem` and `HostParticleState` carry a `uint32` `id`, 0 to N-1 in the
+  initial order, which the fluid solver permutes with the rest of the particle. No force, sort key
+  or integrator reads it, and no trajectory changes.
+- CPS2 snapshots store an `id` array through the array table, with no format bump. A file with no
+  `id`, or a CPS1 file, loads with ids in file order; a bad `id` array is refused by name. Older
+  builds skip the array.
+- VTK output: XML PolyData frames (`.vtp`) and a `.pvd` series, from `include/cps/io/vtk.hpp`, with
+  `output.vtk_interval`, `output.vtk_dir`, `--vtk-every` and `--vtk-dir`. Off by default. Frames and
+  the series are replaced atomically, and a resume continues the series.
+- `python/cps_io`: NumPy readers for snapshots, frames and series, and `check_vtp.py` to check them.
+- The `Solver` interface, with `NBodySolver` and `SphSolver` implementing it and `make_solver(config)`
+  choosing between them. `SimulationEngine` has a constructor that takes a `Solver`.
+- The configuration key `nbody.tile_size`: 32, 64, 128 or 256, default 256. It is not part of the
+  physics fingerprint, so a resume may change it and existing fingerprints do not move.
+- `CMakePresets.json`, with configure, build and test presets `dev`, `release-fat`, `host-only`
+  and `ci`.
+- `cmake --install` and `find_package(cps)`, with the targets `cps::physics_host`,
+  `cps::physics_core` and `cps::cuda_physics_sim`, also available under those names in the build
+  tree. `tests/install_consumer` is a small project that uses them.
+- A `Dockerfile` on the image continuous integration uses, with a `.dockerignore`, and
+  `requirements.txt` with pinned versions for the plotting and report scripts.
+- An installed nlohmann/json or GoogleTest at the pinned version or newer is used instead of
+  fetching one. Fetching at the same pinned tags stays the fallback.
+- `cps::Stream` and `cps::HostBuffer`, RAII and move-only, with `copy_to_device_async` and
+  `copy_to_host_async`, in `cuda_helpers.hpp`.
+- `-DCPS_DEBUG_SYNC=ON` drains the stream after every launch and copy, so an ordering bug can be
+  bisected. Off by default, when it compiles to nothing.
+
 ## [1.1.0] 2026-11-03
 
 A hardening release. It adds no algorithm. It fixes correctness defects in input handling,

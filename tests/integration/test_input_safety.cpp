@@ -12,10 +12,10 @@
 #include <string>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
-#include "physics/spatial_hash.hpp"
-#include "solvers/sph_passes.hpp"
-#include "solvers/sph_solver.hpp"
+#include "cps/core/simulation_engine.hpp"
+#include "cps/physics/uniform_grid.hpp"
+#include "cps/solvers/sph_passes.hpp"
+#include "cps/solvers/sph_solver.hpp"
 #include "test_support_gpu.hpp"
 
 namespace fs = std::filesystem;
@@ -67,9 +67,9 @@ cps::Config nbody_config(cps::NBodyVariant variant, int count, long long steps) 
 void edit_state(cps::SimulationEngine& engine,
                 const std::function<void(cps::HostParticleState&)>& edit) {
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     edit(state);
-    engine.particles().upload(state);
+    engine.particles().upload(state, engine.stream());
 }
 
 // The message of the std::runtime_error the call has to raise.
@@ -136,13 +136,13 @@ class InputSafetyTest : public ::testing::Test {
     fs::path directory_;
 };
 
-// One hash pass with bad positions planted among good ones: the good ones get
-// exactly the cell the shared formulas give, the bad ones get the sentinel.
-TEST(InputSafetyHash, NonFinitePositionsGetTheSentinelAndFinitePositionsDoNotChange) {
+// One cell pass with bad positions planted among good ones: the good ones get
+// exactly the cell the shared formulas give, the bad ones get the reserved slot.
+TEST(InputSafetyGrid, NonFinitePositionsGetTheReservedSlotAndFinitePositionsDoNotChange) {
     SKIP_WITHOUT_GPU();
     const int count = 1024;
-    const float cell = 0.037f;
-    const uint32_t table = cps::next_prime(static_cast<uint32_t>(2 * count));
+    const cps::UniformGrid grid =
+        cps::make_uniform_grid(-1.0f, -1.0f, 0.0f, 2.0f, 2.5f, 5.0f, 0.037f);
 
     std::vector<float> x(count), y(count), z(count);
     for (int i = 0; i < count; ++i) {
@@ -155,41 +155,31 @@ TEST(InputSafetyHash, NonFinitePositionsGetTheSentinelAndFinitePositionsDoNotCha
     z[1023] = -INFINITY_F;
 
     cps::DeviceBuffer<float> dx(count), dy(count), dz(count);
-    cps::DeviceBuffer<uint32_t> bucket(count), index(count);
-    cps::DeviceBuffer<int64_t> key(count);
+    cps::DeviceBuffer<uint32_t> cell(count), index(count);
     cps::DeviceBuffer<int> flag(1);
     flag.zero();
     CUDA_CHECK(cudaMemcpy(dx.get(), x.data(), dx.bytes(), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(dy.get(), y.data(), dy.bytes(), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(dz.get(), z.data(), dz.bytes(), cudaMemcpyHostToDevice));
 
-    cps::sph_hash_particles(dx.get(), dy.get(), dz.get(), bucket.get(), key.get(), index.get(),
-                            flag.get(), count, cell, table, 128);
+    cps::sph_assign_cells(dx.get(), dy.get(), dz.get(), cell.get(), index.get(), flag.get(), count,
+                          grid, 128, nullptr);
 
-    std::vector<uint32_t> host_bucket(count), host_index(count);
-    std::vector<int64_t> host_key(count);
+    std::vector<uint32_t> host_cell(count), host_index(count);
     int host_flag = 0;
-    CUDA_CHECK(cudaMemcpy(host_bucket.data(), bucket.get(), bucket.bytes(),
-                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(host_cell.data(), cell.get(), cell.bytes(), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(host_index.data(), index.get(), index.bytes(), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(host_key.data(), key.get(), key.bytes(), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(&host_flag, flag.get(), sizeof(int), cudaMemcpyDeviceToHost));
 
     EXPECT_EQ(host_flag, 1);
-    const int s = cps::NON_FINITE_CELL;
     for (int i = 0; i < count; ++i) {
         ASSERT_EQ(host_index[i], static_cast<uint32_t>(i));
-        ASSERT_LT(host_bucket[i], table) << "index " << i;
         if (i == 3 || i == 500 || i == 1023) {
-            EXPECT_EQ(host_bucket[i], cps::spatial_hash(s, s, s, table)) << "index " << i;
-            EXPECT_EQ(host_key[i], cps::cell_key(s, s, s)) << "index " << i;
+            EXPECT_EQ(host_cell[i], cps::reserved_slot(grid)) << "index " << i;
             continue;
         }
-        const int ix = cps::cell_coordinate(x[i], cell);
-        const int iy = cps::cell_coordinate(y[i], cell);
-        const int iz = cps::cell_coordinate(z[i], cell);
-        ASSERT_EQ(host_bucket[i], cps::spatial_hash(ix, iy, iz, table)) << "index " << i;
-        ASSERT_EQ(host_key[i], cps::cell_key(ix, iy, iz)) << "index " << i;
+        ASSERT_LT(host_cell[i], grid.num_cells) << "index " << i;
+        ASSERT_EQ(host_cell[i], cps::cell_index(grid, x[i], y[i], z[i])) << "index " << i;
     }
 }
 
@@ -235,8 +225,8 @@ TEST(InputSafetySph, TheStepKeepsRunningSafelyWithAParticleInTheSentinelCell) {
     EXPECT_TRUE(has_text(message, "by step 25:")) << message;
 }
 
-// Every position bad at once puts the whole system into one bucket, which is
-// the longest run the cell bounds pass and the bucket scans can see.
+// Every position bad at once puts the whole system into the reserved slot, which
+// is the longest run the cell bounds pass can see, and leaves every real cell empty.
 TEST(InputSafetySph, EveryPositionNonFiniteStaysInBounds) {
     SKIP_WITHOUT_GPU();
     cps::SimulationEngine engine(sph_config(2000, 0));
@@ -252,8 +242,8 @@ TEST(InputSafetySph, EveryPositionNonFiniteStaysInBounds) {
     EXPECT_FALSE(error_from([&] { engine.check_device_errors(); }).empty());
 }
 
-// The sentinel key is what stops the failure spreading: no finite particle
-// looks in that cell, so its neighbours keep a finite state.
+// The reserved slot is what stops the failure spreading: no finite particle
+// looks in it, so its neighbours keep a finite state.
 TEST(InputSafetySph, ANaNParticleDoesNotContaminateItsNeighbours) {
     SKIP_WITHOUT_GPU();
     cps::SimulationEngine engine(sph_config(2000, 0));
@@ -262,7 +252,7 @@ TEST(InputSafetySph, ANaNParticleDoesNotContaminateItsNeighbours) {
     engine.step();
     CUDA_CHECK(cudaDeviceSynchronize());
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     EXPECT_EQ(count_non_finite_particles(state), 1);
 }
 
@@ -277,7 +267,7 @@ TEST(InputSafetySph, TheFlagRemembersAnInfinityTheWallsHaveAlreadyHealed) {
     engine.step();
     CUDA_CHECK(cudaDeviceSynchronize());
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     EXPECT_EQ(count_non_finite_particles(state), 0);
     EXPECT_TRUE(has_text(error_from([&] { engine.check_device_errors(); }), "by step 1:"));
     EXPECT_TRUE(has_text(error_from([&] { engine.diagnostics(); }), "by step 1:"));
@@ -298,26 +288,27 @@ TEST(InputSafetySph, AHealthyRunLeavesTheFlagClear) {
 }
 
 // The solver on its own: clear from the start, clear after healthy steps, and
-// set by the first bad position it hashes.
+// set by the first bad position it meets.
 TEST(InputSafetySph, TheSolverFlagReadsClearUntilABadPositionIsHashed) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = sph_config(2000, 0);
     cps::HostParticleState state = cps::make_initial_state(config);
+    const cps::Stream stream;
     cps::ParticleSystem particles(config.num_particles);
-    particles.upload(state);
+    particles.upload(state, stream.get());
 
     cps::SphSolver solver(config, config.num_particles);
-    EXPECT_FALSE(solver.non_finite_position_seen());
+    EXPECT_FALSE(solver.non_finite_position_seen(stream.get()));
     for (int i = 0; i < 200; ++i) {
-        solver.step(particles, config.dt);
+        solver.step(particles, stream.get());
     }
-    EXPECT_FALSE(solver.non_finite_position_seen());
+    EXPECT_FALSE(solver.non_finite_position_seen(stream.get()));
 
-    particles.download(state);
+    particles.download(state, stream.get());
     state.z[3] = NOT_A_NUMBER;
-    particles.upload(state);
-    solver.step(particles, config.dt);
-    EXPECT_TRUE(solver.non_finite_position_seen());
+    particles.upload(state, stream.get());
+    solver.step(particles, stream.get());
+    EXPECT_TRUE(solver.non_finite_position_seen(stream.get()));
 }
 
 TEST(InputSafetySph, TheSolverRefusesADomainTooLargeForItsCellSize) {
@@ -362,7 +353,7 @@ TEST(InputSafetySph, RunChecksTheFlagAtTheEndWhenNothingElseDoes) {
     EXPECT_TRUE(has_text(message, "by step 12:")) << message;
 }
 
-// The hash pass reads a finite position, and only the update at the end of the
+// The cell pass reads a finite position, and only the update at the end of the
 // step turns it into a NaN, so the flag stays clear and the state scan is the
 // one check that can see it.
 TEST(InputSafetyEndOfRun, ABadStateBornInTheFinalStepIsCaught) {

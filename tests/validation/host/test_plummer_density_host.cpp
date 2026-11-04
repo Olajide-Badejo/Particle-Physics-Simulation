@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <vector>
 
-#include "core/initial_conditions.hpp"
+#include "cps/core/initial_conditions.hpp"
 #include "test_support_host.hpp"
 
 namespace {

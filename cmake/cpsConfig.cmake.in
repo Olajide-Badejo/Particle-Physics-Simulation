@@ -1,0 +1,33 @@
+# Package configuration for cps. Use it with find_package(cps REQUIRED) and link
+# cps::physics_core, which brings cps::physics_host with it, or cps::physics_host
+# alone for the code that needs no CUDA.
+#
+# What a consumer linking cps::physics_core must provide:
+#
+#   - A CUDA toolkit at @CPS_CUDA_TOOLKIT_FLOOR@ or newer that FindCUDAToolkit can
+#     locate, for the headers and the cudart library. Its nvcc must be on PATH or
+#     named by CUDAToolkit_ROOT.
+#   - A host compiler that toolkit accepts, with C++20 or newer. The headers
+#     include cuda_runtime.h, and CUDA::cudart supplies its include path.
+#   - At run time, a driver and a GPU the installed device code targets. The
+#     code in physics_core was built for compute capability @CPS_CORE_ARCH_LIST@.
+#
+# The device code is already compiled into the archive, and it needs no device
+# link step, so a consumer with only C++ sources need not enable the CUDA
+# language at all. One with .cu files of its own must, and it then needs the
+# same -std seed before project() that this project's CMakeLists.txt explains,
+# or the compiler probe fails on recent libstdc++ headers.
+#
+# The fast math setting of the build travels as the CPS_FAST_MATH definition.
+# The JSON library is private to the archives, so a consumer does not need it.
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+if(NOT @CPS_HOST_ONLY@)
+  find_dependency(CUDAToolkit @CPS_CUDA_TOOLKIT_FLOOR@)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/cpsTargets.cmake")
+
+check_required_components(cps)

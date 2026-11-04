@@ -9,14 +9,17 @@
 #include <string>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
+#include "cps/core/simulation_engine.hpp"
 #include "test_support_gpu.hpp"
 
 namespace fs = std::filesystem;
 
 namespace {
 
-class ResumeTest : public ::testing::Test {
+// Every test here holds with the step launched on the stream and as a captured
+// graph, so each runs under both. The empty prefix keeps ResumeTest.* as the filter;
+// a single test is ResumeTest.<name>/graphs_on or /graphs_off.
+class ResumeTest : public ::testing::TestWithParam<bool> {
    protected:
     void SetUp() override {
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -41,6 +44,7 @@ class ResumeTest : public ::testing::Test {
         config.diagnostics_path.clear();
         config.snapshot_dir = directory_.string();
         config.snapshot_interval = 0;
+        config.use_graphs = GetParam();
 
         if (solver == cps::SolverType::Sph) {
             config.initial_condition = cps::InitialCondition::DamBreak;
@@ -64,12 +68,13 @@ class ResumeTest : public ::testing::Test {
         local.steps = total;
         cps::SimulationEngine engine(local);
         engine.initialize();
+        EXPECT_EQ(engine.using_graphs(), GetParam() && engine.solver().graph_capturable());
         for (long long i = 0; i < total; ++i) {
             engine.step();
         }
         CUDA_CHECK(cudaDeviceSynchronize());
         cps::HostParticleState state;
-        engine.particles().download(state);
+        engine.particles().download(state, engine.stream());
         return state;
     }
 
@@ -93,12 +98,13 @@ class ResumeTest : public ::testing::Test {
         cps::SimulationEngine engine(local);
         const long long at = engine.resume();
         EXPECT_EQ(at, first);
+        EXPECT_EQ(engine.using_graphs(), GetParam() && engine.solver().graph_capturable());
         for (long long i = 0; i < second; ++i) {
             engine.step();
         }
         CUDA_CHECK(cudaDeviceSynchronize());
         cps::HostParticleState state;
-        engine.particles().download(state);
+        engine.particles().download(state, engine.stream());
         return state;
     }
 
@@ -117,6 +123,7 @@ class ResumeTest : public ::testing::Test {
             ASSERT_EQ(bits(a.vy[i]), bits(b.vy[i])) << label << " velocity y at index " << i;
             ASSERT_EQ(bits(a.vz[i]), bits(b.vz[i])) << label << " velocity z at index " << i;
             ASSERT_EQ(bits(a.mass[i]), bits(b.mass[i])) << label << " mass at index " << i;
+            ASSERT_EQ(a.id[i], b.id[i]) << label << " id at index " << i;
         }
     }
 
@@ -151,7 +158,7 @@ class ResumeTest : public ::testing::Test {
 // merely close to running straight through, it is the same run. Anything less
 // makes a snapshot useless for a long job, because the results would depend on
 // how many times it was interrupted.
-TEST_F(ResumeTest, SplitVariantResumesBitIdentically) {
+TEST_P(ResumeTest, SplitVariantResumesBitIdentically) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 2048);
     const cps::HostParticleState straight = run_straight(config, 120);
@@ -159,7 +166,7 @@ TEST_F(ResumeTest, SplitVariantResumesBitIdentically) {
     expect_bit_identical(straight, resumed, "tiled");
 }
 
-TEST_F(ResumeTest, NaiveVariantResumesBitIdentically) {
+TEST_P(ResumeTest, NaiveVariantResumesBitIdentically) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Naive, 1024);
     const cps::HostParticleState straight = run_straight(config, 100);
@@ -170,7 +177,7 @@ TEST_F(ResumeTest, NaiveVariantResumesBitIdentically) {
 // The fused variant is the interesting case, because its velocity array holds
 // the leapfrog half step velocity rather than the synchronised one. The flag
 // in the snapshot header is what carries that distinction across the restart.
-TEST_F(ResumeTest, FusedVariantResumesBitIdentically) {
+TEST_P(ResumeTest, FusedVariantResumesBitIdentically) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Fused, 2048);
     const cps::HostParticleState straight = run_straight(config, 120);
@@ -178,7 +185,18 @@ TEST_F(ResumeTest, FusedVariantResumesBitIdentically) {
     expect_bit_identical(straight, resumed, "fused");
 }
 
-TEST_F(ResumeTest, FluidSolverResumesBitIdentically) {
+// An odd step is where the step number and the way round the position buffers part
+// company: the snapshot was written with them swapped, and the fresh engine that
+// loads it starts with them as they were allocated.
+TEST_P(ResumeTest, FusedVariantResumesAtAnOddStepBitIdentically) {
+    SKIP_WITHOUT_GPU();
+    const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Fused, 2048);
+    const cps::HostParticleState straight = run_straight(config, 120);
+    const cps::HostParticleState resumed = run_with_resume(config, 37, 83);
+    expect_bit_identical(straight, resumed, "fused");
+}
+
+TEST_P(ResumeTest, FluidSolverResumesBitIdentically) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::Sph, cps::NBodyVariant::Tiled, 4096);
     const cps::HostParticleState straight = run_straight(config, 100);
@@ -186,7 +204,52 @@ TEST_F(ResumeTest, FluidSolverResumesBitIdentically) {
     expect_bit_identical(straight, resumed, "sph");
 }
 
-TEST_F(ResumeTest, ResumingTwiceStillLandsOnTheSameState) {
+// The tile width changes the launch shape and nothing else, so each width has to
+// hold the same guarantee as the default. The count leaves a partly filled last
+// tile at every width, so the padded slots are in play as well.
+TEST_P(ResumeTest, EveryTileWidthResumesBitIdentically) {
+    SKIP_WITHOUT_GPU();
+    for (const cps::NBodyVariant variant : {cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
+        for (const int width : {32, 64, 128, 256}) {
+            const std::string label = cps::to_string(variant) + std::to_string(width);
+            SCOPED_TRACE(label);
+            cps::Config config = base_config(cps::SolverType::NBody, variant, 1000);
+            config.nbody.tile_size = width;
+            config.snapshot_dir = (directory_ / label).string();
+            const cps::HostParticleState straight = run_straight(config, 120);
+            const cps::HostParticleState resumed = run_with_resume(config, 50, 70);
+            expect_bit_identical(straight, resumed, label);
+        }
+    }
+}
+
+// The width is not in the physics fingerprint, so a resume may change it. That is
+// only honest if the run carries on as if nothing had happened.
+TEST_P(ResumeTest, AResumeMayChangeTheTileWidth) {
+    SKIP_WITHOUT_GPU();
+    for (const cps::NBodyVariant variant : {cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
+        const std::string label = cps::to_string(variant);
+        SCOPED_TRACE(label);
+        cps::Config config = base_config(cps::SolverType::NBody, variant, 1000);
+        config.nbody.tile_size = 64;
+        config.snapshot_dir = (directory_ / label).string();
+        write_snapshot_under(config, 50);
+
+        cps::Config wider = config;
+        wider.nbody.tile_size = 256;
+        wider.steps = 120;
+        cps::SimulationEngine engine(wider);
+        EXPECT_EQ(engine.resume(), 50);
+        for (int i = 0; i < 70; ++i) {
+            engine.step();
+        }
+        cps::HostParticleState resumed;
+        engine.particles().download(resumed, engine.stream());
+        expect_bit_identical(run_straight(wider, 120), resumed, label);
+    }
+}
+
+TEST_P(ResumeTest, ResumingTwiceStillLandsOnTheSameState) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Fused, 1024);
     const cps::HostParticleState straight = run_straight(config, 90);
@@ -222,14 +285,14 @@ TEST_F(ResumeTest, ResumingTwiceStillLandsOnTheSameState) {
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     expect_bit_identical(straight, state, "twice resumed");
 }
 
 // A diagnostic reads the state and must not perturb it. If it did, a run that
 // happened to take a diagnostic would diverge from one that did not, and the
 // energy curve would be measuring its own observer.
-TEST_F(ResumeTest, TakingDiagnosticsDoesNotPerturbTheTrajectory) {
+TEST_P(ResumeTest, TakingDiagnosticsDoesNotPerturbTheTrajectory) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Fused, 1024);
     const cps::HostParticleState quiet = run_straight(config, 80);
@@ -244,11 +307,11 @@ TEST_F(ResumeTest, TakingDiagnosticsDoesNotPerturbTheTrajectory) {
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     cps::HostParticleState observed;
-    engine.particles().download(observed);
+    engine.particles().download(observed, engine.stream());
     expect_bit_identical(quiet, observed, "observed");
 }
 
-TEST_F(ResumeTest, TheSnapshotOnDiskCarriesTheStepAndTheVelocityConvention) {
+TEST_P(ResumeTest, TheSnapshotOnDiskCarriesTheStepAndTheVelocityConvention) {
     SKIP_WITHOUT_GPU();
     cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Fused, 256);
     config.steps = 25;
@@ -268,7 +331,7 @@ TEST_F(ResumeTest, TheSnapshotOnDiskCarriesTheStepAndTheVelocityConvention) {
     EXPECT_EQ(snapshot.state.size(), 256u);
 }
 
-TEST_F(ResumeTest, RefusesASnapshotWithTheWrongParticleCount) {
+TEST_P(ResumeTest, RefusesASnapshotWithTheWrongParticleCount) {
     SKIP_WITHOUT_GPU();
     cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 256);
     config.steps = 5;
@@ -285,7 +348,7 @@ TEST_F(ResumeTest, RefusesASnapshotWithTheWrongParticleCount) {
     EXPECT_THROW(engine.resume(), std::runtime_error);
 }
 
-TEST_F(ResumeTest, ReportsAMissingSnapshotDirectoryClearly) {
+TEST_P(ResumeTest, ReportsAMissingSnapshotDirectoryClearly) {
     SKIP_WITHOUT_GPU();
     cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 128);
     config.snapshot_dir = (directory_ / "does_not_exist").string();
@@ -296,7 +359,7 @@ TEST_F(ResumeTest, ReportsAMissingSnapshotDirectoryClearly) {
 // Resuming under different physics continues a different simulation from a
 // state the new one never produced. Each of these must be refused, and the
 // message must say which field moved and from what to what.
-TEST_F(ResumeTest, RefusesADifferentTimeStep) {
+TEST_P(ResumeTest, RefusesADifferentTimeStep) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 256);
     write_snapshot_under(config, 3);
@@ -309,7 +372,7 @@ TEST_F(ResumeTest, RefusesADifferentTimeStep) {
     EXPECT_NE(message.find("--force-resume"), std::string::npos) << message;
 }
 
-TEST_F(ResumeTest, RefusesADifferentSolver) {
+TEST_P(ResumeTest, RefusesADifferentSolver) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 512);
     write_snapshot_under(config, 3);
@@ -320,7 +383,7 @@ TEST_F(ResumeTest, RefusesADifferentSolver) {
         << message;
 }
 
-TEST_F(ResumeTest, RefusesADifferentVariant) {
+TEST_P(ResumeTest, RefusesADifferentVariant) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Fused, 256);
     write_snapshot_under(config, 3);
@@ -332,7 +395,7 @@ TEST_F(ResumeTest, RefusesADifferentVariant) {
         << message;
 }
 
-TEST_F(ResumeTest, RefusesADifferentSoftening) {
+TEST_P(ResumeTest, RefusesADifferentSoftening) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 256);
     write_snapshot_under(config, 3);
@@ -344,7 +407,7 @@ TEST_F(ResumeTest, RefusesADifferentSoftening) {
         << message;
 }
 
-TEST_F(ResumeTest, RefusesADifferentFluidParameter) {
+TEST_P(ResumeTest, RefusesADifferentFluidParameter) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::Sph, cps::NBodyVariant::Tiled, 512);
     write_snapshot_under(config, 3);
@@ -358,7 +421,7 @@ TEST_F(ResumeTest, RefusesADifferentFluidParameter) {
 
 // Run control is not physics: a longer run, another cadence or another
 // diagnostics file must resume without complaint.
-TEST_F(ResumeTest, AcceptsAChangeToRunControlOnly) {
+TEST_P(ResumeTest, AcceptsAChangeToRunControlOnly) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 256);
     write_snapshot_under(config, 3);
@@ -371,7 +434,7 @@ TEST_F(ResumeTest, AcceptsAChangeToRunControlOnly) {
     EXPECT_EQ(resume_error(changed), "");
 }
 
-TEST_F(ResumeTest, ForceResumeAcceptsADifferentTimeStepWithAWarning) {
+TEST_P(ResumeTest, ForceResumeAcceptsADifferentTimeStepWithAWarning) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 256);
     write_snapshot_under(config, 3);
@@ -393,7 +456,7 @@ TEST_F(ResumeTest, ForceResumeAcceptsADifferentTimeStepWithAWarning) {
 // The committed CPS1 fixture (see tests/unit/test_snapshot_format.cpp for how
 // it is made) has no physics record. It must still load, with a warning that
 // nothing could be checked, and the run must carry on from its step.
-TEST_F(ResumeTest, ResumesTheCps1FixtureWithAWarning) {
+TEST_P(ResumeTest, ResumesTheCps1FixtureWithAWarning) {
     SKIP_WITHOUT_GPU();
     const fs::path fixture =
         fs::path(CPS_PROJECT_ROOT) / "tests" / "data" / "snapshot_v1_4p.bin";
@@ -416,7 +479,7 @@ TEST_F(ResumeTest, ResumesTheCps1FixtureWithAWarning) {
     CUDA_CHECK(cudaDeviceSynchronize());
     EXPECT_EQ(engine.current_step(), 47);
     cps::HostParticleState state;
-    engine.particles().download(state);
+    engine.particles().download(state, engine.stream());
     ASSERT_EQ(state.size(), 4u);
     for (std::size_t i = 0; i < state.size(); ++i) {
         EXPECT_TRUE(std::isfinite(state.x[i]) && std::isfinite(state.vx[i])) << "index " << i;
@@ -424,7 +487,7 @@ TEST_F(ResumeTest, ResumesTheCps1FixtureWithAWarning) {
 }
 
 // Version 2 stores the engine's simulated time next to the step.
-TEST_F(ResumeTest, TheSnapshotRecordsTheSimulatedTime) {
+TEST_P(ResumeTest, TheSnapshotRecordsTheSimulatedTime) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Tiled, 128);
     write_snapshot_under(config, 7);
@@ -433,5 +496,10 @@ TEST_F(ResumeTest, TheSnapshotRecordsTheSimulatedTime) {
     EXPECT_EQ(std::bit_cast<uint64_t>(snapshot.time),
               std::bit_cast<uint64_t>(7.0 * static_cast<double>(config.dt)));
 }
+
+INSTANTIATE_TEST_SUITE_P(, ResumeTest, ::testing::Values(false, true),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                             return info.param ? "graphs_on" : "graphs_off";
+                         });
 
 }  // namespace

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "core/simulation_engine.hpp"
+#include "cps/core/simulation_engine.hpp"
 #include "test_support_gpu.hpp"
 
 namespace {
@@ -162,7 +162,7 @@ TEST(EnergyDrift, TheOrbitStaysCircular) {
             continue;
         }
         cps::HostParticleState state;
-        engine.particles().download(state);
+        engine.particles().download(state, engine.stream());
         const double dx = static_cast<double>(state.x[1]) - state.x[0];
         const double dy = static_cast<double>(state.y[1]) - state.y[0];
         const double dz = static_cast<double>(state.z[1]) - state.z[0];

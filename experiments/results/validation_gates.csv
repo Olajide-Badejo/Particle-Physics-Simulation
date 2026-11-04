@@ -9,7 +9,7 @@ pairwise_force_antisymmetry_residual,1.525073856121083e-07,9.9999999999999995e-0
 plummer_radial_density_chi_square_p_value,0.44157813359081899,0.050000000000000003,greater_than,1
 sph_poly6_kernel_normalisation_error,6.4805936395018193e-08,0.001,less_than,1
 sph_spiky_kernel_normalisation_error,4.3866195786890216e-08,0.001,less_than,1
-sph_interior_density_mean_error,0.00028061415437412052,0.01,less_than,1
-sph_interior_density_rms_deviation,0.014888218694662466,0.050000000000000003,less_than,1
+sph_interior_density_mean_error,0.00028061417143192101,0.01,less_than,1
+sph_interior_density_rms_deviation,0.014888218675079841,0.050000000000000003,less_than,1
 sph_interior_density_max_deviation,0.063434692382812505,0.10000000000000001,less_than,1
 sph_neighbour_search_vs_brute_force,2.8480995956342427e-07,0.0001,less_than,1

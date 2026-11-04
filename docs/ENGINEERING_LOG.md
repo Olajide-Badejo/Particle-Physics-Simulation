@@ -220,8 +220,8 @@ cannot be right here.
 **Root cause.** The bottleneck is the first level cache and the load store
 pipeline, not the memory bus. Counters at <!-- num:ProfileParticles -->200,000<!-- /num --> particles, as remeasured for `v1.1`:
 global load sectors fall by a factor of <!-- num:SectorReduction -->63.9<!-- /num -->; L1 throughput falls from
-<!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent of peak, close to saturation, to <!-- num:TiledLoneTexPct -->45.4<!-- /num --> percent; warp issue
-efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.7<!-- /num --> percent. Arithmetic instruction counts
+<!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent of peak, close to saturation, to <!-- num:TiledLoneTexPct -->45.5<!-- /num --> percent; warp issue
+efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.8<!-- /num --> percent. Arithmetic instruction counts
 are equal across all three variants to within a fraction of a percent, which is the control. This entry
 first quoted counters at 100,000 particles, from a profile that was not the size it claimed to explain.
 
@@ -405,14 +405,14 @@ relative differences were stable to a tenth of a percentage point was false.
 
 **Fix and why.** Interleave the compared configurations in rounds with a rotating order, report medians
 with dispersion, take comparisons from the ratio inside each round, and measure a reference at the
-start, middle and end of the sweep. Drift in the current results is <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent.
+start, middle and end of the sweep. Drift in the current results is <!-- num:RepeatabilitySpread -->0.19<!-- /num --> percent.
 Refuse a dirty tree. Record a commit that exists, because both hashes in the `v1.0.0` results do not,
 after a history rewrite.
 
 **What it showed.** Fused beats tiled by about 1 percent over most of the range, with a paired ratio of
-<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9909<!-- /num --> at 150,000 particles. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is not resolved:
-<!-- num:FusedOverTiledRatioAtMaxN -->0.9914<!-- /num -->, IQR <!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0276<!-- /num -->, with tiled trials bimodal near
-<!-- num:TiledLowModeMsAtMaxN -->43.1<!-- /num --> and <!-- num:TiledHighModeMsAtMaxN -->44.4<!-- /num --> ms, which I do not yet understand. Those gains are
+<!-- num:FusedOverTiledRatioAtHundredFiftyThousand -->0.9905<!-- /num --> at 150,000 particles. At <!-- num:LadderMaxN -->200,000<!-- /num --> it is not resolved:
+<!-- num:FusedOverTiledRatioAtMaxN -->0.9913<!-- /num -->, IQR <!-- num:FusedOverTiledRatioIqrAtMaxN -->0.0097<!-- /num -->, with tiled trials bimodal near
+<!-- num:TiledLowModeMsAtMaxN -->43.2<!-- /num --> and <!-- num:TiledHighModeMsAtMaxN -->43.6<!-- /num --> ms, which I do not yet understand. Those gains are
 several times the <!-- num:ModelSavingPercentAtMaxN -->0.048<!-- /num --> percent the removed bytes would cost at streaming bandwidth,
 so the "absolute ceiling" of the 2026-08-02 entry was not one. It also turned out the split path reads the
 acceleration array twice per step, so that entry's description of the traffic was wrong as well. The tile
@@ -434,3 +434,27 @@ error of the same orbit is about 9.9e-13.
 slope from 2 is <!-- num:VerletSlopeErrorEccentric -->0.0072<!-- /num --> at eccentricity 0.5, and distance from 4 is
 <!-- num:VerletSlopeErrorCircular -->0.0040<!-- /num --> on an unsoftened circular orbit, where symmetry cancels the second order
 term. A slope of 2 cannot appear on the circular orbit, which the first plan for this gate had wrong.
+
+---
+
+## 2026-11-04: the profile published where it was run
+
+**Theme:** provenance.
+
+**Symptom.** The Nsight Compute exports in `v1.1.0` began with a line naming the program by its full
+path on my machine.
+
+**Root cause.** `profile_kernels.sh` sent the profiler's standard output straight to the result file,
+and Nsight Compute reports the process it attached to on that stream. Nothing looked at those files,
+because the summary starts reading at the header row.
+
+**Fix and why.** The script now builds each file in a temporary directory, drops those lines, scans
+what is left and moves everything into place only after every run has worked. A scanner over the tracked
+files runs in continuous integration, because a rule about one script does not cover the next tool. The
+exports also said nothing about the commit that made them, so a companion file now does, and the provenance
+check holds it to the same rules as the benchmark rows.
+
+**Why it mattered.** Counters read one launch of one kernel with the launches serialised, which is why they
+can name a stall reason but not the cost between kernels. The split of the fluid step comes from the kernel
+records in Nsight Systems, which traces CUDA kernels under WSL2 here, so the two tools now answer different
+questions rather than one answering both badly.

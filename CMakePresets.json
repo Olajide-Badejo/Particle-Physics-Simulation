@@ -1,0 +1,66 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "common",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CUDA_ARCHITECTURES": { "type": "STRING", "value": "120" },
+        "CPS_BUILD_TESTS": "ON",
+        "CPS_BUILD_BENCHMARKS": "ON",
+        "CPS_USE_FAST_MATH": "ON"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Development and benchmarks: sm_120 with fast math",
+      "description": "What the benchmarks are measured in. Fast math reaches only physics_core; the validation library is compiled with it off regardless.",
+      "inherits": "common",
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "release-fat",
+      "displayName": "Release: physics_core for every release architecture",
+      "inherits": "common",
+      "binaryDir": "${sourceDir}/build-fat",
+      "cacheVariables": { "CPS_FAT_BINARY": "ON" }
+    },
+    {
+      "name": "host-only",
+      "displayName": "No CUDA: the host library and its tests",
+      "binaryDir": "${sourceDir}/build-host",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CPS_HOST_ONLY": "ON",
+        "CPS_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "Continuous integration: the fat build with warnings as errors",
+      "inherits": "release-fat",
+      "binaryDir": "${sourceDir}/build-ci",
+      "cacheVariables": { "CPS_WERROR": "ON" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev", "jobs": 8 },
+    { "name": "release-fat", "configurePreset": "release-fat", "jobs": 8 },
+    { "name": "host-only", "configurePreset": "host-only", "jobs": 8 },
+    { "name": "ci", "configurePreset": "ci", "jobs": 8 }
+  ],
+  "testPresets": [
+    {
+      "name": "common",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    { "name": "dev", "inherits": "common", "configurePreset": "dev" },
+    { "name": "release-fat", "inherits": "common", "configurePreset": "release-fat" },
+    { "name": "host-only", "inherits": "common", "configurePreset": "host-only" },
+    { "name": "ci", "inherits": "common", "configurePreset": "ci" }
+  ]
+}
