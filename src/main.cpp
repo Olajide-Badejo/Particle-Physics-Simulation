@@ -1,10 +1,8 @@
-#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <string>
 
 #include "cps/core/cli.hpp"
-#include "cps/core/initial_conditions.hpp"
 #include "cps/core/simulation_engine.hpp"
 #include "cps/version.hpp"
 #include "cps/utils/cuda_helpers.hpp"
@@ -63,27 +61,9 @@ int main(int argc, char** argv) {
         std::printf("  time step     : %g\n", static_cast<double>(config.dt));
         std::printf("  seed          : %u\n", config.seed);
         std::printf("  fast math     : %s\n", CPS_FAST_MATH ? "on" : "off");
-        if (config.solver == cps::SolverType::Sph) {
-            const cps::SphDerivedParameters derived = cps::derive_sph_parameters(config);
-            std::printf("  smoothing h   : %g\n", static_cast<double>(derived.smoothing_radius));
-            std::printf("  particle mass : %g\n", static_cast<double>(derived.particle_mass));
-            std::printf("  neighbours    : %.1f expected inside the support\n",
-                        derived.expected_neighbour_count);
-            const cps::SphTimeStepLimits limits =
-                cps::sph_time_step_limits(config, derived.smoothing_radius);
-            const auto print_limit = [](const char* name, double value) {
-                if (std::isfinite(value)) {
-                    std::printf("  dt limit      : %s %g\n", name, value);
-                } else {
-                    std::printf("  dt limit      : %s skipped\n", name);
-                }
-            };
-            print_limit("acoustic", limits.acoustic);
-            print_limit("viscous", limits.viscous);
-            print_limit("body force", limits.body_force);
-        }
 
         cps::SimulationEngine engine(config);
+        std::printf("%s", engine.solver().startup_description().c_str());
         if (options.resume) {
             engine.resume(options.force_resume);
         } else {
@@ -118,7 +98,7 @@ int main(int argc, char** argv) {
                         wall_ms > 0.0 ? per_step / (wall_ms / 1.0e3) : 0.0);
         }
 
-        if (config.solver == cps::SolverType::NBody) {
+        if (engine.solver().has_potential_energy()) {
             const cps::Diagnostics final_row = engine.diagnostics(true);
             std::printf("final energy: kinetic %.9g potential %.9g total %.9g\n",
                         final_row.kinetic, final_row.potential, final_row.total);

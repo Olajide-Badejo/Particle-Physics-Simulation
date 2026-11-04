@@ -251,6 +251,8 @@ set(CPS_DEVICE_SOURCES
   src/kernels/integrators.cu
   src/kernels/spatial_hash.cu
   src/kernels/sph_forces.cu
+  src/solvers/nbody_solver.cpp
+  src/solvers/solver_factory.cpp
   src/solvers/sph_solver.cpp
   src/utils/cuda_helpers.cpp)
 
@@ -377,7 +379,8 @@ if(CPS_BUILD_TESTS)
   # Device unit tests.
   add_executable(unit_tests_gpu
     tests/unit/test_device_reductions.cu
-    tests/unit/test_kernel_parity.cu)
+    tests/unit/test_kernel_parity.cu
+    tests/unit/test_solver_factory.cpp)
   target_link_libraries(unit_tests_gpu PRIVATE physics_core_strict cps_gpu_test_main cps_warnings cps_test_support)
   set_target_properties(unit_tests_gpu PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
   add_test(NAME unit_gpu COMMAND unit_tests_gpu)
@@ -385,6 +388,7 @@ if(CPS_BUILD_TESTS)
 
   add_executable(integration_tests
     tests/integration/test_solver_smoke.cpp
+    tests/integration/test_solver_interface.cpp
     tests/integration/test_snapshot_resume.cpp
     tests/integration/test_diagnostics.cpp
     tests/integration/test_input_safety.cpp)

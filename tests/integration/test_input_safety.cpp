@@ -310,14 +310,14 @@ TEST(InputSafetySph, TheSolverFlagReadsClearUntilABadPositionIsHashed) {
     cps::SphSolver solver(config, config.num_particles);
     EXPECT_FALSE(solver.non_finite_position_seen(stream.get()));
     for (int i = 0; i < 200; ++i) {
-        solver.step(particles, config.dt, stream.get());
+        solver.step(particles, stream.get());
     }
     EXPECT_FALSE(solver.non_finite_position_seen(stream.get()));
 
     particles.download(state, stream.get());
     state.z[3] = NOT_A_NUMBER;
     particles.upload(state, stream.get());
-    solver.step(particles, config.dt, stream.get());
+    solver.step(particles, stream.get());
     EXPECT_TRUE(solver.non_finite_position_seen(stream.get()));
 }
 

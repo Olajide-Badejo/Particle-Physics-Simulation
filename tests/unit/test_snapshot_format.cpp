@@ -840,6 +840,10 @@ INSTANTIATE_TEST_SUITE_P(
                         [](cps::Config& c) { c.allow_unstable_dt = true; }, false},
         FingerprintCase{"sph_block_size", Base::Sph, [](cps::Config& c) { c.block_size = 64; },
                         false},
+        FingerprintCase{"tile_size", Base::NBody, [](cps::Config& c) { c.nbody.tile_size = 64; },
+                        false},
+        FingerprintCase{"sph_tile_size", Base::Sph, [](cps::Config& c) { c.nbody.tile_size = 64; },
+                        false},
         // Excluded: initial state only.
         FingerprintCase{"seed", Base::NBody, [](cps::Config& c) { c.seed = 1u; }, false},
         FingerprintCase{"initial_condition", Base::NBody,

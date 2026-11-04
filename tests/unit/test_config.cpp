@@ -377,8 +377,8 @@ TEST(Config, RejectsMisspelledKeyInsideTheFluidBlock) {
 }
 
 TEST(Config, RejectsUnexpectedNestedObject) {
-    const std::string top = error_of(R"({"nbody": {"dt": 0.1}})");
-    EXPECT_NE(top.find("unknown configuration key 'nbody'"), std::string::npos) << top;
+    const std::string top = error_of(R"({"gravity": {"dt": 0.1}})");
+    EXPECT_NE(top.find("unknown configuration key 'gravity'"), std::string::npos) << top;
 
     const std::string nested = error_of(R"({"sph": {"kernel": {"name": "wendland"}}})");
     EXPECT_NE(nested.find("unknown configuration key 'sph.kernel'"), std::string::npos) << nested;
@@ -386,6 +386,62 @@ TEST(Config, RejectsUnexpectedNestedObject) {
     // An object where a number belongs is a type error naming the field.
     const std::string misplaced = error_of(R"({"dt": {"value": 0.1}})");
     EXPECT_NE(misplaced.find("'dt'"), std::string::npos) << misplaced;
+}
+
+// The N-body block holds one key today. An unknown key in it is named with its
+// full path, and one left at the top level points at its home.
+TEST(Config, ReadsTheTileWidthFromTheNBodyBlock) {
+    EXPECT_EQ(cps::Config::from_json_string("{}").nbody.tile_size, cps::DEFAULT_TILE_SIZE);
+    for (const int width : {32, 64, 128, 256}) {
+        SCOPED_TRACE(width);
+        const std::string text = R"({"nbody": {"tile_size": )" + std::to_string(width) + "}}";
+        const cps::Config config = cps::Config::from_json_string(text);
+        EXPECT_EQ(config.nbody.tile_size, width);
+        EXPECT_EQ(cps::Config::from_json_string(config.to_json_string()).nbody.tile_size, width);
+    }
+}
+
+TEST(Config, RejectsATileWidthWithNoKernel) {
+    for (const char* width : {"0", "-32", "16", "100", "512"}) {
+        SCOPED_TRACE(width);
+        const std::string message =
+            error_of(R"({"nbody": {"tile_size": )" + std::string(width) + "}}");
+        EXPECT_NE(message.find("nbody.tile_size must be 32, 64, 128 or 256, got " +
+                               std::string(width)),
+                  std::string::npos)
+            << message;
+    }
+    const std::string fractional = error_of(R"({"nbody": {"tile_size": 64.5}})");
+    EXPECT_NE(fractional.find("'nbody.tile_size' must be an integer"), std::string::npos)
+        << fractional;
+}
+
+TEST(Config, RejectsAnNBodyBlockThatIsNotAnObject) {
+    const std::string message = error_of(R"({"nbody": 64})");
+    EXPECT_NE(message.find("configuration field 'nbody' must be an object"), std::string::npos)
+        << message;
+}
+
+TEST(Config, RejectsMisspelledKeyInsideTheNBodyBlock) {
+    const std::string message = error_of(R"({"nbody": {"tile_sise": 64}})");
+    EXPECT_NE(message.find("'nbody.tile_sise'"), std::string::npos) << message;
+    EXPECT_NE(message.find("did you mean 'tile_size'"), std::string::npos) << message;
+
+    const std::string misplaced = error_of(R"({"nbody": {"dt": 0.1}})");
+    EXPECT_NE(misplaced.find("unknown configuration key 'nbody.dt'"), std::string::npos)
+        << misplaced;
+}
+
+TEST(Config, ATileWidthAtTheTopLevelPointsAtTheNBodyBlock) {
+    const std::string message = error_of(R"({"tile_size": 64})");
+    EXPECT_NE(message.find("unknown configuration key 'tile_size'"), std::string::npos) << message;
+    EXPECT_NE(message.find("did you mean 'nbody.tile_size'"), std::string::npos) << message;
+}
+
+// A block nothing reads is still refused by its own name.
+TEST(Config, RejectsAnUnknownBlockAtTheTopLevel) {
+    const std::string message = error_of(R"({"gravity": {"dt": 0.1}})");
+    EXPECT_NE(message.find("unknown configuration key 'gravity'"), std::string::npos) << message;
 }
 
 TEST(Config, UnrelatedUnknownKeyGetsNoSuggestion) {
@@ -447,6 +503,7 @@ void expect_same_config(const cps::Config& a, const cps::Config& b) {
     EXPECT_EQ(a.snapshot_dir, b.snapshot_dir);
     EXPECT_EQ(a.diagnostics_interval, b.diagnostics_interval);
     EXPECT_EQ(a.diagnostics_path, b.diagnostics_path);
+    EXPECT_EQ(a.nbody.tile_size, b.nbody.tile_size);
     EXPECT_EQ(a.sph.smoothing_radius, b.sph.smoothing_radius);
     EXPECT_EQ(a.sph.rest_density, b.sph.rest_density);
     EXPECT_EQ(a.sph.gas_constant, b.sph.gas_constant);
@@ -472,6 +529,7 @@ TEST(Config, RoundTripsEveryFieldExactly) {
         "plummer_radius": 0.7, "two_body_separation": 2.2,
         "external_gravity": [0.1, -9.80665, 0.3], "snapshot_interval": 77,
         "snapshot_dir": "snaps/x", "diagnostics_interval": 13, "diagnostics_path": "d.csv",
+        "nbody": {"tile_size": 64},
         "sph": {
             "smoothing_radius": 0.0123, "rest_density": 998.2, "gas_constant": 1234.5,
             "viscosity": 0.31, "particle_mass": 0.0042, "boundary_damping": 0.9,

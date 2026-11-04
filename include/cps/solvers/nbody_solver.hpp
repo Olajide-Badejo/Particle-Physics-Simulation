@@ -2,6 +2,9 @@
 
 #include <cuda_runtime.h>
 
+#include "cps/core/config.hpp"
+#include "cps/solvers/solver.hpp"
+
 namespace cps {
 
 // The three N-body force variants. Each isolates exactly one technique so the
@@ -21,15 +24,14 @@ namespace cps {
 //          launch, removing the 12N byte read back of the acceleration array
 //          and one launch per step. The acceleration is still written.
 //
-// The tile width is a compile time constant so the inner loop can be unrolled.
-// The default is the width the tile sweep measured fastest, by a margin well
-// above the session drift; the other instantiations exist so the sweep can keep
-// checking that against real numbers rather than arguing about it.
+// Each tile width is its own instantiation, chosen at launch, so the inner loop can
+// be unrolled. The default, DEFAULT_TILE_SIZE, is the width the tile sweep measured
+// fastest; the others exist so the sweep can keep checking that against real numbers
+// rather than arguing about it.
 //
 // Every launcher takes its stream with no default, so a caller cannot end up on
 // the legacy default stream by leaving it out. nullptr names that stream on
 // purpose, which is for tests that drive a launcher on its own.
-inline constexpr int DEFAULT_TILE_SIZE = 256;
 
 void compute_forces_naive(const float* x, const float* y, const float* z, const float* mass,
                           float* ax, float* ay, float* az, int count, float softening,
@@ -72,12 +74,35 @@ void integrate_verlet_velocity(float* vx, float* vy, float* vz, const float* ax,
                                const float* az, int count, float dt, int block_size,
                                cudaStream_t stream);
 
-// Converts a synchronised velocity into the half step velocity the fused
-// leapfrog carries, and back again. Applying the first before the fused loop
-// starts is what makes the fused trajectory agree with velocity Verlet rather
-// than being offset by half a step.
-void offset_velocity_half_step(float* vx, float* vy, float* vz, const float* ax, const float* ay,
-                               const float* az, int count, float dt, int block_size,
-                               cudaStream_t stream);
+// The N-body solver: the three variants above, over the launchers above.
+//
+// All three seed and recompute with the tiled kernel, the naive variant included,
+// so that is the only place nbody.tile_size reaches the naive variant. The fused
+// variant carries the half step velocity and the other two the synchronised one.
+//
+// Positions are double buffered for the fused variant, so x() names a different
+// array after each of its steps. The solver holds no pointers across a step.
+class NBodySolver final : public Solver {
+   public:
+    explicit NBodySolver(const Config& config);
+
+    void initialize(ParticleSystem& particles, cudaStream_t stream) override;
+    void on_resume(ParticleSystem& particles, cudaStream_t stream) override;
+    void step(ParticleSystem& particles, cudaStream_t stream) override;
+    VelocityConvention velocity_convention() const override;
+    void prepare_diagnostics(ParticleSystem& particles, cudaStream_t stream) override;
+    bool has_potential_energy() const override { return true; }
+
+    NBodyVariant variant() const { return config_.variant; }
+    int tile_size() const { return config_.nbody.tile_size; }
+
+   private:
+    // The tiled force evaluation, at the configured width.
+    void compute_forces(ParticleSystem& particles, cudaStream_t stream);
+    void step_split(ParticleSystem& particles, cudaStream_t stream);
+    void step_fused(ParticleSystem& particles, cudaStream_t stream);
+
+    Config config_;
+};
 
 }  // namespace cps

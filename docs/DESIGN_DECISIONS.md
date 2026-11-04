@@ -243,8 +243,9 @@ check on a project whose output is trustworthy numbers is the wrong trade.
 paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9483<!-- /num --> with an IQR of <!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0028<!-- /num -->,
 far outside the session drift of <!-- num:RepeatabilitySpread -->0.17<!-- /num --> percent, so the default moved and the ladder
 was measured there. Two barriers are paid per tile, so a narrow tile pays them more often per unit of
-arithmetic, which fits the direction of the result; the barrier cost was not measured on its own. The
-width stays a compile time constant so the inner loop can be unrolled.
+arithmetic, which fits the direction of the result; the barrier cost was not measured on its own. Each
+width stays a compile time instantiation so the inner loop can be unrolled, and `nbody.tile_size` picks one
+when the run starts.
 
 ### Bibliography page ranges written with the word "to"
 

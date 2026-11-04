@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "cps/core/config.hpp"
 #include "cps/core/initial_conditions.hpp"
 #include "cps/core/particle_system.hpp"
+#include "cps/solvers/solver.hpp"
 #include "cps/utils/cuda_helpers.hpp"
 
 namespace cps {
@@ -37,12 +39,41 @@ namespace cps {
 // The constructor refuses a domain too large for the cell size, which is what
 // keeps every finite position's cell key free of aliasing, and a time step above
 // the stability limits, unless the configuration allows that.
-class SphSolver {
+class SphSolver final : public Solver {
    public:
     SphSolver(const Config& config, int count);
 
+    // The fluid keeps no force pass outside its step, so these two do nothing. The
+    // acceleration array therefore holds zero until the first step, which is what
+    // leaves the initial velocity in place and what the first diagnostic row after
+    // a resume reads. The state is unaffected and the trajectory stays bit identical.
+    void initialize(ParticleSystem&, cudaStream_t) override {}
+    void on_resume(ParticleSystem&, cudaStream_t) override {}
+
     // Enqueues the six passes on the stream and returns without waiting for them.
-    void step(ParticleSystem& particles, float dt, cudaStream_t stream);
+    void step(ParticleSystem& particles, cudaStream_t stream) override;
+
+    // The kick-drift leapfrog carries a half step velocity. Its initial offset runs
+    // while the acceleration is still zero, so it records the convention without
+    // changing a velocity, and the initial velocity is taken as v_{-1/2} as it
+    // stands. The viscous term is evaluated with that half step velocity, which
+    // makes it first order. This stays HalfStep because it decides how the
+    // diagnostics read the velocity, and v + a dt/2 is a better estimate of the
+    // synchronised velocity than v alone.
+    VelocityConvention velocity_convention() const override {
+        return VelocityConvention::HalfStep;
+    }
+
+    // Nothing to do: the diagnostics read the acceleration the last step wrote.
+    void prepare_diagnostics(ParticleSystem&, cudaStream_t) override {}
+
+    bool has_potential_energy() const override { return false; }
+
+    // Throws if non_finite_position_seen() is set. Drains the stream.
+    void check_device_errors(long long step, cudaStream_t stream) const override;
+
+    // The derived resolution and the time step limits.
+    std::string startup_description() const override;
 
     // Runs passes one to five only. The tests use it to inspect the neighbour
     // structure and the density field without advancing time.

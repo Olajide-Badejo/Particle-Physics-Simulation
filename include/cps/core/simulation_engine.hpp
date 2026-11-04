@@ -8,11 +8,12 @@
 #include "cps/core/diagnostics.hpp"
 #include "cps/core/particle_system.hpp"
 #include "cps/core/snapshot.hpp"
-#include "cps/solvers/sph_solver.hpp"
+#include "cps/solvers/solver.hpp"
 
 namespace cps {
 
-// Owns the device state and drives the loop.
+// Owns the device state and drives the loop. What a step does belongs to the
+// Solver it holds: solver.hpp says which hook runs when.
 //
 // The engine holds no particle data on the host. Configuration, diagnostics
 // accumulators and the staging buffer are the only host allocations that scale
@@ -46,7 +47,15 @@ namespace cps {
 //     a synchronize().
 class SimulationEngine {
    public:
+    // Builds the solver the configuration asks for.
     explicit SimulationEngine(Config config);
+
+    // Runs the solver it is given, which may be any Solver at all. The configuration
+    // still sets the particle count and the initial state, the time step the engine
+    // shifts velocities and reports time with, and what snapshots record as the
+    // physics.
+    SimulationEngine(Config config, std::unique_ptr<Solver> solver);
+
     ~SimulationEngine();
 
     SimulationEngine(const SimulationEngine&) = delete;
@@ -64,9 +73,9 @@ class SimulationEngine {
     // with a warning that it cannot be verified. Returns with the stream drained.
     long long resume(bool force = false);
 
-    // Advances one step with the configured solver and variant. This enqueues
-    // the step and returns without waiting for the device, so a launch failure
-    // may only surface at the next synchronisation.
+    // Advances one step with the solver. This enqueues the step and returns without
+    // waiting for the device, so a launch failure may only surface at the next
+    // synchronisation.
     void step();
 
     // Blocks until everything enqueued on the stream has finished. See the top
@@ -101,13 +110,15 @@ class SimulationEngine {
     // velocity is non-finite, naming the step and the first bad particle.
     void write_snapshot_now() const;
 
-    // Reads the fluid solver's non-finite position flag and throws
-    // std::runtime_error naming the current step if it is set. N-body has no
-    // such flag, so this does nothing there. Drains the stream if there is one.
+    // Asks the solver whether the device has flagged a failure, and throws
+    // std::runtime_error naming the current step if so. The fluid solver reads its
+    // non-finite position flag, which drains the stream. N-body has no such flag,
+    // so this does nothing there.
     void check_device_errors() const;
 
     ParticleSystem& particles() { return *particles_; }
     const ParticleSystem& particles() const { return *particles_; }
+    const Solver& solver() const { return *solver_; }
     const Config& config() const { return config_; }
     long long current_step() const { return current_step_; }
 
@@ -146,9 +157,9 @@ class SimulationEngine {
     long long steps_run() const { return steps_run_; }
 
    private:
-    void step_nbody_split();
-    void step_nbody_fused();
-    void ensure_velocity_convention(bool want_half_step);
+    // Shifts the velocity array into the solver's convention if it is not there
+    // already. Reads the acceleration array.
+    void ensure_velocity_convention();
     // Throws std::runtime_error naming the current step and the first particle
     // with a non-finite position or velocity.
     void check_state_finite(const HostParticleState& state) const;
@@ -165,7 +176,7 @@ class SimulationEngine {
     // touched at all.
     Stream stream_;
     std::unique_ptr<ParticleSystem> particles_;
-    std::unique_ptr<SphSolver> sph_;
+    std::unique_ptr<Solver> solver_;
     std::unique_ptr<DiagnosticsReducer> reducer_;
     std::unique_ptr<DiagnosticsWriter> writer_;
     long long current_step_ = 0;

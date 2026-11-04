@@ -266,8 +266,9 @@ flowchart TD
     CLI[main.cpp: CLI and overrides] --> ENGINE[SimulationEngine]
     CONFIG[Config: JSON parsing and validation] --> ENGINE
     ENGINE --> PS[ParticleSystem: device resident structure of arrays]
-    ENGINE --> NB[N-body launchers]
-    ENGINE --> SPH[SphSolver]
+    ENGINE --> SOLVER[Solver interface]
+    SOLVER --> NB[NBodySolver]
+    SOLVER --> SPH[SphSolver]
     ENGINE --> DIAG[DiagnosticsReducer: double precision, deterministic]
     ENGINE --> SNAP[Snapshot: atomic write, bit identical resume]
     NB --> KNAIVE[compute_forces_naive]
@@ -448,6 +449,7 @@ Every key is optional and has a default; `configs/` has complete examples.
 | `diagnostics_interval` | 100 | steps per diagnostics row. Each row costs an all pairs potential pass, so 1 is expensive. `v1.0.0` defaulted to 1 |
 | `snapshot_interval` | 1000 | steps per snapshot |
 | `allow_unstable_dt` | false | see `--allow-unstable-dt` |
+| `nbody.tile_size` | 256 | tile width of the tiled force kernel: 32, 64, 128 or 256. It moves the timing and not the physics, so a resume may change it |
 | `sph.viscosity` | 0.2 | dynamic viscosity in Pa s. At the default rest density that is 2e-4 m^2/s kinematic, about 200 times water |
 | `sph.boundary_damping` | 0.4 | fraction of the normal velocity kept at a wall, so each impact keeps 16 percent of the normal kinetic energy |
 | `sph.rest_density`, `sph.gas_constant` | 1000, 1000 | equation of state `p = k (rho - rho_0)` |
@@ -456,7 +458,7 @@ Every key is optional and has a default; `configs/` has complete examples.
 These fluid defaults are documented rather than changed in this release, because changing them
 would change every fluid number.
 
-The default tile width of <!-- num:BestTileWidth -->256<!-- /num --> is a compile time constant, not a configuration key.
+The default tile width of <!-- num:BestTileWidth -->256<!-- /num --> comes from the sweep.
 At <!-- num:TileSweepParticles -->100,000<!-- /num --> particles it is <!-- num:TileWidthGainPercent -->5.2<!-- /num --> percent faster than the width of
 32 that `v1.0.0` defaulted to, a paired ratio of <!-- num:BestTileOverTileThirtyTwoRatio -->0.9483<!-- /num --> with an IQR of
 <!-- num:BestTileOverTileThirtyTwoRatioIqr -->0.0028<!-- /num -->.

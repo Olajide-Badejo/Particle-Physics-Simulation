@@ -27,6 +27,19 @@ struct Vec3 {
     float z = 0.0f;
 };
 
+// The tile width the sweep measured fastest, by a margin well above the session
+// drift. It lives here rather than beside the kernels because the configuration
+// layer has to name it and stays free of CUDA.
+inline constexpr int DEFAULT_TILE_SIZE = 256;
+
+struct NBodyConfig {
+    // Particles per shared memory tile in the tiled force kernel: 32, 64, 128 or
+    // 256, the widths it is instantiated for. Run control, not physics, the same
+    // as block_size: padded slots add zero and the j order does not change, so
+    // this moves the launch shape and leaves the evolution operator alone.
+    int tile_size = DEFAULT_TILE_SIZE;
+};
+
 struct SphConfig {
     // A smoothing radius or particle mass of zero means derive it: the radius
     // from the fluid volume and the particle count, the mass from a kernel sum
@@ -84,6 +97,7 @@ struct Config {
     long long diagnostics_interval = 100;
     std::string diagnostics_path = "experiments/results/diagnostics.csv";
 
+    NBodyConfig nbody{};
     SphConfig sph{};
 
     static Config from_json_string(std::string_view text);

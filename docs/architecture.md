@@ -9,8 +9,10 @@ flowchart TD
     CLI[main.cpp: command line and overrides] --> ENGINE[SimulationEngine]
     CONFIG[Config: JSON parsing and validation] --> ENGINE
     ENGINE --> PS[ParticleSystem: device resident state]
-    ENGINE --> NB[N-body launchers]
-    ENGINE --> SPH[SphSolver]
+    ENGINE --> SOLVER[Solver interface]
+    FACTORY[make_solver] --> SOLVER
+    SOLVER --> NB[NBodySolver]
+    SOLVER --> SPH[SphSolver]
     ENGINE --> DIAG[DiagnosticsReducer]
     ENGINE --> SNAP[Snapshot read and write]
     NB --> KNAIVE[compute_forces_naive]
@@ -57,6 +59,39 @@ The default build targets `sm_120`. `-DCPS_FAT_BINARY=ON` builds `physics_core`
 for `75;80;86;89;90;120`, which continuous integration and releases use;
 `physics_core_strict` and the tests stay on the default.
 
+## The solver interface
+
+`SimulationEngine` knows nothing about the physics it runs. It keeps the loop, the
+file output, the timing, the diagnostics reductions and the velocity convention, and
+holds a `std::unique_ptr<Solver>` for everything else. `make_solver(config)` is the one
+place that turns a solver type into an object. Adding a solver means adding a class and
+a case there.
+
+| `Solver` member | When the engine calls it | `NBodySolver` | `SphSolver` |
+|---|---|---|---|
+| `initialize` | fresh run, after the upload, before the convention shift | seeds `a_0` with the tiled kernel, in every variant | nothing |
+| `on_resume` | resume, after the upload, before the convention shift | recomputes the acceleration with the tiled kernel, in every variant | nothing, so the first diagnostic row after a resume reads a zero acceleration |
+| `step` | every step | split Verlet, or fused and a buffer swap | the six passes |
+| `velocity_convention` | at each convention shift | half step for fused, synchronised otherwise | half step |
+| `prepare_diagnostics` | before a reduction | fused recomputes the force at the current positions; otherwise nothing | nothing |
+| `has_potential_energy` | at a diagnostic | yes | no |
+| `check_device_errors` | before a diagnostic or a snapshot, and at the end of a run | nothing | reads the non-finite position flag, which drains the stream |
+| `startup_description` | once, for the configuration block | nothing | the derived resolution and the time step limits |
+
+The first six have no default, because a solver that silently inherited an empty
+`on_resume` would only show up as a resumed run drifting from a straight one.
+
+The solver states its convention, and the engine does the rest: it records what the
+velocity array holds, shifts it when the two disagree, reads it in the reductions and
+writes the snapshot flag. The shift reads the acceleration array, which is why
+`initialize` and `on_resume` run before it. A resume across conventions then works for
+any pair of solvers, including one a later release adds.
+
+A second constructor takes a `Solver` directly. `tests/integration/test_solver_interface.cpp`
+uses it to run a test-only solver through a whole run, a snapshot and a resume, and to
+check which hook ran when. The configuration still decides what a snapshot records as
+the physics, through `physics_fields`, so a new solver type also needs its fields there.
+
 ## The N-body step
 
 ```mermaid
@@ -76,13 +111,21 @@ before the loop begins.
 
 Both integrator launches on the split path read the acceleration array, 24N bytes
 per step. The fused launch reads it in neither. It still writes it, 12N bytes,
-though the engine no longer reads that write, because the diagnostics and the
-velocity conversions recompute the force first.
+though nothing reads that write, because the diagnostics and the velocity
+conversions recompute the force first.
 
 Positions are double buffered on the fused path. There is no grid wide barrier
 inside a launch, so a block that has finished its force sum would otherwise
 overwrite a position another block is still reading. The second buffer costs
 12N bytes of memory and no bandwidth, because the write happens either way.
+
+`nbody.tile_size` picks the tile width of the tiled force evaluation, and of the
+fused launch, from 32, 64, 128 and 256, each its own instantiation so the inner loop
+can be unrolled. It changes how the sum is staged and not what it adds up: j runs in the
+same order at every width, and a padded slot adds `+0.0`. One step at each width is bit
+identical in the strict library, which `TileWidthTest` holds, and it is byte identical
+in the fast math library on the runs that were compared, which nothing asserts. So the
+width is run control, like `block_size`, and stays out of the physics fingerprint.
 
 ## The fluid step
 

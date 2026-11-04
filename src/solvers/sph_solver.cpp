@@ -1,7 +1,10 @@
 #include "cps/solvers/sph_solver.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <stdexcept>
+#include <string>
 
 #include "cps/physics/spatial_hash.hpp"
 #include "cps/solvers/sph_passes.hpp"
@@ -94,7 +97,7 @@ void SphSolver::build_neighbours_and_density(ParticleSystem& particles, cudaStre
                         config_.sph.rest_density, config_.sph.gas_constant, block_size_, stream);
 }
 
-void SphSolver::step(ParticleSystem& particles, float dt, cudaStream_t stream) {
+void SphSolver::step(ParticleSystem& particles, cudaStream_t stream) {
     build_neighbours_and_density(particles, stream);
 
     const SphConfig& sph = config_.sph;
@@ -104,9 +107,44 @@ void SphSolver::step(ParticleSystem& particles, float dt, cudaStream_t stream) {
         particles.x(), particles.y(), particles.z(), particles.vx(), particles.vy(), particles.vz(),
         particles.ax(), particles.ay(), particles.az(), particles.mass(), count_,
         derived_.smoothing_radius, cell_size_, table_size_, sph.viscosity,
-        config_.external_gravity.x, config_.external_gravity.y, config_.external_gravity.z, dt,
-        sph.domain_min.x, sph.domain_min.y, sph.domain_min.z, sph.domain_max.x, sph.domain_max.y,
-        sph.domain_max.z, sph.boundary_damping, block_size_, stream);
+        config_.external_gravity.x, config_.external_gravity.y, config_.external_gravity.z,
+        config_.dt, sph.domain_min.x, sph.domain_min.y, sph.domain_min.z, sph.domain_max.x,
+        sph.domain_max.y, sph.domain_max.z, sph.boundary_damping, block_size_, stream);
+}
+
+void SphSolver::check_device_errors(long long step, cudaStream_t stream) const {
+    if (non_finite_position_seen(stream)) {
+        throw std::runtime_error("non-finite positions detected by step " + std::to_string(step) +
+                                 ": the fluid has blown up, typically from too large a time step");
+    }
+}
+
+std::string SphSolver::startup_description() const {
+    std::string text;
+    char line[128];
+    std::snprintf(line, sizeof(line), "  smoothing h   : %g\n",
+                  static_cast<double>(derived_.smoothing_radius));
+    text += line;
+    std::snprintf(line, sizeof(line), "  particle mass : %g\n",
+                  static_cast<double>(derived_.particle_mass));
+    text += line;
+    std::snprintf(line, sizeof(line), "  neighbours    : %.1f expected inside the support\n",
+                  derived_.expected_neighbour_count);
+    text += line;
+
+    const auto add_limit = [&](const char* name, double value) {
+        if (std::isfinite(value)) {
+            std::snprintf(line, sizeof(line), "  dt limit      : %s %g\n", name, value);
+        } else {
+            std::snprintf(line, sizeof(line), "  dt limit      : %s skipped\n", name);
+        }
+        text += line;
+    };
+    const SphTimeStepLimits limits = sph_time_step_limits(config_, derived_.smoothing_radius);
+    add_limit("acoustic", limits.acoustic);
+    add_limit("viscous", limits.viscous);
+    add_limit("body force", limits.body_force);
+    return text;
 }
 
 int SphSolver::count_bucket_collisions(ParticleSystem& particles, cudaStream_t stream) {

@@ -53,7 +53,7 @@ class DiagnosticsReducer {
     // not return the original bits, and that would break the bit identity
     // guarantee of the resume path for any run that took a diagnostic. The
     // acceleration array has to hold a_{n+1} for that to be the synchronised
-    // velocity, so the engine refreshes it first on the fused path.
+    // velocity, so the fused solver refreshes it first, in prepare_diagnostics.
     void reduce_kinetic_and_momentum(const ParticleSystem& particles, double& kinetic, double& px,
                                      double& py, double& pz, float half_dt, cudaStream_t stream);
 
@@ -74,7 +74,6 @@ class DiagnosticsReducer {
     DeviceBuffer<double> partials1_;  // one double per block
     HostBuffer<double> partials_host_;
     HostBuffer<double> partials1_host_;
-    DeviceBuffer<double> result_;
 };
 
 // The first line of every diagnostics file, without its newline.

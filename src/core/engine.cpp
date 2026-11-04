@@ -12,34 +12,13 @@
 #include "cps/core/initial_conditions.hpp"
 #include "cps/core/physics_fingerprint.hpp"
 #include "cps/core/snapshot.hpp"
-#include "cps/solvers/nbody_solver.hpp"
+#include "cps/solvers/solver_factory.hpp"
 #include "cps/utils/progress.hpp"
 
 namespace fs = std::filesystem;
 
 namespace cps {
 namespace {
-
-// Which velocity convention a solver carries between steps. The split velocity
-// Verlet keeps the velocity synchronised with the positions; the fused kernel
-// advances a leapfrog half step velocity. Resuming a snapshot written under one
-// convention into a solver that wants the other is the one case where the
-// loaded velocity has to be shifted, and getting that wrong offsets the whole
-// trajectory by half a step in a way that looks like a subtly wrong force.
-//
-// The fluid solver runs the same kick-drift leapfrog update as the fused
-// kernel, but its initial offset is not applied: the acceleration is still
-// zero when the offset runs, so the initial velocity is taken as v_{-1/2} as
-// it stands. Its viscous term is evaluated with that half step velocity, which
-// makes it first order. The flag stays true for the fluid because it decides
-// how the diagnostics read the velocity, and v + a dt/2 is a better estimate
-// of the synchronised velocity than v alone.
-bool solver_wants_half_step(const Config& config) {
-    if (config.solver == SolverType::Sph) {
-        return true;
-    }
-    return config.variant == NBodyVariant::Fused;
-}
 
 Config validated(Config config) {
     config.validate();
@@ -51,9 +30,16 @@ Config validated(Config config) {
 SimulationEngine::SimulationEngine(Config config) : config_(validated(std::move(config))) {
     particles_ = std::make_unique<ParticleSystem>(config_.num_particles);
     reducer_ = std::make_unique<DiagnosticsReducer>(config_.num_particles);
-    if (config_.solver == SolverType::Sph) {
-        sph_ = std::make_unique<SphSolver>(config_, config_.num_particles);
+    solver_ = make_solver(config_);
+}
+
+SimulationEngine::SimulationEngine(Config config, std::unique_ptr<Solver> solver)
+    : config_(validated(std::move(config))), solver_(std::move(solver)) {
+    if (!solver_) {
+        throw std::runtime_error("the engine was given a null solver");
     }
+    particles_ = std::make_unique<ParticleSystem>(config_.num_particles);
+    reducer_ = std::make_unique<DiagnosticsReducer>(config_.num_particles);
 }
 
 // The members are about to free device memory the stream may still be using. A
@@ -88,27 +74,15 @@ void SimulationEngine::initialize() {
     time_origin_ = 0.0;
     half_step_velocity_ = false;
 
-    if (config_.solver == SolverType::NBody) {
-        // Seed the acceleration array. Velocity Verlet needs a_0 before its
-        // first half kick, and the fused leapfrog needs it to step the
-        // velocity back by half a step.
-        compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
-                             particles_->ax(), particles_->ay(), particles_->az(),
-                             particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size, DEFAULT_TILE_SIZE, stream_.get());
-    }
-
-    // For the fluid case the acceleration array is still zero here, so this
-    // records the convention without touching a single velocity: the initial
-    // half step offset is not applied, and the initial velocity is used as
-    // v_{-1/2} as it stands.
-    ensure_velocity_convention(solver_wants_half_step(config_));
+    solver_->initialize(*particles_, stream_.get());
+    ensure_velocity_convention();
     stream_.synchronize();
     open_diagnostics(-1);
     initialized_ = true;
 }
 
-void SimulationEngine::ensure_velocity_convention(bool want_half_step) {
+void SimulationEngine::ensure_velocity_convention() {
+    const bool want_half_step = solver_->velocity_convention() == VelocityConvention::HalfStep;
     if (want_half_step == half_step_velocity_) {
         return;
     }
@@ -204,22 +178,8 @@ long long SimulationEngine::resume(bool force) {
         time_origin_ = snapshot.time;
     }
 
-    if (config_.solver == SolverType::NBody) {
-        // Accelerations are a deterministic function of the positions, so
-        // recomputing them here reproduces exactly the array the original run
-        // held at this step. That is what makes the resumed trajectory bit
-        // identical rather than merely close.
-        compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
-                             particles_->ax(), particles_->ay(), particles_->az(),
-                             particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size, DEFAULT_TILE_SIZE, stream_.get());
-    }
-
-    // After a fluid resume the acceleration array is zero, because the fluid
-    // solver keeps no force pass outside its step, so the first diagnostic row
-    // after the resume reads the velocity with a zero acceleration. The state
-    // itself is unaffected and the trajectory stays bit identical.
-    ensure_velocity_convention(solver_wants_half_step(config_));
+    solver_->on_resume(*particles_, stream_.get());
+    ensure_velocity_convention();
     stream_.synchronize();
     open_diagnostics(current_step_);
     initialized_ = true;
@@ -227,59 +187,16 @@ long long SimulationEngine::resume(bool force) {
     return current_step_;
 }
 
-void SimulationEngine::step_nbody_split() {
-    integrate_verlet_position(particles_->x(), particles_->y(), particles_->z(), particles_->vx(),
-                              particles_->vy(), particles_->vz(), particles_->ax(),
-                              particles_->ay(), particles_->az(), particles_->size(), config_.dt,
-                              config_.block_size, stream_.get());
-
-    if (config_.variant == NBodyVariant::Naive) {
-        compute_forces_naive(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
-                             particles_->ax(), particles_->ay(), particles_->az(),
-                             particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size, stream_.get());
-    } else {
-        compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
-                             particles_->ax(), particles_->ay(), particles_->az(),
-                             particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size, DEFAULT_TILE_SIZE, stream_.get());
-    }
-
-    integrate_verlet_velocity(particles_->vx(), particles_->vy(), particles_->vz(),
-                              particles_->ax(), particles_->ay(), particles_->az(),
-                              particles_->size(), config_.dt, config_.block_size, stream_.get());
-}
-
-void SimulationEngine::step_nbody_fused() {
-    nbody_fused_step(particles_->x(), particles_->y(), particles_->z(), particles_->x_next(),
-                     particles_->y_next(), particles_->z_next(), particles_->vx(),
-                     particles_->vy(), particles_->vz(), particles_->ax(), particles_->ay(),
-                     particles_->az(), particles_->mass(), particles_->size(), config_.softening,
-                     config_.gravitational_constant, config_.dt, config_.block_size,
-                     DEFAULT_TILE_SIZE, stream_.get());
-    particles_->swap_position_buffers();
-}
-
 void SimulationEngine::step() {
     if (!initialized_) {
         throw std::runtime_error("the engine must be initialised or resumed before stepping");
     }
-    if (config_.solver == SolverType::Sph) {
-        sph_->step(*particles_, config_.dt, stream_.get());
-    } else if (config_.variant == NBodyVariant::Fused) {
-        step_nbody_fused();
-    } else {
-        step_nbody_split();
-    }
+    solver_->step(*particles_, stream_.get());
     ++current_step_;
 }
 
 void SimulationEngine::check_device_errors() const {
-    if (sph_ && sph_->non_finite_position_seen(stream_.get())) {
-        throw std::runtime_error("non-finite positions detected by step " +
-                                 std::to_string(current_step_) +
-                                 ": the fluid has blown up, typically from too large a time step");
-    }
+    solver_->check_device_errors(current_step_, stream_.get());
 }
 
 void SimulationEngine::check_state_finite(const HostParticleState& state) const {
@@ -298,19 +215,9 @@ void SimulationEngine::check_state_finite(const HostParticleState& state) const 
 
 Diagnostics SimulationEngine::diagnostics(bool include_potential) {
     check_device_errors();
-    if (config_.solver == SolverType::NBody && config_.variant == NBodyVariant::Fused) {
-        // The fused kernel leaves a_n in the acceleration array, the force at
-        // the positions it started from, but the synchronised velocity is
-        // v_{n+1/2} + a_{n+1} dt/2. Recomputing the force at the current
-        // positions gives a_{n+1}. The fused kernel never reads this array,
-        // so overwriting it changes nothing the trajectory depends on.
-        compute_forces_tiled(particles_->x(), particles_->y(), particles_->z(), particles_->mass(),
-                             particles_->ax(), particles_->ay(), particles_->az(),
-                             particles_->size(), config_.softening, config_.gravitational_constant,
-                             config_.block_size, DEFAULT_TILE_SIZE, stream_.get());
-    }
+    solver_->prepare_diagnostics(*particles_, stream_.get());
     const float half_dt = half_step_velocity_ ? 0.5f * config_.dt : 0.0f;
-    const bool with_potential = include_potential && config_.solver == SolverType::NBody;
+    const bool with_potential = include_potential && solver_->has_potential_energy();
     const Diagnostics row =
         reducer_->compute(*particles_, current_step_, simulated_time(), config_.softening,
                           config_.gravitational_constant, with_potential, half_dt, stream_.get());

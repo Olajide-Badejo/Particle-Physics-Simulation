@@ -367,15 +367,24 @@ Config Config::from_json_string(std::string_view text) {
     top.read("diagnostics_interval", config.diagnostics_interval);
     top.read("diagnostics_path", config.diagnostics_path);
 
-    // The fluid reader runs even when the block is absent, reading nothing,
-    // so its key list is available for suggestions at the top level.
+    // The nested readers run even when their block is absent, reading nothing,
+    // so their key lists are available for suggestions at the top level.
     const json* sph_node = top.find("sph");
     if (sph_node != nullptr && !sph_node->is_object()) {
         throw std::runtime_error("configuration field 'sph' must be an object, got " +
                                  sph_node->dump());
     }
+    const json* nbody_node = top.find("nbody");
+    if (nbody_node != nullptr && !nbody_node->is_object()) {
+        throw std::runtime_error("configuration field 'nbody' must be an object, got " +
+                                 nbody_node->dump());
+    }
     const json empty_object = json::object();
     {
+        ObjectReader gravity(nbody_node != nullptr ? *nbody_node : empty_object, "nbody.");
+        gravity.read("tile_size", config.nbody.tile_size);
+        gravity.reject_unknown_keys();
+
         ObjectReader fluid(sph_node != nullptr ? *sph_node : empty_object, "sph.");
         fluid.read("smoothing_radius", config.sph.smoothing_radius);
         fluid.read("rest_density", config.sph.rest_density);
@@ -389,7 +398,11 @@ Config Config::from_json_string(std::string_view text) {
         fluid.read("fluid_min", config.sph.fluid_min);
         fluid.read("fluid_max", config.sph.fluid_max);
         fluid.reject_unknown_keys();
-        top.reject_unknown_keys(fluid.known_paths());
+
+        std::vector<std::string> nested = gravity.known_paths();
+        const std::vector<std::string> fluid_paths = fluid.known_paths();
+        nested.insert(nested.end(), fluid_paths.begin(), fluid_paths.end());
+        top.reject_unknown_keys(nested);
     }
 
     config.validate();
@@ -435,6 +448,11 @@ void Config::validate() const {
     require_positive("plummer_radius", plummer_radius);
     require_positive("two_body_separation", two_body_separation);
     require_finite("external_gravity", external_gravity);
+    if (nbody.tile_size != 32 && nbody.tile_size != 64 && nbody.tile_size != 128 &&
+        nbody.tile_size != 256) {
+        throw std::runtime_error("nbody.tile_size must be 32, 64, 128 or 256, got " +
+                                 std::to_string(nbody.tile_size));
+    }
     if (snapshot_interval < 0) {
         throw std::runtime_error("snapshot_interval must not be negative, got " +
                                  std::to_string(snapshot_interval));
@@ -513,6 +531,10 @@ std::string Config::to_json_string(int indent) const {
     root["snapshot_dir"] = snapshot_dir;
     root["diagnostics_interval"] = diagnostics_interval;
     root["diagnostics_path"] = diagnostics_path;
+
+    json nbody_node;
+    nbody_node["tile_size"] = nbody.tile_size;
+    root["nbody"] = nbody_node;
 
     json sph_node;
     sph_node["smoothing_radius"] = sph.smoothing_radius;

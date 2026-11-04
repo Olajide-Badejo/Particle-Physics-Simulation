@@ -186,6 +186,51 @@ TEST_F(ResumeTest, FluidSolverResumesBitIdentically) {
     expect_bit_identical(straight, resumed, "sph");
 }
 
+// The tile width changes the launch shape and nothing else, so each width has to
+// hold the same guarantee as the default. The count leaves a partly filled last
+// tile at every width, so the padded slots are in play as well.
+TEST_F(ResumeTest, EveryTileWidthResumesBitIdentically) {
+    SKIP_WITHOUT_GPU();
+    for (const cps::NBodyVariant variant : {cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
+        for (const int width : {32, 64, 128, 256}) {
+            const std::string label = cps::to_string(variant) + std::to_string(width);
+            SCOPED_TRACE(label);
+            cps::Config config = base_config(cps::SolverType::NBody, variant, 1000);
+            config.nbody.tile_size = width;
+            config.snapshot_dir = (directory_ / label).string();
+            const cps::HostParticleState straight = run_straight(config, 120);
+            const cps::HostParticleState resumed = run_with_resume(config, 50, 70);
+            expect_bit_identical(straight, resumed, label);
+        }
+    }
+}
+
+// The width is not in the physics fingerprint, so a resume may change it. That is
+// only honest if the run carries on as if nothing had happened.
+TEST_F(ResumeTest, AResumeMayChangeTheTileWidth) {
+    SKIP_WITHOUT_GPU();
+    for (const cps::NBodyVariant variant : {cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
+        const std::string label = cps::to_string(variant);
+        SCOPED_TRACE(label);
+        cps::Config config = base_config(cps::SolverType::NBody, variant, 1000);
+        config.nbody.tile_size = 64;
+        config.snapshot_dir = (directory_ / label).string();
+        write_snapshot_under(config, 50);
+
+        cps::Config wider = config;
+        wider.nbody.tile_size = 256;
+        wider.steps = 120;
+        cps::SimulationEngine engine(wider);
+        EXPECT_EQ(engine.resume(), 50);
+        for (int i = 0; i < 70; ++i) {
+            engine.step();
+        }
+        cps::HostParticleState resumed;
+        engine.particles().download(resumed, engine.stream());
+        expect_bit_identical(run_straight(wider, 120), resumed, label);
+    }
+}
+
 TEST_F(ResumeTest, ResumingTwiceStillLandsOnTheSameState) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Fused, 1024);

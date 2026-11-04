@@ -229,7 +229,7 @@ TEST(SphValidation, TheCellSortPermutationIsABijection) {
     engine.particles().download(before, engine.stream());
 
     cps::SphSolver solver(config, count);
-    solver.step(engine.particles(), config.dt, engine.stream());
+    solver.step(engine.particles(), engine.stream());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     cps::HostParticleState after;

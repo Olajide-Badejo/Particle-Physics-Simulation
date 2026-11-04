@@ -30,9 +30,27 @@ a Changelog, and the project uses semantic versioning.
   staging, in place of their synchronous copies. Both return with that stream drained.
 - `DeviceBuffer::zero` now waits for the bytes to be written, because a non-blocking stream is not
   ordered against the `cudaMemset` it issues on the default stream.
+- `SimulationEngine` no longer branches on the solver. It holds a `Solver` from the new
+  `cps/solvers/solver.hpp` and runs the loop, the diagnostics, snapshots and resume through it.
+  The launches, their order and the trajectories do not change.
+- **Breaking:** `SphSolver::step` takes no `dt`; the solver uses the one in its configuration.
+- `DEFAULT_TILE_SIZE` moved to `cps/core/config.hpp`, which `nbody_solver.hpp` includes, because the
+  configuration layer now names it. `offset_velocity_half_step` moved to `solver.hpp`, also included.
+- The tile sweep in `bench_all` runs through the engine with `nbody.tile_size` instead of calling the
+  kernels itself. Its protocol and its columns do not change.
+- A fluid configuration the solver refuses now fails before the derived resolution and the time step
+  limits are printed, because the solver prints them. The refusal names the limits itself.
+
+### Removed
+
+- `DiagnosticsReducer`'s unused `result_` buffer.
 
 ### Added
 
+- The `Solver` interface, with `NBodySolver` and `SphSolver` implementing it and `make_solver(config)`
+  choosing between them. `SimulationEngine` has a constructor that takes a `Solver`.
+- The configuration key `nbody.tile_size`: 32, 64, 128 or 256, default 256. It is not part of the
+  physics fingerprint, so a resume may change it and existing fingerprints do not move.
 - `CMakePresets.json`, with configure, build and test presets `dev`, `release-fat`, `host-only`
   and `ci`.
 - `cmake --install` and `find_package(cps)`, with the targets `cps::physics_host`,

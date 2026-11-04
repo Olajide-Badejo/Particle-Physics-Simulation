@@ -6,7 +6,6 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -17,7 +16,6 @@
 #include "cps/core/initial_conditions.hpp"
 #include "cps/core/simulation_engine.hpp"
 #include "cps/version.hpp"
-#include "cps/solvers/nbody_solver.hpp"
 #include "cps/utils/cuda_helpers.hpp"
 #include "cps/utils/progress.hpp"
 
@@ -180,20 +178,19 @@ std::string variant_name(const cps::Config& config) {
                                                    : std::string("na");
 }
 
-int default_tile_size(const cps::Config& config) {
+// What a row's tile_size column says: 0 where the kernel has no tiles.
+int tile_size_column(const cps::Config& config) {
     if (config.solver == cps::SolverType::Sph || config.variant == cps::NBodyVariant::Naive) {
         return 0;
     }
-    return cps::DEFAULT_TILE_SIZE;
+    return config.nbody.tile_size;
 }
 
 // One configuration under measurement, with the engine that stays alive across
 // its rounds.
 struct Contender {
     cps::Config config;
-    int tile_size = 0;
     std::unique_ptr<cps::SimulationEngine> engine;
-    std::function<void()> step;
     double single_step_ms = 0.0;
     int timed_steps = 0;
     std::vector<double> trial_ms;
@@ -202,11 +199,8 @@ struct Contender {
 Contender make_contender(const cps::Config& config) {
     Contender contender;
     contender.config = config;
-    contender.tile_size = default_tile_size(config);
     contender.engine = std::make_unique<cps::SimulationEngine>(config);
     contender.engine->initialize();
-    cps::SimulationEngine* engine = contender.engine.get();
-    contender.step = [engine]() { engine->step(); };
     return contender;
 }
 
@@ -224,14 +218,14 @@ int steps_per_trial(double step_ms, const Protocol& protocol) {
 
 void warm_up_and_calibrate(Contender& contender, const Protocol& protocol) {
     for (int i = 0; i < protocol.warmup_steps; ++i) {
-        contender.step();
+        contender.engine->step();
     }
     contender.engine->synchronize();
 
     const cudaStream_t stream = contender.engine->stream();
     cps::CudaTimer probe;
     probe.start(stream);
-    contender.step();
+    contender.engine->step();
     contender.single_step_ms = static_cast<double>(probe.stop(stream));
     contender.timed_steps = steps_per_trial(contender.single_step_ms, protocol);
 }
@@ -249,7 +243,7 @@ void measure_group(std::vector<Contender>& group, const Protocol& protocol) {
             cps::CudaTimer timer;
             timer.start(stream);
             for (int step = 0; step < contender.timed_steps; ++step) {
-                contender.step();
+                contender.engine->step();
             }
             const double elapsed = static_cast<double>(timer.stop(stream));
             contender.trial_ms.push_back(elapsed / static_cast<double>(contender.timed_steps));
@@ -272,7 +266,7 @@ BenchmarkRow make_row(const Contender& contender, const cps::DeviceInfo& info,
     row.variant = variant_name(config);
     row.num_particles = config.num_particles;
     row.block_size = config.block_size;
-    row.tile_size = contender.tile_size;
+    row.tile_size = tile_size_column(config);
     row.timed_steps = contender.timed_steps;
 
     row.trials = static_cast<int>(trials.size());
@@ -316,7 +310,7 @@ std::string row_key(const std::string& solver, const std::string& variant, int c
 
 std::string config_key(const cps::Config& config) {
     return row_key(cps::to_string(config.solver), variant_name(config), config.num_particles,
-                   config.block_size, default_tile_size(config), CPS_FAST_MATH);
+                   config.block_size, tile_size_column(config), CPS_FAST_MATH);
 }
 
 // Splits one CSV line. The driver never writes a quoted field.
@@ -461,7 +455,7 @@ void append_trials(const fs::path& path, const std::vector<Contender>& group,
             const cps::Config& config = contender.config;
             stream << cps::to_string(config.solver) << ',' << variant_name(config) << ','
                    << config.num_particles << ',' << config.block_size << ','
-                   << contender.tile_size << ',' << CPS_FAST_MATH << ',' << (round + 1) << ','
+                   << tile_size_column(config) << ',' << CPS_FAST_MATH << ',' << (round + 1) << ','
                    << contender.timed_steps << ',' << contender.trial_ms[round] << ','
                    << CPS_GIT_STAMP << ',' << (tree_is_dirty() ? 1 : 0) << ',' << protocol.name
                    << ',' << timestamp << "\n";
@@ -513,45 +507,16 @@ std::vector<PlannedGroup> plan_ladder(bool quick) {
 // width is the best choice on this card is an empirical question, and the
 // answer belongs in the debug report with numbers behind it.
 //
-// The engine uses the default tile width, so the sweep drives the kernels
-// directly rather than through engine.step(). It keeps the engine for its state
-// and its stream.
-// Both variants time a whole step, the sequence engine.step() runs, so a width
-// can be compared across variants as well as within one.
+// Every width runs through the engine with nbody.tile_size, so both variants time
+// a whole step, exactly what a run at that width pays, and a width can be compared
+// across variants as well as within one.
 std::vector<Contender> make_tile_sweep_group(int count) {
     std::vector<Contender> group;
     for (int tile : {32, 64, 128, 256}) {
         for (cps::NBodyVariant variant : {cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
-            Contender contender = make_contender(nbody_config(variant, count));
-            contender.tile_size = tile;
-            cps::ParticleSystem* particles = &contender.engine->particles();
-            const cudaStream_t stream = contender.engine->stream();
-            const cps::Config config = contender.config;
-            contender.step = [particles, stream, config, variant, count, tile]() {
-                if (variant == cps::NBodyVariant::Tiled) {
-                    cps::integrate_verlet_position(
-                        particles->x(), particles->y(), particles->z(), particles->vx(),
-                        particles->vy(), particles->vz(), particles->ax(), particles->ay(),
-                        particles->az(), count, config.dt, config.block_size, stream);
-                    cps::compute_forces_tiled(particles->x(), particles->y(), particles->z(),
-                                              particles->mass(), particles->ax(), particles->ay(),
-                                              particles->az(), count, config.softening,
-                                              config.gravitational_constant, config.block_size,
-                                              tile, stream);
-                    cps::integrate_verlet_velocity(particles->vx(), particles->vy(), particles->vz(),
-                                                   particles->ax(), particles->ay(), particles->az(),
-                                                   count, config.dt, config.block_size, stream);
-                } else {
-                    cps::nbody_fused_step(
-                        particles->x(), particles->y(), particles->z(), particles->x_next(),
-                        particles->y_next(), particles->z_next(), particles->vx(), particles->vy(),
-                        particles->vz(), particles->ax(), particles->ay(), particles->az(),
-                        particles->mass(), count, config.softening, config.gravitational_constant,
-                        config.dt, config.block_size, tile, stream);
-                    particles->swap_position_buffers();
-                }
-            };
-            group.push_back(std::move(contender));
+            cps::Config config = nbody_config(variant, count);
+            config.nbody.tile_size = tile;
+            group.push_back(make_contender(config));
         }
     }
     return group;
