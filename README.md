@@ -514,7 +514,6 @@ is migrated when read, with one warning line, and `--print-config` prints its sc
 | `output.vtk_interval`, `output.vtk_dir` | 0, `vtk` | steps per VTK frame, where 0 means none, and the directory for the frames and `series.pvd`. See `--vtk-every` and `--vtk-dir` |
 | `run.allow_unstable_dt` | false | see `--allow-unstable-dt` |
 | `nbody.tile_size` | 256 | tile width of the tiled force kernel: 32, 64, 128 or 256. It moves the timing and not the physics, so a resume may change it |
-| `nbody.blocking_factor` | 1 | target particles per thread in the tiled force kernel: 1, 2, 4 or 8. It moves the timing and not the physics, so a resume may change it. A very large `run.block_size` with a high factor can be refused at launch, with an error naming both |
 | `sph.viscosity` | 0.2 | dynamic viscosity in Pa s. At the default rest density that is 2e-4 m^2/s kinematic, about 200 times water |
 | `sph.boundary_damping` | 0.4 | fraction of the normal velocity kept at a wall, so each impact keeps 16 percent of the normal kinetic energy |
 | `sph.rest_density`, `sph.gas_constant` | 1000, 1000 | equation of state `p = k (rho - rho_0)` |

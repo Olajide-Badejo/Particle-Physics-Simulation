@@ -232,57 +232,6 @@ TEST_F(ResumeTest, AResumeMayChangeTheTileWidth) {
     }
 }
 
-// The blocking factor changes which thread holds which target and nothing else, so
-// each factor has to hold the same guarantee as 1, and land on the same state as 1.
-// The count leaves partly filled last blocks and tiles. The naive variant is here because
-// its seed and its resume go through the tiled kernel at this factor.
-TEST_F(ResumeTest, EveryBlockingFactorResumesBitIdentically) {
-    SKIP_WITHOUT_GPU();
-    for (const cps::NBodyVariant variant :
-         {cps::NBodyVariant::Naive, cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
-        const std::string name = cps::to_string(variant);
-        cps::Config base = base_config(cps::SolverType::NBody, variant, 1000);
-        base.snapshot_dir = (directory_ / name).string();
-        const cps::HostParticleState reference = run_straight(base, 120);
-        for (const int factor : {1, 2, 4, 8}) {
-            const std::string label = name + " BF " + std::to_string(factor);
-            SCOPED_TRACE(label);
-            cps::Config config = base;
-            config.nbody.blocking_factor = factor;
-            config.snapshot_dir = (directory_ / (name + std::to_string(factor))).string();
-            const cps::HostParticleState straight = run_straight(config, 120);
-            const cps::HostParticleState resumed = run_with_resume(config, 50, 70);
-            expect_bit_identical(straight, resumed, label);
-            expect_bit_identical(reference, straight, label + " against BF 1");
-        }
-    }
-}
-
-// The factor is not in the physics fingerprint, so a resume may change it.
-TEST_F(ResumeTest, AResumeMayChangeTheBlockingFactor) {
-    SKIP_WITHOUT_GPU();
-    for (const cps::NBodyVariant variant : {cps::NBodyVariant::Tiled, cps::NBodyVariant::Fused}) {
-        const std::string label = cps::to_string(variant);
-        SCOPED_TRACE(label);
-        cps::Config config = base_config(cps::SolverType::NBody, variant, 1000);
-        config.nbody.blocking_factor = 4;
-        config.snapshot_dir = (directory_ / label).string();
-        write_snapshot_under(config, 50);
-
-        cps::Config changed = config;
-        changed.nbody.blocking_factor = 2;
-        changed.steps = 120;
-        cps::SimulationEngine engine(changed);
-        EXPECT_EQ(engine.resume(), 50);
-        for (int i = 0; i < 70; ++i) {
-            engine.step();
-        }
-        cps::HostParticleState resumed;
-        engine.particles().download(resumed, engine.stream());
-        expect_bit_identical(run_straight(changed, 120), resumed, label);
-    }
-}
-
 TEST_F(ResumeTest, ResumingTwiceStillLandsOnTheSameState) {
     SKIP_WITHOUT_GPU();
     const cps::Config config = base_config(cps::SolverType::NBody, cps::NBodyVariant::Fused, 1024);
@@ -464,7 +413,6 @@ TEST_F(ResumeTest, AcceptsAChangeToRunControlOnly) {
     changed.name = "longer";
     changed.snapshot_interval = 17;
     changed.block_size = 64;
-    changed.nbody.blocking_factor = 4;
     changed.seed = 7u;
     EXPECT_EQ(resume_error(changed), "");
 }

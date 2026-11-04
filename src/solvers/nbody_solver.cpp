@@ -23,7 +23,7 @@ void NBodySolver::compute_forces(ParticleSystem& particles, cudaStream_t stream)
     compute_forces_tiled(particles.x(), particles.y(), particles.z(), particles.mass(),
                          particles.ax(), particles.ay(), particles.az(), particles.size(),
                          config_.softening, config_.gravitational_constant, config_.block_size,
-                         config_.nbody.tile_size, config_.nbody.blocking_factor, stream);
+                         config_.nbody.tile_size, stream);
 }
 
 // Velocity Verlet needs a_0 before its first half kick, and the fused leapfrog
@@ -66,7 +66,7 @@ void NBodySolver::step_fused(ParticleSystem& particles, cudaStream_t stream) {
                      particles.vz(), particles.ax(), particles.ay(), particles.az(),
                      particles.mass(), particles.size(), config_.softening,
                      config_.gravitational_constant, config_.dt, config_.block_size,
-                     config_.nbody.tile_size, config_.nbody.blocking_factor, stream);
+                     config_.nbody.tile_size, stream);
     particles.swap_position_buffers();
 }
 

@@ -32,22 +32,12 @@ struct Vec3 {
 // layer has to name it and stays free of CUDA.
 inline constexpr int DEFAULT_TILE_SIZE = 256;
 
-// One target particle per thread, the kernel as it has always been. A sweep decides
-// whether this moves.
-inline constexpr int DEFAULT_BLOCKING_FACTOR = 1;
-
 struct NBodyConfig {
     // Particles per shared memory tile in the tiled force kernel: 32, 64, 128 or
     // 256, the widths it is instantiated for. Run control, not physics, the same
     // as block_size: padded slots add zero and the j order does not change, so
     // this moves the launch shape and leaves the evolution operator alone.
     int tile_size = DEFAULT_TILE_SIZE;
-    // Target particles per thread in the tiled force kernel and the fused step: 1, 2,
-    // 4 or 8, the factors they are instantiated for. Run control for the same reason:
-    // each target adds the same terms in the same order, so the launch shape moves
-    // and the results stay bit identical. A block covers this many times block_size
-    // particles, so the grid shrinks by the same factor.
-    int blocking_factor = DEFAULT_BLOCKING_FACTOR;
 };
 
 struct SphConfig {

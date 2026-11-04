@@ -420,7 +420,6 @@ Config read_schema_2(const json& root) {
     gravity.read("softening", config.softening);
     gravity.read("gravitational_constant", config.gravitational_constant);
     gravity.read("tile_size", config.nbody.tile_size);
-    gravity.read("blocking_factor", config.nbody.blocking_factor);
 
     ObjectReader fluid(section("sph"), "sph.");
     fluid.read("smoothing_radius", config.sph.smoothing_radius);
@@ -652,11 +651,6 @@ void Config::validate() const {
         throw std::runtime_error("nbody.tile_size must be 32, 64, 128 or 256, got " +
                                  std::to_string(nbody.tile_size));
     }
-    if (nbody.blocking_factor != 1 && nbody.blocking_factor != 2 && nbody.blocking_factor != 4 &&
-        nbody.blocking_factor != 8) {
-        throw std::runtime_error("nbody.blocking_factor must be 1, 2, 4 or 8, got " +
-                                 std::to_string(nbody.blocking_factor));
-    }
     if (snapshot_interval < 0) {
         throw std::runtime_error("snapshot_interval must not be negative, got " +
                                  std::to_string(snapshot_interval));
@@ -749,7 +743,6 @@ std::string Config::to_json_string(int indent) const {
              {"softening", float_text(softening)},
              {"gravitational_constant", float_text(gravitational_constant)},
              {"tile_size", std::to_string(nbody.tile_size)},
-             {"blocking_factor", std::to_string(nbody.blocking_factor)},
          }},
         {"sph",
          {

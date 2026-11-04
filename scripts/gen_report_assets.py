@@ -21,6 +21,7 @@ import csv
 import json
 import math
 import re
+import statistics
 from pathlib import Path
 
 try:
@@ -533,6 +534,49 @@ class Assets:
             self.macro("BestTileOverTileThirtyTwoRatio", f"{ratio:.4f}")
             self.macro("BestTileOverTileThirtyTwoRatioIqr", f"{ratio_iqr:.4f}")
 
+    # -- register blocking, measured and removed --------------------------
+    def blocking_sweep(self) -> None:
+        # The kernels this measured are gone, at a commit that stays reachable,
+        # so these numbers only ever describe that one sweep.
+        rows = read_csv(self.results / "blocking_sweep.csv")
+        if not rows:
+            raise SystemExit("error: blocking_sweep.csv is missing or empty")
+        factors = {1: "One", 2: "Two", 4: "Four", 8: "Eight"}
+        sizes = {10000: "TenK", 100000: "HundredK", 200000: "TwoHundredK"}
+        self.macro("BlockingCommit", next(r["commit"] for r in rows if r["kernels"] == "blocking"))
+        self.macro("BlockingRounds", str(max(int(r["round"]) for r in rows)))
+
+        def trials(kernels: str, variant: str, count: int, factor: int, block: int) -> dict[int, float]:
+            return {int(r["round"]): float(r["ms_per_step"]) for r in rows
+                    if r["kernels"] == kernels and r["variant"] == variant
+                    and int(r["num_particles"]) == count and int(r["blocking_factor"]) == factor
+                    and int(r["block_size"]) == block}
+
+        best_ms = None
+        for count, size in sizes.items():
+            for variant in ("tiled", "fused"):
+                before = trials("before", variant, count, 1, 256)
+                # Blocks multiplied by threads per block held constant, then the
+                # one fixed block case, which shows what starving the machine costs.
+                for factor, block, tag in ((1, 256, ""), (2, 128, ""), (4, 64, ""), (8, 32, ""),
+                                           (2, 256, "FixedBlock")):
+                    after = trials("blocking", variant, count, factor, block)
+                    ratio = statistics.median(after[k] / before[k] for k in after)
+                    self.macro(f"Blocking{variant.capitalize()}{tag}Factor{factors[factor]}{size}",
+                               f"{ratio:.4f}")
+                    if count == max(sizes):
+                        median = statistics.median(after.values())
+                        best_ms = median if best_ms is None else min(best_ms, median)
+        fused = statistics.median(trials("before", "fused", max(sizes), 1, 256).values())
+        self.macro("BlockingBestOverFusedAtMaxN", f"{best_ms / fused:.4f}")
+
+        # Why it could not pay: the instruction mix of the kernel it would replace.
+        self.source = "profile_summary.csv"
+        tiled = [r for r in read_csv(self.results / "profile_summary.csv")
+                 if r["variant"] == "tiled" and int(r["num_particles"]) == max(sizes)][0]
+        self.macro("TiledFmaPerLoadAtMaxN",
+                   f"{float(tiled['fma_instructions']) / float(tiled['lsu_instructions']):.1f}")
+
     # -- validation gates -------------------------------------------------
     def gates(self) -> None:
         # A missing gate would leave a hole in the table and a macro the prose
@@ -851,6 +895,7 @@ def main() -> int:
         ("validation_gates.csv", lambda: assets.gates()),
         ("profile_summary.csv", lambda: assets.profile()),
         ("sph_pipeline_split.csv", lambda: assets.sph_split()),
+        ("blocking_sweep.csv", lambda: assets.blocking_sweep()),
         ("report_debug/sections", lambda: assets.debug_entries(root / "report_debug" / "sections")),
         ("benchmarks.csv", lambda: assets.provenance(benchmarks)),
     ]

@@ -38,23 +38,22 @@ The default build targets `sm_120`. The `release-fat` and `ci` presets build
 releases use. The `host-only` preset needs no CUDA toolkit.
 
 The binaries land in `build/bin`: `cps`, `gpu_probe`, `bench_all`,
-`unit_tests_host`, `validation_tests_host`, `unit_tests_gpu`, `unit_tests_gpu_fast`,
-`integration_tests` and `validation_tests`.
+`unit_tests_host`, `validation_tests_host`, `unit_tests_gpu`, `integration_tests`
+and `validation_tests`.
 
 ## Test levels
 
-There are nine ctest entries. Test counts are from `--gtest_list_tests` on this tree.
+There are eight ctest entries. Test counts are from `--gtest_list_tests` on this tree.
 
 | ctest entry | run with | needs a GPU | tests | what it covers |
 |---|---|---|---:|---|
-| `unit_host` | `make test-host` | no | 371 | formulas, parsing, snapshot format, initial conditions, CLI, benchmark rows |
+| `unit_host` | `make test-host` | no | 368 | formulas, parsing, snapshot format, initial conditions, CLI, benchmark rows |
 | `validation_host` | `make test-host` | no | 14 | the gates that need no device, such as kernel normalisation and Plummer density |
 | `doc_numbers_tool` | `make test-host` | no | | the number checker itself |
 | `cps_io_tool` | `make test-host` | no | | the Python snapshot and diagnostics readers, not run without NumPy |
 | `profile_tools` | `make test-host` | no | | the local path scan and the profiler tooling |
-| `unit_gpu` | `make test-gpu` | yes | 35 | reductions, kernel parity across all variants and blocking factors |
-| `unit_gpu_fast` | `make test-gpu` | yes | 9 | the blocking factor bit identity tests again, on `physics_core`, the fast math library |
-| `integration` | `make test-gpu` | yes | 99 | 100 step smoke per solver, snapshot and resume bit identity, diagnostics, input safety |
+| `unit_gpu` | `make test-gpu` | yes | 26 | reductions, kernel parity across all variants |
+| `integration` | `make test-gpu` | yes | 95 | 100 step smoke per solver, snapshot and resume bit identity, diagnostics, input safety |
 | `validation` | `make validate` | yes | 14 | the device physics gates |
 
 Run everything with `make test`. `make validate` runs both validation entries.

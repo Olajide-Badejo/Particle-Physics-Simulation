@@ -286,6 +286,39 @@ first level cache and load store pipeline: global load sectors fall <!-- num:Sec
 L1 throughput falls from a near saturated <!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent to <!-- num:TiledLoneTexPct -->45.5<!-- /num --> percent, and
 warp issue efficiency rises from <!-- num:NaiveIssuePct -->55.0<!-- /num --> to <!-- num:TiledIssuePct -->82.8<!-- /num --> percent.
 
+### Register blocking was built, measured and removed
+
+**It does not help this kernel.** Register blocking holds several target particles in each thread's
+registers against one staged source tile, which needs fewer loads per interaction. It was built with
+forces bit identical across blocking factors on both libraries, checked with racecheck, and measured
+at commit <!-- num:BlockingCommit -->bd9dcfc40fc9<!-- /num --> over
+<!-- num:BlockingRounds -->10<!-- /num --> interleaved rounds. Run time against the kernels before it,
+with the thread count held constant (lower is faster):
+
+| factor x block | tiled 10,000 | tiled 100,000 | tiled 200,000 | fused 10,000 | fused 100,000 | fused 200,000 |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 x 256 | <!-- num:BlockingTiledFactorOneTenK -->1.0055<!-- /num --> | <!-- num:BlockingTiledFactorOneHundredK -->1.0007<!-- /num --> | <!-- num:BlockingTiledFactorOneTwoHundredK -->1.0014<!-- /num --> | <!-- num:BlockingFusedFactorOneTenK -->1.0844<!-- /num --> | <!-- num:BlockingFusedFactorOneHundredK -->1.0127<!-- /num --> | <!-- num:BlockingFusedFactorOneTwoHundredK -->1.0120<!-- /num --> |
+| 2 x 128 | <!-- num:BlockingTiledFactorTwoTenK -->1.3007<!-- /num --> | <!-- num:BlockingTiledFactorTwoHundredK -->1.0037<!-- /num --> | <!-- num:BlockingTiledFactorTwoTwoHundredK -->0.9962<!-- /num --> | <!-- num:BlockingFusedFactorTwoTenK -->1.4137<!-- /num --> | <!-- num:BlockingFusedFactorTwoHundredK -->1.0342<!-- /num --> | <!-- num:BlockingFusedFactorTwoTwoHundredK -->1.0264<!-- /num --> |
+| 4 x 64 | <!-- num:BlockingTiledFactorFourTenK -->2.2646<!-- /num --> | <!-- num:BlockingTiledFactorFourHundredK -->1.1090<!-- /num --> | <!-- num:BlockingTiledFactorFourTwoHundredK -->1.0505<!-- /num --> | <!-- num:BlockingFusedFactorFourTenK -->2.4050<!-- /num --> | <!-- num:BlockingFusedFactorFourHundredK -->1.1288<!-- /num --> | <!-- num:BlockingFusedFactorFourTwoHundredK -->1.0674<!-- /num --> |
+| 8 x 32 | <!-- num:BlockingTiledFactorEightTenK -->6.0529<!-- /num --> | <!-- num:BlockingTiledFactorEightHundredK -->1.4249<!-- /num --> | <!-- num:BlockingTiledFactorEightTwoHundredK -->1.2501<!-- /num --> | <!-- num:BlockingFusedFactorEightTenK -->6.4478<!-- /num --> | <!-- num:BlockingFusedFactorEightHundredK -->1.4406<!-- /num --> | <!-- num:BlockingFusedFactorEightTwoHundredK -->1.2637<!-- /num --> |
+
+The one result under 1 is tiled at factor 2 and 200,000 particles, and it is still
+<!-- num:BlockingBestOverFusedAtMaxN -->1.0058<!-- /num --> of the existing fused kernel, the fastest
+option at every size.
+
+**Why.** The kernel is limited by arithmetic and not by loads: at 200,000 particles it runs
+<!-- num:TiledFmaPerLoadAtMaxN -->12.5<!-- /num --> FMA instructions per load and issues at
+<!-- num:TiledIssueActivePctTwoHundredK -->86.39<!-- /num --> percent of peak while active. Blocking
+removes a small share of the loads and pays for it in registers. In a scratch `ncu` run, not a
+measurement of record, registers per thread rose from 40 at factor 1 to 80 at factor 8, and the
+occupancy limit fell from 6 to 3 warps. Rewriting the kernels also changed how the compiler scheduled
+them, which is why fused is slower at factor 1. In the same scratch work the clean build took about
+twice as long and the six architecture binary grew from about 5 MB to about 18 MB.
+
+**Removed.** Code this costly with no gain does not stay in the tree. The data is in
+`experiments/results/blocking_sweep.csv`. To reproduce it, check out the commit above and run
+`scripts/blocking_sweep.py`, against a build of its parent, `018cc46b0114`.
+
 ### The runtime estimates were far too long
 
 The first plan estimated 10 to 20 minutes for the validation suite on the
