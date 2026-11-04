@@ -53,7 +53,7 @@ else()
   set(CPS_LANGUAGES CXX CUDA)
 endif()
 
-project(cuda_physics_sim
+project(cps
         VERSION 1.1.0
         DESCRIPTION "CUDA particle physics engine: tiled and fused N-body gravity plus SPH fluids"
         LANGUAGES ${CPS_LANGUAGES})
@@ -198,9 +198,30 @@ endif()
 # Kept separate so continuous integration can build and run a meaningful slice
 # of the unit tests on a machine that has no GPU.
 # ---------------------------------------------------------------------------
+# The presets are compiled in, so an installed binary needs no files beside it.
+# Adding a file reconfigures through the glob, and editing one through the
+# configure dependency. The header is written only when it changes.
+file(GLOB CPS_PRESET_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/presets/*.json)
+list(SORT CPS_PRESET_FILES)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CPS_PRESET_FILES})
+set(CPS_PRESET_ENTRIES "")
+foreach(preset_file IN LISTS CPS_PRESET_FILES)
+  get_filename_component(preset_name ${preset_file} NAME_WE)
+  file(READ ${preset_file} preset_json)
+  string(APPEND CPS_PRESET_ENTRIES
+    "    {\"${preset_name}\", R\"cps_preset(${preset_json})cps_preset\"},\n")
+endforeach()
+set(CPS_PRESET_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_presets)
+file(WRITE ${CPS_PRESET_INCLUDE_DIR}/embedded_presets.inc.tmp
+  "// Generated at configure time from presets/*.json. Do not edit.\n${CPS_PRESET_ENTRIES}")
+configure_file(${CPS_PRESET_INCLUDE_DIR}/embedded_presets.inc.tmp
+  ${CPS_PRESET_INCLUDE_DIR}/embedded_presets.inc COPYONLY)
+
 add_library(physics_host STATIC
   src/core/cli.cpp
   src/core/config.cpp
+  src/core/convert.cpp
+  src/core/presets.cpp
   src/core/physics_fingerprint.cpp
   src/core/snapshot.cpp
   src/core/initial_conditions.cpp
@@ -209,6 +230,7 @@ add_library(physics_host STATIC
 target_include_directories(physics_host PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_include_directories(physics_host PRIVATE ${CPS_PRESET_INCLUDE_DIR})
 # No installed header includes the JSON library, and it is header only, so it
 # ends at the build tree: an installed consumer never needs it, and the export
 # never names a fetched target. The same goes for the warning flags.
@@ -296,9 +318,17 @@ add_dependencies(physics_core cps_version)
 # ---------------------------------------------------------------------------
 # Executables
 # ---------------------------------------------------------------------------
-add_executable(cuda_physics_sim src/main.cpp)
-target_link_libraries(cuda_physics_sim PRIVATE physics_core cps_warnings)
-add_executable(cps::cuda_physics_sim ALIAS cuda_physics_sim)
+add_executable(cps src/main.cpp)
+target_link_libraries(cps PRIVATE physics_core cps_warnings)
+add_executable(cps::cps ALIAS cps)
+
+# The old name is a symbolic link to the one program, for one major version, in
+# the build tree and in the install tree. The custom target keeps the old build
+# target name working too.
+add_custom_command(TARGET cps POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E create_symlink cps $<TARGET_FILE_DIR:cps>/cuda_physics_sim
+  VERBATIM)
+add_custom_target(cuda_physics_sim DEPENDS cps)
 
 add_executable(gpu_probe src/tools/gpu_probe.cu)
 target_link_libraries(gpu_probe PRIVATE physics_core cps_warnings)
@@ -445,11 +475,11 @@ set(CPS_INSTALL_CMAKEDIR ${CMAKE_INSTALL_LIBDIR}/cmake/cps)
 
 set(CPS_INSTALL_TARGETS physics_host)
 if(NOT CPS_HOST_ONLY)
-  list(APPEND CPS_INSTALL_TARGETS physics_core cuda_physics_sim)
+  list(APPEND CPS_INSTALL_TARGETS physics_core cps)
   # The CUDA runtime is a shared library outside the prefix, and the build tree
   # path to it is dropped on install. Keep it, so the installed simulator runs
   # without LD_LIBRARY_PATH on a toolkit that is not on the loader's path.
-  set_target_properties(cuda_physics_sim PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
+  set_target_properties(cps PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
 endif()
 
 install(TARGETS ${CPS_INSTALL_TARGETS}
@@ -457,6 +487,13 @@ install(TARGETS ${CPS_INSTALL_TARGETS}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+if(NOT CPS_HOST_ONLY)
+  install(CODE "
+    set(cps_bin_dir \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}\")
+    message(STATUS \"Installing: \${cps_bin_dir}/cuda_physics_sim\")
+    file(CREATE_LINK cps \"\${cps_bin_dir}/cuda_physics_sim\" SYMBOLIC)
+  ")
+endif()
 install(DIRECTORY include/cps DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES ${CPS_GENERATED_DIR}/cps/version.hpp
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/cps)
@@ -484,7 +521,7 @@ install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/cpsConfigVersion.cmake
   DESTINATION ${CPS_INSTALL_CMAKEDIR})
 
-message(STATUS "cuda_physics_sim ${PROJECT_VERSION}")
+message(STATUS "cps ${PROJECT_VERSION}")
 if(NOT CPS_HOST_ONLY)
   message(STATUS "  CUDA toolkit      : ${CUDAToolkit_VERSION}")
   if(CPS_FAT_BINARY)

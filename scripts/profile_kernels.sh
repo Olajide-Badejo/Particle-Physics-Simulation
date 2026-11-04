@@ -13,7 +13,7 @@ set -euo pipefail
 export PATH=/usr/local/cuda/bin:$PATH
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/build/bin/cuda_physics_sim"
+BIN="$ROOT/build/bin/cps"
 CONFIG="$ROOT/presets/plummer_10k.json"
 OUT="$ROOT/experiments/results"
 NCU="${NCU:-/usr/local/cuda/bin/ncu}"
@@ -70,7 +70,7 @@ for VARIANT in naive tiled fused; do
               --launch-skip 2 --launch-count 1 \
               --metrics "$METRICS" \
               --csv \
-              "$BIN" --config "$CONFIG" --variant "$VARIANT" --particles "$PARTICLES" \
+              "$BIN" run "$CONFIG" --variant "$VARIANT" --particles "$PARTICLES" \
                      --steps 6 --snapshot-every 0 --diag-every 0 --diagnostics "" \
               > "$OUT/ncu_${VARIANT}.csv" 2> "$OUT/ncu_${VARIANT}.log"; then
     echo "error: nsight compute failed on $VARIANT, see $OUT/ncu_${VARIANT}.log" >&2

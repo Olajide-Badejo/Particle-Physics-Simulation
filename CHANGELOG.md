@@ -5,8 +5,21 @@ a Changelog, and the project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- The `cps` command: `cps run <preset-or-path>`, `cps presets`, `cps info` and
+  `cps convert <input> <output>`, which turns a v1 configuration into schema 2 and, with
+  `--config <file>`, a CPS1 snapshot into CPS2. Help is on `cps --help` and `cps <subcommand> --help`.
+- The files in `presets/` are compiled in, so an installed `cps` runs them by name with no files
+  beside it.
+
 ### Changed
 
+- **Breaking:** the program and its CMake target are now `cps`, and the project is `cps`. The name
+  `cuda_physics_sim` stays for one major version as a symbolic link to it in the build and install
+  trees. The form with flags and no subcommand still works under both names, and prints one line
+  to stderr saying it goes away in the next major version. The exported `cps::cuda_physics_sim`
+  target is now `cps::cps`.
 - **Breaking:** `sph_gather_sorted` and `sph_forces_and_integrate` take the id arrays, and a
   `HostParticleState` given to `ParticleSystem::upload` or `write_snapshot` must have one id per
   particle. `HostParticleState::resize` numbers them for you.

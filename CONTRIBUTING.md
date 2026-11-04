@@ -37,7 +37,7 @@ The default build targets `sm_120`. The `release-fat` and `ci` presets build
 `physics_core` for `75;80;86;89;90;120`, which continuous integration and
 releases use. The `host-only` preset needs no CUDA toolkit.
 
-The binaries land in `build/bin`: `cuda_physics_sim`, `gpu_probe`, `bench_all`,
+The binaries land in `build/bin`: `cps`, `gpu_probe`, `bench_all`,
 `unit_tests_host`, `validation_tests_host`, `unit_tests_gpu`, `integration_tests`
 and `validation_tests`.
 

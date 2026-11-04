@@ -28,7 +28,7 @@ NUMBERS := report/numbers.tex
         reports docs check-style check-warnings run-demo probe all clean distclean
 
 help:
-	@echo "cuda_physics_sim: make targets"
+	@echo "cps: make targets"
 	@echo
 	@echo "  setup          configure the build (downloads GoogleTest and nlohmann_json)"
 	@echo "  setup-host-only  configure without CUDA, for a machine with no toolkit"
@@ -134,7 +134,7 @@ check-warnings:
 	@echo "build completed with -Wall -Wextra -Werror and the nvcc equivalents"
 
 run-demo: build
-	./$(BUILD_DIR)/bin/cuda_physics_sim --config presets/dam_break_50k.json --steps 2000
+	./$(BUILD_DIR)/bin/cps run dam_break_50k --steps 2000
 
 # The order matters: gates before benchmarks so a physics failure stops the
 # line before half an hour of timing runs, and the reports last because they

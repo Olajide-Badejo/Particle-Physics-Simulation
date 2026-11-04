@@ -395,7 +395,7 @@ In Docker, on the same image continuous integration uses, with the NVIDIA runtim
 docker build -t cps:dev --build-arg CPS_GIT_COMMIT="$(git rev-parse --short=12 HEAD)" .
 docker run --rm cps:dev ctest --preset release-fat               # device tests read Skipped
 docker run --rm --gpus all cps:dev ctest --preset release-fat    # the whole suite
-docker run --rm --gpus all cps:dev cuda_physics_sim --config presets/two_body.json
+docker run --rm --gpus all cps:dev cps run two_body
 ```
 
 Individual targets:
@@ -416,12 +416,20 @@ make check-style     # the style gate
 Run a simulation directly:
 
 ```bash
-./build/bin/cuda_physics_sim --config presets/dam_break_50k.json
-./build/bin/cuda_physics_sim --config presets/plummer_10k.json --variant fused
-./build/bin/cuda_physics_sim --config presets/plummer_10k.json --resume
-./build/bin/cuda_physics_sim --device-info
-./build/bin/cuda_physics_sim --version
+./build/bin/cps run dam_break_50k
+./build/bin/cps run plummer_10k --variant fused
+./build/bin/cps run plummer_10k --resume
+./build/bin/cps run my_config.json --steps 500
+./build/bin/cps presets
+./build/bin/cps info
+./build/bin/cps --version
+./build/bin/cps convert old_config.json new_config.json
+./build/bin/cps convert old_snapshot.bin new_snapshot.bin --config my_config.json
 ```
+
+A bare name is a preset compiled into the binary, and a path or a `.json` name is a file. The old
+form, `--config <file>` with no subcommand, and the old name `cuda_physics_sim` still work for one
+major version, with a one line notice on stderr.
 
 Flags worth knowing:
 
@@ -445,15 +453,15 @@ With `--vtk-every`, a run writes VTK frames and a series file that ParaView open
 git clone https://github.com/Olajide-Badejo/Particle-Physics-Simulation.git
 cd Particle-Physics-Simulation
 cmake --preset dev
-cmake --build --preset dev --target cuda_physics_sim
-./build/bin/cuda_physics_sim --config presets/dam_break_50k.json --vtk-every 50 --vtk-dir vtk/dam_break --snapshot-every 0 --diagnostics ""
+cmake --build --preset dev --target cps
+./build/bin/cps run dam_break_50k --vtk-every 50 --vtk-dir vtk/dam_break --snapshot-every 0 --diagnostics ""
 ```
 
 Or in Docker, with the image from the section above:
 
 ```bash
 mkdir -p vtk
-docker run --rm --gpus all --user "$(id -u):$(id -g)" -v "$PWD/vtk:/src/vtk" cps:dev cuda_physics_sim --config presets/dam_break_50k.json --vtk-every 50 --vtk-dir vtk/dam_break --snapshot-every 0 --diagnostics ""
+docker run --rm --gpus all --user "$(id -u):$(id -g)" -v "$PWD/vtk:/src/vtk" cps:dev cps run dam_break_50k --vtk-every 50 --vtk-dir vtk/dam_break --snapshot-every 0 --diagnostics ""
 ```
 
 Then open `vtk/dam_break/series.pvd` in ParaView and press Apply. The points show with no filter,
