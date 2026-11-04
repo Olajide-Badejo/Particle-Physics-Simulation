@@ -58,19 +58,6 @@ SPH_PASSES = {
     "force_and_integrate": ("force and integrate", "#6250d6"),
     "between_kernels": ("between kernels", "#e34948"),
 }
-# The same for a split recorded while the search was a spatial hash, which had two
-# passes that no longer exist. A file that holds a hash pass gets this one, so its
-# figure comes out as it was committed.
-SPH_PASSES_WITH_HASH = {
-    "hash": ("hash", "#2a78d6"),
-    "sort": ("sort", "#eb6834"),
-    "clear": ("clear", "#1baf7a"),
-    "cell_bounds": ("cell bounds", "#eda100"),
-    "gather": ("gather", "#e87ba4"),
-    "density": ("density", "#008300"),
-    "force_and_integrate": ("force and integrate", "#6250d6"),
-    "between_kernels": ("between kernels", "#e34948"),
-}
 INK_PRIMARY = "#0b0b0b"
 INK_SECONDARY = "#52514e"
 INK_MUTED = "#898781"
@@ -467,7 +454,7 @@ def plot_sph_split(path: Path, out_dir: Path) -> None:
     if not rows:
         return
     by_pass = {row["pass"]: row for row in rows}
-    passes = SPH_PASSES_WITH_HASH if "hash" in by_pass else SPH_PASSES
+    passes = SPH_PASSES
     unknown = by_pass.keys() - passes.keys()
     if unknown:
         raise SystemExit(f"error: {path} holds a pass this figure does not know: {sorted(unknown)}")

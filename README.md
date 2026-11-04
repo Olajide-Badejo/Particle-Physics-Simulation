@@ -157,9 +157,9 @@ counters say so. These are for one launch at <!-- num:ProfileParticles -->200,00
 
 | variant | SM | L1 and load store | L2 | device memory | global load sectors | warp issue |
 |---|---:|---:|---:|---:|---:|---:|
-| naive | <!-- num:NaiveSmPct -->88.01<!-- /num -->% | **<!-- num:NaiveLoneTexCellPct -->88.01<!-- /num -->%** | <!-- num:NaiveLtwoPct -->1.62<!-- /num -->% | <!-- num:NaiveDramCellPct -->0.32<!-- /num -->% | <!-- num:NaiveSectorsMillions -->5,000.1<!-- /num -->M | **<!-- num:NaiveIssueCellPct -->55.00<!-- /num -->%** |
-| tiled | <!-- num:TiledSmPct -->82.81<!-- /num -->% | **<!-- num:TiledLoneTexCellPct -->45.49<!-- /num -->%** | <!-- num:TiledLtwoPct -->1.65<!-- /num -->% | <!-- num:TiledDramCellPct -->0.32<!-- /num -->% | <!-- num:TiledSectorsMillions -->78.3<!-- /num -->M | **<!-- num:TiledIssueCellPct -->82.81<!-- /num -->%** |
-| fused | <!-- num:FusedSmPct -->83.59<!-- /num -->% | <!-- num:FusedLoneTexCellPct -->45.90<!-- /num -->% | <!-- num:FusedLtwoPct -->1.67<!-- /num -->% | <!-- num:FusedDramCellPct -->0.33<!-- /num -->% | <!-- num:FusedSectorsMillions -->78.3<!-- /num -->M | <!-- num:FusedIssueCellPct -->83.59<!-- /num -->% |
+| naive | <!-- num:NaiveSmPct -->87.96<!-- /num -->% | **<!-- num:NaiveLoneTexCellPct -->87.96<!-- /num -->%** | <!-- num:NaiveLtwoPct -->1.70<!-- /num -->% | <!-- num:NaiveDramCellPct -->0.34<!-- /num -->% | <!-- num:NaiveSectorsMillions -->5,000.1<!-- /num -->M | **<!-- num:NaiveIssueCellPct -->54.98<!-- /num -->%** |
+| tiled | <!-- num:TiledSmPct -->82.84<!-- /num -->% | **<!-- num:TiledLoneTexCellPct -->45.50<!-- /num -->%** | <!-- num:TiledLtwoPct -->1.75<!-- /num -->% | <!-- num:TiledDramCellPct -->0.32<!-- /num -->% | <!-- num:TiledSectorsMillions -->78.3<!-- /num -->M | **<!-- num:TiledIssueCellPct -->82.84<!-- /num -->%** |
+| fused | <!-- num:FusedSmPct -->83.49<!-- /num -->% | <!-- num:FusedLoneTexCellPct -->45.85<!-- /num -->% | <!-- num:FusedLtwoPct -->1.71<!-- /num -->% | <!-- num:FusedDramCellPct -->0.35<!-- /num -->% | <!-- num:FusedSectorsMillions -->78.3<!-- /num -->M | <!-- num:FusedIssueCellPct -->83.49<!-- /num -->% |
 
 Tiling cuts global load sectors by **<!-- num:SectorReduction -->63.9<!-- /num -->x**, taking first level cache
 throughput from a near saturated <!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent down to <!-- num:TiledLoneTexPct -->45.5<!-- /num --> percent.

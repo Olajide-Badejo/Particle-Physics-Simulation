@@ -329,7 +329,7 @@ resolved.
 
 ### Tiling was framed as a bandwidth optimisation
 
-**It is not one here.** Device memory throughput is <!-- num:NaiveDramPct -->0.32<!-- /num --> percent of peak before
+**It is not one here.** Device memory throughput is <!-- num:NaiveDramPct -->0.34<!-- /num --> percent of peak before
 and <!-- num:TiledDramPct -->0.32<!-- /num --> percent after. Tiling delivers its factor of <!-- num:TilingSpeedupAtMaxN -->1.96<!-- /num --> by relieving the
 first level cache and load store pipeline: global load sectors fall <!-- num:SectorReduction -->63.9<!-- /num --> times,
 L1 throughput falls from a near saturated <!-- num:NaiveLoneTexPct -->88.0<!-- /num --> percent to <!-- num:TiledLoneTexPct -->45.5<!-- /num --> percent, and
